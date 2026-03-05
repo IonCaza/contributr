@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { Key, Users, Plus, Trash2, Copy, Check } from "lucide-react";
+import { useEffect, useState, useRef } from "react";
+import { Key, Users, Plus, Trash2, Copy, Check, Download, Upload, Database, Loader2, CheckCircle2, AlertCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -43,6 +43,11 @@ export default function SettingsPage() {
   const [keyOpen, setKeyOpen] = useState(false);
   const [userOpen, setUserOpen] = useState(false);
   const [userForm, setUserForm] = useState({ email: "", username: "", password: "", full_name: "", is_admin: false });
+  const [exporting, setExporting] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const [importResult, setImportResult] = useState<Record<string, { submitted: number; imported: number }> | null>(null);
+  const [backupError, setBackupError] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     api.listSSHKeys().then(setSSHKeys);
@@ -83,17 +88,51 @@ export default function SettingsPage() {
     setUsers((prev) => prev.filter((u) => u.id !== id));
   }
 
+  async function handleExport() {
+    setExporting(true);
+    setBackupError(null);
+    try {
+      const blob = await api.exportBackup();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `contributr-backup-${new Date().toISOString().slice(0, 10)}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      setBackupError(err instanceof Error ? err.message : "Export failed");
+    } finally {
+      setExporting(false);
+    }
+  }
+
+  async function handleImport(file: File) {
+    setImporting(true);
+    setImportResult(null);
+    setBackupError(null);
+    try {
+      const res = await api.importBackup(file);
+      setImportResult(res.counts);
+    } catch (err) {
+      setBackupError(err instanceof Error ? err.message : "Import failed");
+    } finally {
+      setImporting(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  }
+
   return (
     <div className="space-y-6">
       <div>
         <h1 className="text-3xl font-bold tracking-tight">Settings</h1>
-        <p className="text-muted-foreground">Manage SSH keys and user accounts</p>
+        <p className="text-muted-foreground">Manage SSH keys, user accounts, and backups</p>
       </div>
 
       <Tabs defaultValue="ssh-keys">
         <TabsList>
           <TabsTrigger value="ssh-keys" className="gap-2"><Key className="h-4 w-4" /> SSH Keys</TabsTrigger>
           {user?.is_admin && <TabsTrigger value="users" className="gap-2"><Users className="h-4 w-4" /> Users</TabsTrigger>}
+          <TabsTrigger value="backup" className="gap-2"><Database className="h-4 w-4" /> Backup</TabsTrigger>
         </TabsList>
 
         <TabsContent value="ssh-keys" className="space-y-4">
@@ -264,6 +303,92 @@ export default function SettingsPage() {
             </Card>
           </TabsContent>
         )}
+        <TabsContent value="backup" className="space-y-4">
+          <div className="grid gap-4 md:grid-cols-2">
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2 text-base">
+                  <Download className="h-4 w-4" /> Export Database
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <p className="text-sm text-muted-foreground">
+                  Download a full JSON backup of all projects, repositories, contributors, commits, and other data.
+                </p>
+                <Button onClick={handleExport} disabled={exporting} className="w-full">
+                  {exporting ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Exporting...</> : <><Download className="mr-2 h-4 w-4" /> Export Backup</>}
+                </Button>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2 text-base">
+                  <Upload className="h-4 w-4" /> Import Database
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <p className="text-sm text-muted-foreground">
+                  Restore from a JSON backup file. Existing records are preserved; only new data is added.
+                </p>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept=".json"
+                  className="hidden"
+                  onChange={(e) => {
+                    const f = e.target.files?.[0];
+                    if (f) handleImport(f);
+                  }}
+                />
+                <Button variant="outline" onClick={() => fileInputRef.current?.click()} disabled={importing} className="w-full">
+                  {importing ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Importing...</> : <><Upload className="mr-2 h-4 w-4" /> Choose Backup File</>}
+                </Button>
+              </CardContent>
+            </Card>
+          </div>
+
+          {backupError && (
+            <Card className="border-destructive">
+              <CardContent className="flex items-center gap-3 pt-6">
+                <AlertCircle className="h-5 w-5 text-destructive shrink-0" />
+                <p className="text-sm text-destructive">{backupError}</p>
+              </CardContent>
+            </Card>
+          )}
+
+          {importResult && (
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2 text-base">
+                  <CheckCircle2 className="h-4 w-4 text-emerald-500" /> Import Complete
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Table</TableHead>
+                      <TableHead className="text-right">In File</TableHead>
+                      <TableHead className="text-right">Imported</TableHead>
+                      <TableHead className="text-right">Skipped</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {Object.entries(importResult).map(([table, { submitted, imported }]) => (
+                      <TableRow key={table}>
+                        <TableCell className="font-medium">{table.replace(/_/g, " ")}</TableCell>
+                        <TableCell className="text-right tabular-nums">{submitted.toLocaleString()}</TableCell>
+                        <TableCell className="text-right tabular-nums">{imported.toLocaleString()}</TableCell>
+                        <TableCell className="text-right tabular-nums text-muted-foreground">{(submitted - imported).toLocaleString()}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </CardContent>
+            </Card>
+          )}
+        </TabsContent>
       </Tabs>
     </div>
   );

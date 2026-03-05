@@ -140,4 +140,27 @@ export const api = {
   createSSHKey: (data: { name: string; key_type: string; rsa_bits?: number }) =>
     request<SSHKey>("/ssh-keys", { method: "POST", body: JSON.stringify(data) }),
   deleteSSHKey: (id: string) => request<void>(`/ssh-keys/${id}`, { method: "DELETE" }),
+
+  // Backup
+  exportBackup: async (): Promise<Blob> => {
+    const token = getToken();
+    const headers: Record<string, string> = {};
+    if (token) headers["Authorization"] = `Bearer ${token}`;
+    const res = await fetch(`${API_BASE}/backup/export`, { headers });
+    if (!res.ok) throw new ApiError(res.status, "Export failed");
+    return res.blob();
+  },
+  importBackup: async (file: File): Promise<{ counts: Record<string, { submitted: number; imported: number }> }> => {
+    const token = getToken();
+    const formData = new FormData();
+    formData.append("file", file);
+    const headers: Record<string, string> = {};
+    if (token) headers["Authorization"] = `Bearer ${token}`;
+    const res = await fetch(`${API_BASE}/backup/import`, { method: "POST", headers, body: formData });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({ detail: res.statusText }));
+      throw new ApiError(res.status, body.detail || res.statusText);
+    }
+    return res.json();
+  },
 };

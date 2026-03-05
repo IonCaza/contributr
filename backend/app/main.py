@@ -8,7 +8,7 @@ from sqlalchemy import select
 from app.config import settings
 from app.db.base import engine, async_session
 from app.db.models import Repository
-from app.api import auth, projects, repositories, contributors, stats, ssh_keys, commits
+from app.api import auth, projects, repositories, contributors, stats, ssh_keys, commits, backup
 from app.api.repositories import _parse_platform_fields
 
 logger = logging.getLogger(__name__)
@@ -58,6 +58,7 @@ app.include_router(contributors.router, prefix="/api")
 app.include_router(stats.router, prefix="/api")
 app.include_router(ssh_keys.router, prefix="/api")
 app.include_router(commits.router, prefix="/api")
+app.include_router(backup.router, prefix="/api")
 
 
 @app.get("/api/health")
