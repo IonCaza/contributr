@@ -1,0 +1,270 @@
+"use client";
+
+import { useEffect, useState } from "react";
+import { Key, Users, Plus, Trash2, Copy, Check } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Badge } from "@/components/ui/badge";
+import { useAuth } from "@/lib/auth-context";
+import { api } from "@/lib/api-client";
+import type { SSHKey, User } from "@/lib/types";
+
+function CopyButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <Button
+      variant="ghost"
+      size="icon"
+      className="h-7 w-7"
+      onClick={() => {
+        navigator.clipboard.writeText(text);
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+      }}
+    >
+      {copied ? <Check className="h-3 w-3 text-emerald-500" /> : <Copy className="h-3 w-3" />}
+    </Button>
+  );
+}
+
+export default function SettingsPage() {
+  const { user } = useAuth();
+  const [sshKeys, setSSHKeys] = useState<SSHKey[]>([]);
+  const [users, setUsers] = useState<User[]>([]);
+  const [keyName, setKeyName] = useState("");
+  const [keyType, setKeyType] = useState<"ed25519" | "rsa">("ed25519");
+  const [rsaBits, setRsaBits] = useState<string>("4096");
+  const [keyOpen, setKeyOpen] = useState(false);
+  const [userOpen, setUserOpen] = useState(false);
+  const [userForm, setUserForm] = useState({ email: "", username: "", password: "", full_name: "", is_admin: false });
+
+  useEffect(() => {
+    api.listSSHKeys().then(setSSHKeys);
+    if (user?.is_admin) {
+      api.listUsers().then(setUsers);
+    }
+  }, [user]);
+
+  async function handleCreateKey(e: React.FormEvent) {
+    e.preventDefault();
+    const key = await api.createSSHKey({
+      name: keyName,
+      key_type: keyType,
+      ...(keyType === "rsa" ? { rsa_bits: parseInt(rsaBits) } : {}),
+    });
+    setSSHKeys((prev) => [key, ...prev]);
+    setKeyName("");
+    setKeyType("ed25519");
+    setRsaBits("4096");
+    setKeyOpen(false);
+  }
+
+  async function handleDeleteKey(id: string) {
+    await api.deleteSSHKey(id);
+    setSSHKeys((prev) => prev.filter((k) => k.id !== id));
+  }
+
+  async function handleCreateUser(e: React.FormEvent) {
+    e.preventDefault();
+    const u = await api.createUser(userForm);
+    setUsers((prev) => [...prev, u]);
+    setUserForm({ email: "", username: "", password: "", full_name: "", is_admin: false });
+    setUserOpen(false);
+  }
+
+  async function handleDeleteUser(id: string) {
+    await api.deleteUser(id);
+    setUsers((prev) => prev.filter((u) => u.id !== id));
+  }
+
+  return (
+    <div className="space-y-6">
+      <div>
+        <h1 className="text-3xl font-bold tracking-tight">Settings</h1>
+        <p className="text-muted-foreground">Manage SSH keys and user accounts</p>
+      </div>
+
+      <Tabs defaultValue="ssh-keys">
+        <TabsList>
+          <TabsTrigger value="ssh-keys" className="gap-2"><Key className="h-4 w-4" /> SSH Keys</TabsTrigger>
+          {user?.is_admin && <TabsTrigger value="users" className="gap-2"><Users className="h-4 w-4" /> Users</TabsTrigger>}
+        </TabsList>
+
+        <TabsContent value="ssh-keys" className="space-y-4">
+          <div className="flex items-center justify-between">
+            <p className="text-sm text-muted-foreground">Generate SSH keys for repository access. Register the public key as a deploy key in your Git provider.</p>
+            <Dialog open={keyOpen} onOpenChange={setKeyOpen}>
+              <DialogTrigger asChild>
+                <Button size="sm"><Plus className="mr-2 h-4 w-4" /> Generate Key</Button>
+              </DialogTrigger>
+              <DialogContent>
+                <DialogHeader><DialogTitle>Generate SSH Key</DialogTitle></DialogHeader>
+                <form onSubmit={handleCreateKey} className="space-y-4">
+                  <div className="space-y-2">
+                    <Label>Key name</Label>
+                    <Input value={keyName} onChange={(e) => setKeyName(e.target.value)} placeholder="e.g. deploy-key-prod" required />
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label>Key type</Label>
+                      <Select value={keyType} onValueChange={(v) => setKeyType(v as "ed25519" | "rsa")}>
+                        <SelectTrigger><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="ed25519">Ed25519</SelectItem>
+                          <SelectItem value="rsa">RSA</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    {keyType === "rsa" && (
+                      <div className="space-y-2">
+                        <Label>RSA key size</Label>
+                        <Select value={rsaBits} onValueChange={setRsaBits}>
+                          <SelectTrigger><SelectValue /></SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="2048">2048 bits</SelectItem>
+                            <SelectItem value="3072">3072 bits</SelectItem>
+                            <SelectItem value="4096">4096 bits</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    )}
+                  </div>
+                  {keyType === "ed25519" && (
+                    <p className="text-xs text-muted-foreground">Ed25519 is recommended: smaller keys, faster operations, and strong security.</p>
+                  )}
+                  {keyType === "rsa" && (
+                    <p className="text-xs text-muted-foreground">RSA is widely compatible. Use 4096 bits for best security.</p>
+                  )}
+                  <Button type="submit" className="w-full">Generate</Button>
+                </form>
+              </DialogContent>
+            </Dialog>
+          </div>
+
+          <Card>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Name</TableHead>
+                  <TableHead>Type</TableHead>
+                  <TableHead>Public Key</TableHead>
+                  <TableHead>Fingerprint</TableHead>
+                  <TableHead>Created</TableHead>
+                  <TableHead className="w-20" />
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {sshKeys.map((k) => (
+                  <TableRow key={k.id}>
+                    <TableCell className="font-medium">{k.name}</TableCell>
+                    <TableCell>
+                      <Badge variant="outline" className="font-mono text-[10px] uppercase">{k.key_type}</Badge>
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex items-center gap-1">
+                        <code className="max-w-xs truncate text-xs">{k.public_key}</code>
+                        <CopyButton text={k.public_key} />
+                      </div>
+                    </TableCell>
+                    <TableCell><code className="text-xs">{k.fingerprint}</code></TableCell>
+                    <TableCell className="text-muted-foreground">{new Date(k.created_at).toLocaleDateString()}</TableCell>
+                    <TableCell>
+                      <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => handleDeleteKey(k.id)}>
+                        <Trash2 className="h-3 w-3 text-destructive" />
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                ))}
+                {sshKeys.length === 0 && (
+                  <TableRow>
+                    <TableCell colSpan={6} className="py-8 text-center text-muted-foreground">No SSH keys yet</TableCell>
+                  </TableRow>
+                )}
+              </TableBody>
+            </Table>
+          </Card>
+        </TabsContent>
+
+        {user?.is_admin && (
+          <TabsContent value="users" className="space-y-4">
+            <div className="flex items-center justify-between">
+              <p className="text-sm text-muted-foreground">Manage user accounts. Only admins can add or remove users.</p>
+              <Dialog open={userOpen} onOpenChange={setUserOpen}>
+                <DialogTrigger asChild>
+                  <Button size="sm"><Plus className="mr-2 h-4 w-4" /> Add User</Button>
+                </DialogTrigger>
+                <DialogContent>
+                  <DialogHeader><DialogTitle>Add User</DialogTitle></DialogHeader>
+                  <form onSubmit={handleCreateUser} className="space-y-4">
+                    <div className="space-y-2">
+                      <Label>Full name</Label>
+                      <Input value={userForm.full_name} onChange={(e) => setUserForm((f) => ({ ...f, full_name: e.target.value }))} />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Email</Label>
+                      <Input type="email" value={userForm.email} onChange={(e) => setUserForm((f) => ({ ...f, email: e.target.value }))} required />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Username</Label>
+                      <Input value={userForm.username} onChange={(e) => setUserForm((f) => ({ ...f, username: e.target.value }))} required />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Password</Label>
+                      <Input type="password" value={userForm.password} onChange={(e) => setUserForm((f) => ({ ...f, password: e.target.value }))} required />
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <input type="checkbox" id="is_admin" checked={userForm.is_admin} onChange={(e) => setUserForm((f) => ({ ...f, is_admin: e.target.checked }))} />
+                      <Label htmlFor="is_admin">Admin privileges</Label>
+                    </div>
+                    <Button type="submit" className="w-full">Create User</Button>
+                  </form>
+                </DialogContent>
+              </Dialog>
+            </div>
+
+            <Card>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Username</TableHead>
+                    <TableHead>Email</TableHead>
+                    <TableHead>Name</TableHead>
+                    <TableHead>Role</TableHead>
+                    <TableHead className="w-20" />
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {users.map((u) => (
+                    <TableRow key={u.id}>
+                      <TableCell className="font-medium">{u.username}</TableCell>
+                      <TableCell>{u.email}</TableCell>
+                      <TableCell>{u.full_name || "-"}</TableCell>
+                      <TableCell>
+                        <Badge variant={u.is_admin ? "default" : "secondary"}>
+                          {u.is_admin ? "Admin" : "Viewer"}
+                        </Badge>
+                      </TableCell>
+                      <TableCell>
+                        {u.id !== user?.id && (
+                          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => handleDeleteUser(u.id)}>
+                            <Trash2 className="h-3 w-3 text-destructive" />
+                          </Button>
+                        )}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </Card>
+          </TabsContent>
+        )}
+      </Tabs>
+    </div>
+  );
+}
