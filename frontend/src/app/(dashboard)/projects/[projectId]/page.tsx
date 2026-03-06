@@ -1,14 +1,15 @@
 "use client";
 
-import React, { useEffect, useState, useCallback, useRef, useMemo } from "react";
+import React, { useState, useMemo } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
-import { GitBranch, Users, Plus, RefreshCw, Loader2, XCircle, ArrowUpDown, Search, ChevronDown, ChevronRight, Pencil, Trash2, Eraser, ShieldCheck } from "lucide-react";
+import { useQueryClient } from "@tanstack/react-query";
+import { GitBranch, Users, Plus, RefreshCw, Loader2, XCircle, ArrowUpDown, Search, ChevronDown, ChevronRight, Pencil, Trash2, Eraser } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogDescription } from "@/components/ui/dialog";
-import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -21,21 +22,42 @@ import { DateRangeFilter, defaultRange } from "@/components/date-range-filter";
 import type { DateRange } from "@/components/date-range-filter";
 import { SyncLogViewer } from "@/components/sync-log-viewer";
 import { api } from "@/lib/api-client";
-import type { ProjectDetail, ProjectStats, DailyStat, SSHKey, ContributorSummary, PlatformCredential } from "@/lib/types";
+import { queryKeys } from "@/lib/query-keys";
+import type { ContributorSummary } from "@/lib/types";
+import { useProject, useProjectStats } from "@/hooks/use-projects";
+import { useSSHKeys } from "@/hooks/use-settings";
+import { useCreateRepo, useUpdateRepo, useDeleteRepo, usePurgeRepo, useSyncRepo, useCancelSync } from "@/hooks/use-repos";
+import { useDailyStats } from "@/hooks/use-daily-stats";
 
 export default function ProjectDetailPage() {
   const { projectId } = useParams<{ projectId: string }>();
-  const [project, setProject] = useState<ProjectDetail | null>(null);
-  const [stats, setStats] = useState<ProjectStats | null>(null);
-  const [dailyStats, setDailyStats] = useState<DailyStat[]>([]);
-  const [sshKeys, setSSHKeys] = useState<SSHKey[]>([]);
+  const qc = useQueryClient();
+  const { data: project } = useProject(projectId);
+  const { data: sshKeys = [] } = useSSHKeys();
+
+  const [dateRange, setDateRange] = useState<DateRange>(defaultRange);
+
+  const { data: stats } = useProjectStats(projectId, { from: dateRange.from, to: dateRange.to });
+
+  const dailyParams = useMemo(() => ({
+    project_id: projectId,
+    from_date: dateRange.from,
+    to_date: dateRange.to,
+  }), [projectId, dateRange]);
+  const { data: dailyStats = [] } = useDailyStats(dailyParams);
+
+  const createRepo = useCreateRepo(projectId);
+  const deleteRepo = useDeleteRepo(projectId);
+  const purgeRepo = usePurgeRepo(projectId);
+  const syncRepo = useSyncRepo();
+  const cancelSync = useCancelSync("");
+
   const [open, setOpen] = useState(false);
   const [syncingRepos, setSyncingRepos] = useState<Map<string, string>>(new Map());
   const [contribSearch, setContribSearch] = useState("");
   const [contribSort, setContribSort] = useState<{ key: "name" | "email" | "lines"; dir: "asc" | "desc" }>({ key: "name", dir: "asc" });
   const [repoSort, setRepoSort] = useState<{ key: "name" | "platform" | "last_synced"; dir: "asc" | "desc" }>({ key: "name", dir: "asc" });
   const [showInactive, setShowInactive] = useState(false);
-  const [dateRange, setDateRange] = useState<DateRange>(defaultRange);
   const [drillDown, setDrillDown] = useState<{ title: string; metric: string } | null>(null);
   const [repoForm, setRepoForm] = useState({ name: "", ssh_url: "", platform: "github", platform_owner: "", platform_repo: "", ssh_credential_id: "" });
   const [editRepo, setEditRepo] = useState<{ id: string; name: string; ssh_url: string; platform: string; platform_owner: string; platform_repo: string; default_branch: string; ssh_credential_id: string } | null>(null);
@@ -43,55 +65,14 @@ export default function ProjectDetailPage() {
   const [purgeRepoId, setPurgeRepoId] = useState<string | null>(null);
   const [purgeAllOpen, setPurgeAllOpen] = useState(false);
   const [purging, setPurging] = useState<Set<string>>(new Set());
-  const [platformCredentials, setPlatformCredentials] = useState<PlatformCredential[]>([]);
-  const pollTimers = useRef<Map<string, NodeJS.Timeout>>(new Map());
 
-  // Stable data: project detail + SSH keys
-  useEffect(() => {
-    if (!projectId) return;
-    Promise.all([
-      api.getProject(projectId),
-      api.listSSHKeys(),
-      api.listPlatformCredentials(),
-    ]).then(([p, k, creds]) => {
-      setProject(p);
-      setSSHKeys(k);
-      setPlatformCredentials(creds);
-    });
-  }, [projectId]);
-
-  // Filter-dependent data: stats + daily activity
-  const refreshStats = useCallback(async () => {
-    if (!projectId) return;
-    const [s, d] = await Promise.all([
-      api.getProjectStats(projectId, { from_date: dateRange.from, to_date: dateRange.to }),
-      api.dailyStats({ project_id: projectId, from_date: dateRange.from, to_date: dateRange.to }),
-    ]);
-    setStats(s);
-    setDailyStats(d);
-  }, [projectId, dateRange]);
-
-  useEffect(() => { refreshStats(); }, [refreshStats]);
-
-  const refreshAll = useCallback(async () => {
-    if (!projectId) return;
-    const [p] = await Promise.all([
-      api.getProject(projectId),
-      refreshStats(),
-    ]);
-    setProject(p);
-  }, [projectId, refreshStats]);
-
-  useEffect(() => {
-    return () => {
-      pollTimers.current.forEach((timer) => clearTimeout(timer));
-    };
-  }, []);
+  function invalidateAll() {
+    qc.invalidateQueries({ queryKey: queryKeys.projects.detail(projectId) });
+    qc.invalidateQueries({ queryKey: queryKeys.projects.stats(projectId) });
+    qc.invalidateQueries({ queryKey: queryKeys.daily(dailyParams) });
+  }
 
   function stopPolling(repoId: string) {
-    const timer = pollTimers.current.get(repoId);
-    if (timer) clearTimeout(timer);
-    pollTimers.current.delete(repoId);
     setSyncingRepos((prev) => {
       const next = new Map(prev);
       next.delete(repoId);
@@ -99,30 +80,11 @@ export default function ProjectDetailPage() {
     });
   }
 
-  function pollSyncJob(repoId: string, jobId: string) {
-    const check = async () => {
-      try {
-        const jobs = await api.listSyncJobs(repoId);
-        const job = jobs.find((j) => j.id === jobId);
-        if (!job || job.status === "completed" || job.status === "failed" || job.status === "cancelled") {
-          stopPolling(repoId);
-          await refreshAll();
-          return;
-        }
-      } catch { /* keep polling */ }
-      const timer = setTimeout(check, 3000);
-      pollTimers.current.set(repoId, timer);
-    };
-    const timer = setTimeout(check, 3000);
-    pollTimers.current.set(repoId, timer);
-  }
-
   async function handleSync(repoId: string) {
     if (syncingRepos.has(repoId)) return;
     try {
-      const job = await api.syncRepo(repoId);
+      const job = await syncRepo.mutateAsync(repoId);
       setSyncingRepos((prev) => new Map(prev).set(repoId, job.id));
-      pollSyncJob(repoId, job.id);
     } catch { /* ignore */ }
   }
 
@@ -132,7 +94,7 @@ export default function ProjectDetailPage() {
     try {
       await api.cancelSyncJob(repoId, jobId);
       stopPolling(repoId);
-      await refreshAll();
+      invalidateAll();
     } catch { /* ignore */ }
   }
 
@@ -141,29 +103,22 @@ export default function ProjectDetailPage() {
     const toSync = project.repositories.filter((r) => !syncingRepos.has(r.id));
     for (const r of toSync) {
       try {
-        const job = await api.syncRepo(r.id);
+        const job = await syncRepo.mutateAsync(r.id);
         setSyncingRepos((prev) => new Map(prev).set(r.id, job.id));
-        pollSyncJob(r.id, job.id);
       } catch { /* ignore individual failures */ }
     }
   }
 
   async function handleAddRepo(e: React.FormEvent) {
     e.preventDefault();
-    if (!projectId) return;
-    await api.createRepo(projectId, {
-      ...repoForm,
-      ssh_credential_id: repoForm.ssh_credential_id || null,
-    });
-    const p = await api.getProject(projectId);
-    setProject(p);
+    await createRepo.mutateAsync({ ...repoForm, ssh_credential_id: repoForm.ssh_credential_id || null });
     setOpen(false);
     setRepoForm({ name: "", ssh_url: "", platform: "github", platform_owner: "", platform_repo: "", ssh_credential_id: "" });
   }
 
   async function handleEditRepo(e: React.FormEvent) {
     e.preventDefault();
-    if (!editRepo || !projectId) return;
+    if (!editRepo) return;
     await api.updateRepo(editRepo.id, {
       name: editRepo.name,
       ssh_url: editRepo.ssh_url || null,
@@ -173,38 +128,33 @@ export default function ProjectDetailPage() {
       default_branch: editRepo.default_branch,
       ssh_credential_id: editRepo.ssh_credential_id || null,
     });
-    setProject(await api.getProject(projectId));
+    qc.invalidateQueries({ queryKey: queryKeys.projects.detail(projectId) });
     setEditRepo(null);
   }
 
   async function handleDeleteRepo() {
-    if (!deleteRepoId || !projectId) return;
-    try {
-      await api.deleteRepo(deleteRepoId);
-      setProject(await api.getProject(projectId));
-    } catch { /* ignore */ }
+    if (!deleteRepoId) return;
+    await deleteRepo.mutateAsync(deleteRepoId);
     setDeleteRepoId(null);
   }
 
   async function handlePurgeRepo() {
-    if (!purgeRepoId || !projectId) return;
+    if (!purgeRepoId) return;
     setPurging((prev) => new Set(prev).add(purgeRepoId));
     try {
-      await api.purgeRepoData(purgeRepoId);
-      await refreshAll();
+      await purgeRepo.mutateAsync(purgeRepoId);
     } catch { /* ignore */ }
     setPurging((prev) => { const next = new Set(prev); next.delete(purgeRepoId); return next; });
     setPurgeRepoId(null);
   }
 
   async function handlePurgeAll() {
-    if (!project || !projectId) return;
+    if (!project) return;
     const ids = project.repositories.map((r) => r.id);
     setPurging(new Set(ids));
     setPurgeAllOpen(false);
     try {
-      await Promise.all(ids.map((id) => api.purgeRepoData(id)));
-      await refreshAll();
+      await Promise.all(ids.map((id) => purgeRepo.mutateAsync(id)));
     } catch { /* ignore */ }
     setPurging(new Set());
   }
@@ -216,7 +166,7 @@ export default function ProjectDetailPage() {
     commits: d.commits,
   })), [dailyStats]);
 
-  const contribStats = useMemo(() => {
+  const contribStatsMap = useMemo(() => {
     const map = new Map<string, { added: number; deleted: number; sparkline: number[] }>();
     const byContribDate = new Map<string, Map<string, number>>();
     dailyStats.forEach((d) => {
@@ -242,11 +192,9 @@ export default function ProjectDetailPage() {
     if (!project) return [];
     return [...project.repositories].sort((a, b) => {
       let cmp = 0;
-      if (repoSort.key === "name") {
-        cmp = a.name.localeCompare(b.name);
-      } else if (repoSort.key === "platform") {
-        cmp = a.platform.localeCompare(b.platform);
-      } else if (repoSort.key === "last_synced") {
+      if (repoSort.key === "name") cmp = a.name.localeCompare(b.name);
+      else if (repoSort.key === "platform") cmp = a.platform.localeCompare(b.platform);
+      else if (repoSort.key === "last_synced") {
         const aTime = a.last_synced_at ? new Date(a.last_synced_at).getTime() : 0;
         const bTime = b.last_synced_at ? new Date(b.last_synced_at).getTime() : 0;
         cmp = aTime - bTime;
@@ -259,34 +207,9 @@ export default function ProjectDetailPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <h1 className="text-3xl font-bold tracking-tight">{project.name}</h1>
-          {project.description && <p className="text-muted-foreground">{project.description}</p>}
-        </div>
-        <div className="flex items-center gap-2 shrink-0">
-          <ShieldCheck className="h-4 w-4 text-muted-foreground" />
-          <Select
-            value={project.platform_credential_id || "__none__"}
-            onValueChange={async (v) => {
-              const credId = v === "__none__" ? null : v;
-              await api.updateProject(projectId, { platform_credential_id: credId });
-              setProject((p) => p ? { ...p, platform_credential_id: credId } : p);
-            }}
-          >
-            <SelectTrigger className="w-[220px] h-8 text-xs">
-              <SelectValue placeholder="No platform token" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="__none__">No platform token</SelectItem>
-              {platformCredentials.map((c) => (
-                <SelectItem key={c.id} value={c.id}>
-                  {c.name} <span className="text-muted-foreground ml-1">({c.platform})</span>
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
+      <div>
+        <h1 className="text-3xl font-bold tracking-tight">{project.name}</h1>
+        {project.description && <p className="text-muted-foreground">{project.description}</p>}
       </div>
 
       <div className="flex flex-wrap items-center gap-3 rounded-lg border border-border bg-muted/30 px-4 py-3">
@@ -331,23 +254,11 @@ export default function ProjectDetailPage() {
         <div className="flex items-center gap-2">
           {project.repositories.length > 0 && (
             <>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setPurgeAllOpen(true)}
-                disabled={purging.size > 0}
-              >
-                <Eraser className={`mr-2 h-4 w-4 ${purging.size > 0 ? "animate-pulse" : ""}`} />
-                Purge All Data
+              <Button variant="outline" size="sm" onClick={() => setPurgeAllOpen(true)} disabled={purging.size > 0}>
+                <Eraser className={`mr-2 h-4 w-4 ${purging.size > 0 ? "animate-pulse" : ""}`} /> Purge All Data
               </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={handleSyncAll}
-                disabled={project.repositories.every((r) => syncingRepos.has(r.id))}
-              >
-                <RefreshCw className={`mr-2 h-4 w-4 ${project.repositories.some((r) => syncingRepos.has(r.id)) ? "animate-spin" : ""}`} />
-                Sync All
+              <Button variant="outline" size="sm" onClick={handleSyncAll} disabled={project.repositories.every((r) => syncingRepos.has(r.id))}>
+                <RefreshCw className={`mr-2 h-4 w-4 ${project.repositories.some((r) => syncingRepos.has(r.id)) ? "animate-spin" : ""}`} /> Sync All
               </Button>
             </>
           )}
@@ -355,55 +266,57 @@ export default function ProjectDetailPage() {
             <DialogTrigger asChild>
               <Button size="sm"><Plus className="mr-2 h-4 w-4" /> Add Repository</Button>
             </DialogTrigger>
-          <DialogContent className="max-w-lg">
-            <DialogHeader><DialogTitle>Add Repository</DialogTitle></DialogHeader>
-            <form onSubmit={handleAddRepo} className="space-y-4">
-              <div className="space-y-2">
-                <Label>Name</Label>
-                <Input value={repoForm.name} onChange={(e) => setRepoForm((f) => ({ ...f, name: e.target.value }))} required />
-              </div>
-              <div className="space-y-2">
-                <Label>SSH URL</Label>
-                <Input value={repoForm.ssh_url} onChange={(e) => setRepoForm((f) => ({ ...f, ssh_url: e.target.value }))} placeholder="git@github.com:org/repo.git" />
-              </div>
-              <div className="grid grid-cols-2 gap-4">
+            <DialogContent className="max-w-lg">
+              <DialogHeader><DialogTitle>Add Repository</DialogTitle></DialogHeader>
+              <form onSubmit={handleAddRepo} className="space-y-4">
                 <div className="space-y-2">
-                  <Label>Platform</Label>
-                  <Select value={repoForm.platform} onValueChange={(v) => setRepoForm((f) => ({ ...f, platform: v }))}>
-                    <SelectTrigger><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="github">GitHub</SelectItem>
-                      <SelectItem value="gitlab">GitLab</SelectItem>
-                      <SelectItem value="azure">Azure DevOps</SelectItem>
-                    </SelectContent>
-                  </Select>
+                  <Label>Name</Label>
+                  <Input value={repoForm.name} onChange={(e) => setRepoForm((f) => ({ ...f, name: e.target.value }))} required />
                 </div>
                 <div className="space-y-2">
-                  <Label>SSH Key</Label>
-                  <Select value={repoForm.ssh_credential_id} onValueChange={(v) => setRepoForm((f) => ({ ...f, ssh_credential_id: v }))}>
-                    <SelectTrigger><SelectValue placeholder="Select key" /></SelectTrigger>
-                    <SelectContent>
-                      {sshKeys.map((k) => (
-                        <SelectItem key={k.id} value={k.id}>{k.name}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  <Label>SSH URL</Label>
+                  <Input value={repoForm.ssh_url} onChange={(e) => setRepoForm((f) => ({ ...f, ssh_url: e.target.value }))} placeholder="git@github.com:org/repo.git" />
                 </div>
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label>Owner / Org</Label>
-                  <Input value={repoForm.platform_owner} onChange={(e) => setRepoForm((f) => ({ ...f, platform_owner: e.target.value }))} />
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label>Platform</Label>
+                    <Select value={repoForm.platform} onValueChange={(v) => setRepoForm((f) => ({ ...f, platform: v }))}>
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="github">GitHub</SelectItem>
+                        <SelectItem value="gitlab">GitLab</SelectItem>
+                        <SelectItem value="azure">Azure DevOps</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>SSH Key</Label>
+                    <Select value={repoForm.ssh_credential_id} onValueChange={(v) => setRepoForm((f) => ({ ...f, ssh_credential_id: v }))}>
+                      <SelectTrigger><SelectValue placeholder="Select key" /></SelectTrigger>
+                      <SelectContent>
+                        {sshKeys.map((k) => (
+                          <SelectItem key={k.id} value={k.id}>{k.name}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
                 </div>
-                <div className="space-y-2">
-                  <Label>Repo Name</Label>
-                  <Input value={repoForm.platform_repo} onChange={(e) => setRepoForm((f) => ({ ...f, platform_repo: e.target.value }))} />
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label>Owner / Org</Label>
+                    <Input value={repoForm.platform_owner} onChange={(e) => setRepoForm((f) => ({ ...f, platform_owner: e.target.value }))} />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Repo Name</Label>
+                    <Input value={repoForm.platform_repo} onChange={(e) => setRepoForm((f) => ({ ...f, platform_repo: e.target.value }))} />
+                  </div>
                 </div>
-              </div>
-              <Button type="submit" className="w-full">Add Repository</Button>
-            </form>
-          </DialogContent>
-        </Dialog>
+                <Button type="submit" className="w-full" disabled={createRepo.isPending}>
+                  {createRepo.isPending ? "Adding..." : "Add Repository"}
+                </Button>
+              </form>
+            </DialogContent>
+          </Dialog>
         </div>
       </div>
 
@@ -439,21 +352,13 @@ export default function ProjectDetailPage() {
                   <TableRow>
                     <TableCell><GitBranch className="h-4 w-4 text-muted-foreground" /></TableCell>
                     <TableCell>
-                      <Link href={`/projects/${projectId}/repositories/${r.id}`} className="font-medium hover:underline">
-                        {r.name}
-                      </Link>
+                      <Link href={`/projects/${projectId}/repositories/${r.id}`} className="font-medium hover:underline">{r.name}</Link>
                     </TableCell>
                     <TableCell><Badge variant="secondary" className="text-[10px]">{r.platform}</Badge></TableCell>
                     <TableCell className="text-sm text-muted-foreground">
                       {isSyncing ? (
-                        <span className="flex items-center gap-1 text-blue-500">
-                          <Loader2 className="h-3 w-3 animate-spin" /> Syncing...
-                        </span>
-                      ) : r.last_synced_at ? (
-                        new Date(r.last_synced_at).toLocaleDateString()
-                      ) : (
-                        "Never"
-                      )}
+                        <span className="flex items-center gap-1 text-blue-500"><Loader2 className="h-3 w-3 animate-spin" /> Syncing...</span>
+                      ) : r.last_synced_at ? new Date(r.last_synced_at).toLocaleDateString() : "Never"}
                     </TableCell>
                     <TableCell className="text-right">
                       <div className="flex items-center justify-end gap-1">
@@ -466,29 +371,10 @@ export default function ProjectDetailPage() {
                             <RefreshCw className="mr-1 h-3 w-3" /> Sync
                           </Button>
                         )}
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="text-amber-600 hover:text-amber-700"
-                          disabled={purging.has(r.id) || isSyncing}
-                          onClick={() => setPurgeRepoId(r.id)}
-                        >
+                        <Button variant="ghost" size="sm" className="text-amber-600 hover:text-amber-700" disabled={purging.has(r.id) || isSyncing} onClick={() => setPurgeRepoId(r.id)}>
                           <Eraser className={`h-3.5 w-3.5 ${purging.has(r.id) ? "animate-pulse" : ""}`} />
                         </Button>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => setEditRepo({
-                            id: r.id,
-                            name: r.name,
-                            ssh_url: r.ssh_url || "",
-                            platform: r.platform,
-                            platform_owner: r.platform_owner || "",
-                            platform_repo: r.platform_repo || "",
-                            default_branch: r.default_branch,
-                            ssh_credential_id: r.ssh_credential_id || "",
-                          })}
-                        >
+                        <Button variant="ghost" size="sm" onClick={() => setEditRepo({ id: r.id, name: r.name, ssh_url: r.ssh_url || "", platform: r.platform, platform_owner: r.platform_owner || "", platform_repo: r.platform_repo || "", default_branch: r.default_branch, ssh_credential_id: r.ssh_credential_id || "" })}>
                           <Pencil className="h-3.5 w-3.5" />
                         </Button>
                         <Button variant="ghost" size="sm" className="text-destructive hover:text-destructive" onClick={() => setDeleteRepoId(r.id)}>
@@ -504,7 +390,7 @@ export default function ProjectDetailPage() {
                           repoId={r.id}
                           jobId={syncJobId}
                           compact
-                          onDone={() => { stopPolling(r.id); refreshAll(); }}
+                          onDone={() => { stopPolling(r.id); invalidateAll(); }}
                         />
                       </TableCell>
                     </TableRow>
@@ -586,9 +472,7 @@ export default function ProjectDetailPage() {
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={handleDeleteRepo} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
-              Delete
-            </AlertDialogAction>
+            <AlertDialogAction onClick={handleDeleteRepo} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">Delete</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
@@ -603,9 +487,7 @@ export default function ProjectDetailPage() {
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={handlePurgeRepo} className="bg-amber-600 text-white hover:bg-amber-700">
-              Purge Data
-            </AlertDialogAction>
+            <AlertDialogAction onClick={handlePurgeRepo} className="bg-amber-600 text-white hover:bg-amber-700">Purge Data</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
@@ -620,22 +502,20 @@ export default function ProjectDetailPage() {
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={handlePurgeAll} className="bg-amber-600 text-white hover:bg-amber-700">
-              Purge All Data
-            </AlertDialogAction>
+            <AlertDialogAction onClick={handlePurgeAll} className="bg-amber-600 text-white hover:bg-amber-700">Purge All Data</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
 
       {project.contributors.length > 0 && (() => {
         const hasActivity = (id: string) => {
-          const cs = contribStats.get(id);
+          const cs = contribStatsMap.get(id);
           return cs ? cs.added + cs.deleted > 0 : false;
         };
         const sortFn = (a: ContributorSummary, b: ContributorSummary) => {
           if (contribSort.key === "lines") {
-            const aTotal = (contribStats.get(a.id)?.added || 0) + (contribStats.get(a.id)?.deleted || 0);
-            const bTotal = (contribStats.get(b.id)?.added || 0) + (contribStats.get(b.id)?.deleted || 0);
+            const aTotal = (contribStatsMap.get(a.id)?.added || 0) + (contribStatsMap.get(a.id)?.deleted || 0);
+            const bTotal = (contribStatsMap.get(b.id)?.added || 0) + (contribStatsMap.get(b.id)?.deleted || 0);
             return contribSort.dir === "asc" ? aTotal - bTotal : bTotal - aTotal;
           }
           const valA = contribSort.key === "name" ? a.canonical_name : a.canonical_email;
@@ -657,12 +537,7 @@ export default function ProjectDetailPage() {
               <h2 className="text-xl font-semibold">Contributors</h2>
               <div className="relative w-64">
                 <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-                <Input
-                  placeholder="Filter by name or email..."
-                  value={contribSearch}
-                  onChange={(e) => setContribSearch(e.target.value)}
-                  className="pl-9"
-                />
+                <Input placeholder="Filter by name or email..." value={contribSearch} onChange={(e) => setContribSearch(e.target.value)} className="pl-9" />
               </div>
             </div>
             <Card>
@@ -670,26 +545,17 @@ export default function ProjectDetailPage() {
                 <TableHeader>
                   <TableRow>
                     <TableHead>
-                      <button
-                        className="flex items-center gap-1 hover:text-foreground"
-                        onClick={() => setContribSort((s) => ({ key: "name", dir: s.key === "name" && s.dir === "asc" ? "desc" : "asc" }))}
-                      >
+                      <button className="flex items-center gap-1 hover:text-foreground" onClick={() => setContribSort((s) => ({ key: "name", dir: s.key === "name" && s.dir === "asc" ? "desc" : "asc" }))}>
                         Name <ArrowUpDown className="h-3 w-3" />
                       </button>
                     </TableHead>
                     <TableHead>
-                      <button
-                        className="flex items-center gap-1 hover:text-foreground"
-                        onClick={() => setContribSort((s) => ({ key: "email", dir: s.key === "email" && s.dir === "asc" ? "desc" : "asc" }))}
-                      >
+                      <button className="flex items-center gap-1 hover:text-foreground" onClick={() => setContribSort((s) => ({ key: "email", dir: s.key === "email" && s.dir === "asc" ? "desc" : "asc" }))}>
                         Email <ArrowUpDown className="h-3 w-3" />
                       </button>
                     </TableHead>
                     <TableHead>
-                      <button
-                        className="flex items-center gap-1 hover:text-foreground"
-                        onClick={() => setContribSort((s) => ({ key: "lines", dir: s.key === "lines" && s.dir === "desc" ? "asc" : "desc" }))}
-                      >
+                      <button className="flex items-center gap-1 hover:text-foreground" onClick={() => setContribSort((s) => ({ key: "lines", dir: s.key === "lines" && s.dir === "desc" ? "asc" : "desc" }))}>
                         +/- Lines <ArrowUpDown className="h-3 w-3" />
                       </button>
                     </TableHead>
@@ -698,27 +564,21 @@ export default function ProjectDetailPage() {
                 </TableHeader>
                 <TableBody>
                   {active.map((c) => {
-                    const cs = contribStats.get(c.id);
+                    const cs = contribStatsMap.get(c.id);
                     return (
                       <TableRow key={c.id}>
                         <TableCell>
                           <Link href={`/contributors/${c.id}`} className="flex items-center gap-2 font-medium hover:underline">
-                            <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-bold text-primary">
-                              {c.canonical_name.charAt(0).toUpperCase()}
-                            </div>
+                            <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-bold text-primary">{c.canonical_name.charAt(0).toUpperCase()}</div>
                             {c.canonical_name}
                           </Link>
                         </TableCell>
                         <TableCell className="text-muted-foreground">{c.canonical_email}</TableCell>
                         <TableCell className="text-xs whitespace-nowrap">
-                          <span className="text-emerald-500">+{(cs?.added || 0).toLocaleString()}</span>
-                          {" / "}
-                          <span className="text-red-500">-{(cs?.deleted || 0).toLocaleString()}</span>
+                          <span className="text-emerald-500">+{(cs?.added || 0).toLocaleString()}</span>{" / "}<span className="text-red-500">-{(cs?.deleted || 0).toLocaleString()}</span>
                         </TableCell>
                         <TableCell>
-                          <div className="h-8 w-28">
-                            <MiniSparkline data={cs!.sparkline} color="var(--chart-1)" />
-                          </div>
+                          <div className="h-8 w-28"><MiniSparkline data={cs!.sparkline} color="var(--chart-1)" /></div>
                         </TableCell>
                       </TableRow>
                     );
@@ -734,10 +594,7 @@ export default function ProjectDetailPage() {
                     <>
                       <TableRow>
                         <TableCell colSpan={4} className="p-0">
-                          <button
-                            onClick={() => setShowInactive((v) => !v)}
-                            className="flex w-full items-center gap-2 px-4 py-2 text-xs font-medium text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors"
-                          >
+                          <button onClick={() => setShowInactive((v) => !v)} className="flex w-full items-center gap-2 px-4 py-2 text-xs font-medium text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors">
                             {showInactive ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
                             {inactive.length} inactive contributor{inactive.length !== 1 ? "s" : ""}
                           </button>
@@ -747,9 +604,7 @@ export default function ProjectDetailPage() {
                         <TableRow key={c.id} className="text-muted-foreground">
                           <TableCell>
                             <Link href={`/contributors/${c.id}`} className="flex items-center gap-2 font-medium hover:underline">
-                              <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-muted text-xs font-bold">
-                                {c.canonical_name.charAt(0).toUpperCase()}
-                              </div>
+                              <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-muted text-xs font-bold">{c.canonical_name.charAt(0).toUpperCase()}</div>
                               {c.canonical_name}
                             </Link>
                           </TableCell>

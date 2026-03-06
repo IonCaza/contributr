@@ -64,6 +64,7 @@ async def _query_commits(
     branch_names: list[str] | None = None,
     from_date: date | None = None,
     to_date: date | None = None,
+    search: str | None = None,
     page: int = 1,
     per_page: int = 50,
 ) -> PaginatedCommits:
@@ -83,6 +84,10 @@ async def _query_commits(
         end = to_date + timedelta(days=1)
         base = base.where(Commit.authored_at <= end)
         count_base = count_base.where(Commit.authored_at <= end)
+    if search:
+        like_pattern = f"%{search}%"
+        base = base.where(Commit.message.ilike(like_pattern))
+        count_base = count_base.where(Commit.message.ilike(like_pattern))
     if branch_names:
         base = (
             base.join(commit_branches, commit_branches.c.commit_id == Commit.id)
@@ -135,6 +140,7 @@ async def list_repo_commits(
     repo_id: uuid.UUID,
     branch: list[str] = Query(default=[]),
     contributor_id: uuid.UUID | None = None,
+    search: str | None = None,
     page: int = Query(default=1, ge=1),
     per_page: int = Query(default=50, ge=1, le=200),
     db: AsyncSession = Depends(get_db),
@@ -145,6 +151,7 @@ async def list_repo_commits(
         repository_id=repo_id,
         contributor_id=contributor_id,
         branch_names=branch or None,
+        search=search,
         page=page,
         per_page=per_page,
     )
@@ -157,6 +164,7 @@ async def list_contributor_commits(
     branch: list[str] = Query(default=[]),
     from_date: date | None = None,
     to_date: date | None = None,
+    search: str | None = None,
     page: int = Query(default=1, ge=1),
     per_page: int = Query(default=50, ge=1, le=200),
     db: AsyncSession = Depends(get_db),
@@ -169,6 +177,7 @@ async def list_contributor_commits(
         branch_names=branch or None,
         from_date=from_date,
         to_date=to_date,
+        search=search,
         page=page,
         per_page=per_page,
     )

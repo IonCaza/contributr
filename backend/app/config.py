@@ -12,11 +12,6 @@ class Settings(BaseSettings):
     backend_cors_origins: list[str] = ["http://localhost:3000"]
     repos_cache_dir: str = "/tmp/contributr_repos"
 
-    ai_model: str = "gpt-4o-mini"
-    ai_api_key: str = ""
-    ai_base_url: str | None = None
-    ai_temperature: float = 0.1
-
     model_config = {"env_file": ".env", "extra": "ignore"}
 
 

@@ -1,13 +1,15 @@
 "use client";
 
 import { useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { GitCommitHorizontal, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, GitMerge, ExternalLink, FileCode2, Loader2 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import type { CommitItem, CommitDetail } from "@/lib/types";
+import type { CommitItem } from "@/lib/types";
 import { api } from "@/lib/api-client";
+import { queryKeys } from "@/lib/query-keys";
 
 interface CommitListProps {
   commits: CommitItem[];
@@ -22,25 +24,15 @@ interface CommitListProps {
 export function CommitList({ commits, total, page, perPage, loading, onPageChange, showRepo = false }: CommitListProps) {
   const totalPages = Math.max(1, Math.ceil(total / perPage));
   const [expandedId, setExpandedId] = useState<string | null>(null);
-  const [detail, setDetail] = useState<CommitDetail | null>(null);
-  const [detailLoading, setDetailLoading] = useState(false);
 
-  async function toggleExpand(commitId: string) {
-    if (expandedId === commitId) {
-      setExpandedId(null);
-      setDetail(null);
-      return;
-    }
-    setExpandedId(commitId);
-    setDetailLoading(true);
-    try {
-      const d = await api.getCommitDetail(commitId);
-      setDetail(d);
-    } catch {
-      setDetail(null);
-    } finally {
-      setDetailLoading(false);
-    }
+  const { data: detail, isLoading: detailLoading } = useQuery({
+    queryKey: queryKeys.commitDetail(expandedId ?? ""),
+    queryFn: () => api.getCommitDetail(expandedId!),
+    enabled: !!expandedId,
+  });
+
+  function toggleExpand(commitId: string) {
+    setExpandedId((prev) => (prev === commitId ? null : commitId));
   }
 
   const colCount = showRepo ? 8 : 7;

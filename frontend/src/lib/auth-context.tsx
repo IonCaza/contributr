@@ -1,7 +1,8 @@
 "use client";
 
 import { createContext, useContext, useEffect, useState, useCallback, type ReactNode } from "react";
-import { api } from "./api-client";
+import { api, setSessionExpiredHandler } from "./api-client";
+import { queryClient } from "./query-client";
 import type { User } from "./types";
 
 interface AuthContextType {
@@ -17,6 +18,17 @@ const AuthContext = createContext<AuthContextType | null>(null);
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
+
+  const logout = useCallback(() => {
+    localStorage.removeItem("access_token");
+    localStorage.removeItem("refresh_token");
+    setUser(null);
+    queryClient.clear();
+  }, []);
+
+  useEffect(() => {
+    setSessionExpiredHandler(logout);
+  }, [logout]);
 
   const refresh = useCallback(async () => {
     try {
@@ -45,12 +57,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     localStorage.setItem("access_token", tokens.access_token);
     localStorage.setItem("refresh_token", tokens.refresh_token);
     await refresh();
-  };
-
-  const logout = () => {
-    localStorage.removeItem("access_token");
-    localStorage.removeItem("refresh_token");
-    setUser(null);
   };
 
   return (

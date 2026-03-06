@@ -1,9 +1,9 @@
 "use client";
 
-import { useEffect, useState, useRef } from "react";
-import { Key, Users, Plus, Trash2, Copy, Check, Download, Upload, Database, Loader2, CheckCircle2, AlertCircle, Bot, Eye, EyeOff, FileX2, ShieldCheck, Play } from "lucide-react";
+import { useState, useRef } from "react";
+import { Key, Users, Plus, Trash2, Copy, Check, Download, Upload, Database, Loader2, CheckCircle2, AlertCircle, Bot, Eye, EyeOff, FileX2, ShieldCheck, Play, Pencil, Cpu, Wrench, Star } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -12,10 +12,70 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
+import { Textarea } from "@/components/ui/textarea";
 import { useAuth } from "@/lib/auth-context";
 import { api } from "@/lib/api-client";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import type { SSHKey, User, AiSettings, FileExclusionPattern, PlatformCredential } from "@/lib/types";
+import { ConfirmDialog } from "@/components/confirm-dialog";
+import type { LlmProvider, AgentConfig, KnowledgeGraph } from "@/lib/types";
+import { KnowledgeGraphEditor } from "@/components/knowledge-graph-editor";
+import {
+  useSSHKeys, useCreateSSHKey, useDeleteSSHKey,
+  usePlatformCredentials, useCreatePlatformCredential, useDeletePlatformCredential, useTestPlatformCredential,
+  useUsers, useCreateUser, useDeleteUser,
+  useFileExclusions, useCreateFileExclusion, useUpdateFileExclusion, useDeleteFileExclusion, useLoadDefaultExclusions,
+  useAiSettings, useUpdateAiSettings,
+  useLlmProviders, useCreateLlmProvider, useUpdateLlmProvider, useDeleteLlmProvider,
+  useAgents, useCreateAgent, useUpdateAgent, useDeleteAgent,
+  useAiTools,
+  useKnowledgeGraphs, useKnowledgeGraph, useCreateKnowledgeGraph, useUpdateKnowledgeGraph, useDeleteKnowledgeGraph, useRegenerateKnowledgeGraph,
+} from "@/hooks/use-settings";
+
+function CreateKnowledgeGraphDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
+  const [form, setForm] = useState({ name: "", description: "", generation_mode: "schema_and_entities" });
+  const createKG = useCreateKnowledgeGraph();
+
+  return (
+    <Dialog open={open} onOpenChange={(v) => { if (!v) setForm({ name: "", description: "", generation_mode: "schema_and_entities" }); onOpenChange(v); }}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>Create Knowledge Graph</DialogTitle>
+        </DialogHeader>
+        <form onSubmit={async (e) => {
+          e.preventDefault();
+          await createKG.mutateAsync(form);
+          setForm({ name: "", description: "", generation_mode: "schema_and_entities" });
+          onOpenChange(false);
+        }} className="space-y-4">
+          <div className="space-y-2">
+            <Label>Name</Label>
+            <Input value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} placeholder="My Data Model" required />
+          </div>
+          <div className="space-y-2">
+            <Label>Description</Label>
+            <Input value={form.description} onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))} placeholder="Optional description" />
+          </div>
+          <div className="space-y-2">
+            <Label>Generation Mode</Label>
+            <Select value={form.generation_mode} onValueChange={(v) => setForm((f) => ({ ...f, generation_mode: v }))}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="schema_only">Schema Only</SelectItem>
+                <SelectItem value="entities_only">Entities Only</SelectItem>
+                <SelectItem value="schema_and_entities">Schema + Entities</SelectItem>
+                <SelectItem value="manual">Manual</SelectItem>
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-muted-foreground">Schema includes column names and types. Entities includes row counts.</p>
+          </div>
+          <Button type="submit" className="w-full" disabled={createKG.isPending}>
+            {createKG.isPending ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Generating...</> : "Create"}
+          </Button>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
 
 function CopyButton({ text }: { text: string }) {
   const [copied, setCopied] = useState(false);
@@ -37,154 +97,232 @@ function CopyButton({ text }: { text: string }) {
 
 export default function SettingsPage() {
   const { user } = useAuth();
-  const [sshKeys, setSSHKeys] = useState<SSHKey[]>([]);
-  const [users, setUsers] = useState<User[]>([]);
+
+  const { data: sshKeys = [] } = useSSHKeys();
+  const createSSHKey = useCreateSSHKey();
+  const deleteSSHKey = useDeleteSSHKey();
+
+  const { data: credentials = [] } = usePlatformCredentials();
+  const createCredential = useCreatePlatformCredential();
+  const deleteCredential = useDeletePlatformCredential();
+  const testCredential = useTestPlatformCredential();
+
+  const { data: users = [], isLoading: usersLoading } = useUsers();
+  const createUser = useCreateUser();
+  const deleteUser = useDeleteUser();
+
+  const { data: exclusions = [] } = useFileExclusions();
+  const createExclusion = useCreateFileExclusion();
+  const updateExclusion = useUpdateFileExclusion();
+  const deleteExclusion = useDeleteFileExclusion();
+  const loadDefaults = useLoadDefaultExclusions();
+
+  const { data: aiSettingsData } = useAiSettings();
+  const updateAiSettings = useUpdateAiSettings();
+
+  const { data: llmProviders = [] } = useLlmProviders();
+  const createLlmProvider = useCreateLlmProvider();
+  const updateLlmProvider = useUpdateLlmProvider();
+  const deleteLlmProvider = useDeleteLlmProvider();
+
+  const { data: agents = [] } = useAgents();
+  const createAgent = useCreateAgent();
+  const updateAgent = useUpdateAgent();
+  const deleteAgent = useDeleteAgent();
+
+  const { data: aiTools = [] } = useAiTools();
+
+  const { data: knowledgeGraphs = [] } = useKnowledgeGraphs();
+  const updateKG = useUpdateKnowledgeGraph();
+  const deleteKG = useDeleteKnowledgeGraph();
+  const regenerateKG = useRegenerateKnowledgeGraph();
+
   const [keyName, setKeyName] = useState("");
   const [keyType, setKeyType] = useState<"ed25519" | "rsa">("ed25519");
   const [rsaBits, setRsaBits] = useState<string>("4096");
   const [keyOpen, setKeyOpen] = useState(false);
+
+  const [credOpen, setCredOpen] = useState(false);
+  const [credForm, setCredForm] = useState({ name: "", platform: "azure", token: "", base_url: "" });
+  const [credTestResult, setCredTestResult] = useState<{ id: string; success: boolean; message: string } | null>(null);
+
   const [userOpen, setUserOpen] = useState(false);
   const [userForm, setUserForm] = useState({ email: "", username: "", password: "", full_name: "", is_admin: false });
+
+  const [newPattern, setNewPattern] = useState("");
+  const [newDesc, setNewDesc] = useState("");
+
+  // LLM Provider form
+  const [providerOpen, setProviderOpen] = useState(false);
+  const [editProvider, setEditProvider] = useState<LlmProvider | null>(null);
+  const [providerForm, setProviderForm] = useState({ name: "", provider_type: "openai", model: "", api_key: "", base_url: "", temperature: "0.1", context_window: "", is_default: false });
+  const [showProviderKey, setShowProviderKey] = useState(false);
+
+  // Agent form
+  const [agentOpen, setAgentOpen] = useState(false);
+  const [editAgentSlug, setEditAgentSlug] = useState<string | null>(null);
+  const [agentForm, setAgentForm] = useState({ slug: "", name: "", description: "", llm_provider_id: "", system_prompt: "", max_iterations: "10", summary_token_limit: "", enabled: true, tool_slugs: [] as string[], knowledge_graph_ids: [] as string[] });
+
+  // Knowledge Graph state
+  const [kgCreateOpen, setKgCreateOpen] = useState(false);
+  const [kgEditId, setKgEditId] = useState<string | null>(null);
+  const { data: kgDetail } = useKnowledgeGraph(kgEditId);
+  const [deleteKgId, setDeleteKgId] = useState<string | null>(null);
+
+  const [deleteKeyId, setDeleteKeyId] = useState<string | null>(null);
+  const [deleteCredId, setDeleteCredId] = useState<string | null>(null);
+  const [deleteUserId, setDeleteUserId] = useState<string | null>(null);
+  const [deleteProviderId, setDeleteProviderId] = useState<string | null>(null);
+  const [deleteAgentSlug, setDeleteAgentSlug] = useState<string | null>(null);
+  const [deleteExclusionId, setDeleteExclusionId] = useState<string | null>(null);
+
   const [exporting, setExporting] = useState(false);
   const [importing, setImporting] = useState(false);
   const [importResult, setImportResult] = useState<Record<string, { submitted: number; imported: number }> | null>(null);
   const [backupError, setBackupError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const [exclusions, setExclusions] = useState<FileExclusionPattern[]>([]);
-  const [newPattern, setNewPattern] = useState("");
-  const [newDesc, setNewDesc] = useState("");
-  const [loadingDefaults, setLoadingDefaults] = useState(false);
-
-  const [credentials, setCredentials] = useState<PlatformCredential[]>([]);
-  const [credOpen, setCredOpen] = useState(false);
-  const [credForm, setCredForm] = useState({ name: "", platform: "azure", token: "", base_url: "" });
-  const [credTesting, setCredTesting] = useState<string | null>(null);
-  const [credTestResult, setCredTestResult] = useState<{ id: string; success: boolean; message: string } | null>(null);
-
-  const [aiSettings, setAiSettings] = useState<AiSettings | null>(null);
-  const [aiForm, setAiForm] = useState({ model: "", api_key: "", base_url: "", temperature: "0.1", max_iterations: "10" });
-  const [aiSaving, setAiSaving] = useState(false);
-  const [aiSaved, setAiSaved] = useState(false);
-  const [aiError, setAiError] = useState<string | null>(null);
-  const [showApiKey, setShowApiKey] = useState(false);
-
-  useEffect(() => {
-    api.listSSHKeys().then(setSSHKeys);
-    api.listPlatformCredentials().then(setCredentials).catch(() => {});
-    api.listFileExclusions().then(setExclusions).catch(() => {});
-    if (user?.is_admin) {
-      api.listUsers().then(setUsers);
-      api.getAiSettings().then((s) => {
-        setAiSettings(s);
-        setAiForm({
-          model: s.model,
-          api_key: "",
-          base_url: s.base_url || "",
-          temperature: String(s.temperature),
-          max_iterations: String(s.max_iterations),
-        });
-      }).catch(() => {});
-    }
-  }, [user]);
-
   async function handleCreateKey(e: React.FormEvent) {
     e.preventDefault();
-    const key = await api.createSSHKey({
+    await createSSHKey.mutateAsync({
       name: keyName,
       key_type: keyType,
       ...(keyType === "rsa" ? { rsa_bits: parseInt(rsaBits) } : {}),
     });
-    setSSHKeys((prev) => [key, ...prev]);
     setKeyName("");
     setKeyType("ed25519");
     setRsaBits("4096");
     setKeyOpen(false);
   }
 
-  async function handleDeleteKey(id: string) {
-    await api.deleteSSHKey(id);
-    setSSHKeys((prev) => prev.filter((k) => k.id !== id));
-  }
-
   async function handleCreateCredential(e: React.FormEvent) {
     e.preventDefault();
-    const cred = await api.createPlatformCredential({
+    await createCredential.mutateAsync({
       name: credForm.name,
       platform: credForm.platform,
       token: credForm.token,
       base_url: credForm.base_url || undefined,
     });
-    setCredentials((prev) => [cred, ...prev]);
     setCredForm({ name: "", platform: "azure", token: "", base_url: "" });
     setCredOpen(false);
   }
 
-  async function handleDeleteCredential(id: string) {
-    await api.deletePlatformCredential(id);
-    setCredentials((prev) => prev.filter((c) => c.id !== id));
-  }
-
   async function handleTestCredential(id: string) {
-    setCredTesting(id);
     setCredTestResult(null);
     try {
-      const result = await api.testPlatformCredential(id);
+      const result = await testCredential.mutateAsync(id);
       setCredTestResult({ id, ...result });
     } catch {
       setCredTestResult({ id, success: false, message: "Request failed" });
-    } finally {
-      setCredTesting(null);
     }
   }
 
   async function handleCreateUser(e: React.FormEvent) {
     e.preventDefault();
-    const u = await api.createUser(userForm);
-    setUsers((prev) => [...prev, u]);
+    await createUser.mutateAsync(userForm);
     setUserForm({ email: "", username: "", password: "", full_name: "", is_admin: false });
     setUserOpen(false);
   }
 
-  async function handleDeleteUser(id: string) {
-    await api.deleteUser(id);
-    setUsers((prev) => prev.filter((u) => u.id !== id));
-  }
-
-  async function handleSaveAi(e: React.FormEvent) {
-    e.preventDefault();
-    setAiSaving(true);
-    setAiError(null);
-    setAiSaved(false);
-    try {
-      const payload: Record<string, unknown> = {
-        model: aiForm.model,
-        temperature: parseFloat(aiForm.temperature) || 0.1,
-        max_iterations: parseInt(aiForm.max_iterations) || 10,
-        base_url: aiForm.base_url || "",
-      };
-      if (aiForm.api_key) payload.api_key = aiForm.api_key;
-      const updated = await api.updateAiSettings(payload as Parameters<typeof api.updateAiSettings>[0]);
-      setAiSettings(updated);
-      setAiForm((f) => ({ ...f, api_key: "" }));
-      setAiSaved(true);
-      setTimeout(() => setAiSaved(false), 3000);
-    } catch (err) {
-      setAiError(err instanceof Error ? err.message : "Failed to save");
-    } finally {
-      setAiSaving(false);
-    }
-  }
-
   async function handleToggleAi(checked?: boolean) {
-    if (!aiSettings) return;
-    const newValue = checked !== undefined ? checked : !aiSettings.enabled;
-    try {
-      const updated = await api.updateAiSettings({ enabled: newValue });
-      setAiSettings(updated);
-    } catch (err) {
-      setAiError(err instanceof Error ? err.message : "Failed to toggle");
+    if (!aiSettingsData) return;
+    const newValue = checked !== undefined ? checked : !aiSettingsData.enabled;
+    await updateAiSettings.mutateAsync({ enabled: newValue });
+  }
+
+  function openProviderDialog(provider?: LlmProvider) {
+    if (provider) {
+      setEditProvider(provider);
+      setProviderForm({
+        name: provider.name,
+        provider_type: provider.provider_type,
+        model: provider.model,
+        api_key: "",
+        base_url: provider.base_url || "",
+        temperature: String(provider.temperature),
+        context_window: provider.context_window ? String(provider.context_window) : "",
+        is_default: provider.is_default,
+      });
+    } else {
+      setEditProvider(null);
+      setProviderForm({ name: "", provider_type: "openai", model: "", api_key: "", base_url: "", temperature: "0.1", context_window: "", is_default: false });
     }
+    setShowProviderKey(false);
+    setProviderOpen(true);
+  }
+
+  async function handleSaveProvider(e: React.FormEvent) {
+    e.preventDefault();
+    const data: Record<string, unknown> = {
+      name: providerForm.name,
+      provider_type: providerForm.provider_type,
+      model: providerForm.model,
+      base_url: providerForm.base_url || "",
+      temperature: parseFloat(providerForm.temperature) || 0.1,
+      context_window: providerForm.context_window ? parseInt(providerForm.context_window) : null,
+      is_default: providerForm.is_default,
+    };
+    if (providerForm.api_key) data.api_key = providerForm.api_key;
+
+    if (editProvider) {
+      await updateLlmProvider.mutateAsync({ id: editProvider.id, data: data as Parameters<typeof api.updateLlmProvider>[1] });
+    } else {
+      await createLlmProvider.mutateAsync(data as Parameters<typeof api.createLlmProvider>[0]);
+    }
+    setProviderOpen(false);
+  }
+
+  function openAgentDialog(agent?: AgentConfig) {
+    if (agent) {
+      setEditAgentSlug(agent.slug);
+      setAgentForm({
+        slug: agent.slug,
+        name: agent.name,
+        description: agent.description || "",
+        llm_provider_id: agent.llm_provider_id || "",
+        system_prompt: agent.system_prompt,
+        max_iterations: String(agent.max_iterations),
+        summary_token_limit: agent.summary_token_limit ? String(agent.summary_token_limit) : "",
+        enabled: agent.enabled,
+        tool_slugs: [...agent.tool_slugs],
+        knowledge_graph_ids: [...(agent.knowledge_graph_ids || [])],
+      });
+    } else {
+      setEditAgentSlug(null);
+      setAgentForm({ slug: "", name: "", description: "", llm_provider_id: "", system_prompt: "", max_iterations: "10", summary_token_limit: "", enabled: true, tool_slugs: [], knowledge_graph_ids: [] });
+    }
+    setAgentOpen(true);
+  }
+
+  async function handleSaveAgent(e: React.FormEvent) {
+    e.preventDefault();
+    const data = {
+      name: agentForm.name,
+      description: agentForm.description || undefined,
+      llm_provider_id: agentForm.llm_provider_id || undefined,
+      system_prompt: agentForm.system_prompt,
+      max_iterations: parseInt(agentForm.max_iterations) || 10,
+      summary_token_limit: agentForm.summary_token_limit ? parseInt(agentForm.summary_token_limit) : null,
+      enabled: agentForm.enabled,
+      tool_slugs: agentForm.tool_slugs,
+      knowledge_graph_ids: agentForm.knowledge_graph_ids,
+    };
+
+    if (editAgentSlug) {
+      await updateAgent.mutateAsync({ slug: editAgentSlug, data });
+    } else {
+      await createAgent.mutateAsync({ slug: agentForm.slug, ...data });
+    }
+    setAgentOpen(false);
+  }
+
+  function toggleToolSlug(slug: string) {
+    setAgentForm((f) => ({
+      ...f,
+      tool_slugs: f.tool_slugs.includes(slug)
+        ? f.tool_slugs.filter((s) => s !== slug)
+        : [...f.tool_slugs, slug],
+    }));
   }
 
   async function handleExport() {
@@ -232,7 +370,7 @@ export default function SettingsPage() {
           <TabsTrigger value="ssh-keys" className="gap-2"><Key className="h-4 w-4" /> SSH Keys</TabsTrigger>
           <TabsTrigger value="platform-tokens" className="gap-2"><ShieldCheck className="h-4 w-4" /> Platform Tokens</TabsTrigger>
           {user?.is_admin && <TabsTrigger value="users" className="gap-2"><Users className="h-4 w-4" /> Users</TabsTrigger>}
-          {user?.is_admin && <TabsTrigger value="ai" className="gap-2"><Bot className="h-4 w-4" /> AI Agent</TabsTrigger>}
+          {user?.is_admin && <TabsTrigger value="ai" className="gap-2"><Bot className="h-4 w-4" /> AI</TabsTrigger>}
           <TabsTrigger value="file-exclusions" className="gap-2"><FileX2 className="h-4 w-4" /> File Exclusions</TabsTrigger>
           <TabsTrigger value="backup" className="gap-2"><Database className="h-4 w-4" /> Backup</TabsTrigger>
         </TabsList>
@@ -282,7 +420,9 @@ export default function SettingsPage() {
                   {keyType === "rsa" && (
                     <p className="text-xs text-muted-foreground">RSA is widely compatible. Use 4096 bits for best security.</p>
                   )}
-                  <Button type="submit" className="w-full">Generate</Button>
+                  <Button type="submit" className="w-full" disabled={createSSHKey.isPending}>
+                    {createSSHKey.isPending ? "Generating..." : "Generate"}
+                  </Button>
                 </form>
               </DialogContent>
             </Dialog>
@@ -316,7 +456,7 @@ export default function SettingsPage() {
                     <TableCell><code className="text-xs">{k.fingerprint}</code></TableCell>
                     <TableCell className="text-muted-foreground">{new Date(k.created_at).toLocaleDateString()}</TableCell>
                     <TableCell>
-                      <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => handleDeleteKey(k.id)}>
+                      <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setDeleteKeyId(k.id)}>
                         <Trash2 className="h-3 w-3 text-destructive" />
                       </Button>
                     </TableCell>
@@ -372,7 +512,9 @@ export default function SettingsPage() {
                       <p className="text-xs text-muted-foreground">{credForm.platform === "azure" ? "Required for Azure DevOps." : "Leave empty for gitlab.com."}</p>
                     </div>
                   )}
-                  <Button type="submit" className="w-full">Save Token</Button>
+                  <Button type="submit" className="w-full" disabled={createCredential.isPending}>
+                    {createCredential.isPending ? "Saving..." : "Save Token"}
+                  </Button>
                 </form>
               </DialogContent>
             </Dialog>
@@ -402,8 +544,8 @@ export default function SettingsPage() {
                       <TooltipProvider>
                         <Tooltip>
                           <TooltipTrigger asChild>
-                            <Button variant="ghost" size="icon" className="h-7 w-7" disabled={credTesting === c.id} onClick={() => handleTestCredential(c.id)}>
-                              {credTesting === c.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <Play className="h-3 w-3" />}
+                            <Button variant="ghost" size="icon" className="h-7 w-7" disabled={testCredential.isPending} onClick={() => handleTestCredential(c.id)}>
+                              {testCredential.isPending && testCredential.variables === c.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <Play className="h-3 w-3" />}
                             </Button>
                           </TooltipTrigger>
                           <TooltipContent>Test connection</TooltipContent>
@@ -415,7 +557,7 @@ export default function SettingsPage() {
                           {credTestResult.message.slice(0, 60)}
                         </span>
                       )}
-                      <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => handleDeleteCredential(c.id)}>
+                      <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setDeleteCredId(c.id)}>
                         <Trash2 className="h-3 w-3 text-destructive" />
                       </Button>
                     </TableCell>
@@ -462,7 +604,9 @@ export default function SettingsPage() {
                       <input type="checkbox" id="is_admin" checked={userForm.is_admin} onChange={(e) => setUserForm((f) => ({ ...f, is_admin: e.target.checked }))} />
                       <Label htmlFor="is_admin">Admin privileges</Label>
                     </div>
-                    <Button type="submit" className="w-full">Create User</Button>
+                    <Button type="submit" className="w-full" disabled={createUser.isPending}>
+                      {createUser.isPending ? "Creating..." : "Create User"}
+                    </Button>
                   </form>
                 </DialogContent>
               </Dialog>
@@ -492,7 +636,7 @@ export default function SettingsPage() {
                       </TableCell>
                       <TableCell>
                         {u.id !== user?.id && (
-                          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => handleDeleteUser(u.id)}>
+                          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setDeleteUserId(u.id)}>
                             <Trash2 className="h-3 w-3 text-destructive" />
                           </Button>
                         )}
@@ -505,134 +649,431 @@ export default function SettingsPage() {
           </TabsContent>
         )}
         {user?.is_admin && (
-          <TabsContent value="ai" className="space-y-4">
+          <TabsContent value="ai" className="space-y-6">
             <p className="text-sm text-muted-foreground">
-              Configure the AI agent that powers the conversational assistant. Requires an API key from your LLM provider.
+              Configure LLM providers, agents, and their tools. Enable or disable the AI subsystem globally.
             </p>
 
-            {aiSettings && (
+            {/* Global AI Toggle */}
+            {aiSettingsData && (
               <Card>
                 <CardContent className="flex items-center justify-between p-4">
                   <div className="flex items-center gap-3">
                     <Bot className="h-5 w-5 text-muted-foreground" />
                     <div>
                       <div className="flex items-center gap-2">
-                        <p className="text-sm font-medium">Enable AI Assistant</p>
-                        <Badge variant={aiSettings.enabled && aiSettings.has_api_key ? "default" : "secondary"} className="text-[10px]">
-                          {aiSettings.enabled && aiSettings.has_api_key ? "Active" : "Inactive"}
+                        <p className="text-sm font-medium">Enable AI</p>
+                        <Badge variant={aiSettingsData.enabled ? "default" : "secondary"} className="text-[10px]">
+                          {aiSettingsData.enabled ? "Active" : "Inactive"}
                         </Badge>
                       </div>
                       <p className="text-xs text-muted-foreground">
-                        {aiSettings.has_api_key
-                          ? "Show the AI assistant to all users in the sidebar."
-                          : "Configure an API key below before enabling."}
+                        Show the AI assistant to all users. Requires at least one LLM provider and one enabled agent.
                       </p>
                     </div>
                   </div>
                   <Switch
-                    checked={aiSettings.enabled}
+                    checked={aiSettingsData.enabled}
                     onCheckedChange={handleToggleAi}
-                    disabled={!aiSettings.has_api_key}
                   />
                 </CardContent>
               </Card>
             )}
 
+            {/* LLM Providers Section */}
             <Card>
-              <CardHeader>
-                <CardTitle className="text-base">Model Configuration</CardTitle>
+              <CardHeader className="flex flex-row items-center justify-between pb-2">
+                <div>
+                  <CardTitle className="flex items-center gap-2 text-base"><Cpu className="h-4 w-4" /> LLM Providers</CardTitle>
+                  <CardDescription>Configure the language models available to your agents.</CardDescription>
+                </div>
+                <Button size="sm" onClick={() => openProviderDialog()}>
+                  <Plus className="mr-2 h-4 w-4" /> Add Provider
+                </Button>
               </CardHeader>
               <CardContent>
-                <form onSubmit={handleSaveAi} className="space-y-4">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Name</TableHead>
+                      <TableHead>Type</TableHead>
+                      <TableHead>Model</TableHead>
+                      <TableHead>Base URL</TableHead>
+                      <TableHead>API Key</TableHead>
+                      <TableHead className="w-28" />
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {llmProviders.map((p) => (
+                      <TableRow key={p.id}>
+                        <TableCell className="font-medium">
+                          <div className="flex items-center gap-2">
+                            {p.name}
+                            {p.is_default && <Star className="h-3 w-3 text-amber-500 fill-amber-500" />}
+                          </div>
+                        </TableCell>
+                        <TableCell><Badge variant="outline" className="text-[10px] uppercase">{p.provider_type}</Badge></TableCell>
+                        <TableCell className="font-mono text-sm">{p.model}</TableCell>
+                        <TableCell className="text-sm text-muted-foreground">{p.base_url || "-"}</TableCell>
+                        <TableCell>
+                          <Badge variant={p.has_api_key ? "default" : "secondary"} className="text-[10px]">
+                            {p.has_api_key ? "Set" : "None"}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="flex items-center gap-1">
+                          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openProviderDialog(p)}>
+                            <Pencil className="h-3 w-3" />
+                          </Button>
+                          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setDeleteProviderId(p.id)}>
+                            <Trash2 className="h-3 w-3 text-destructive" />
+                          </Button>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                    {llmProviders.length === 0 && (
+                      <TableRow>
+                        <TableCell colSpan={6} className="py-8 text-center text-muted-foreground">No LLM providers configured. Add one to get started.</TableCell>
+                      </TableRow>
+                    )}
+                  </TableBody>
+                </Table>
+              </CardContent>
+            </Card>
+
+            {/* LLM Provider Dialog */}
+            <Dialog open={providerOpen} onOpenChange={setProviderOpen}>
+              <DialogContent className="max-w-lg">
+                <DialogHeader>
+                  <DialogTitle>{editProvider ? "Edit LLM Provider" : "Add LLM Provider"}</DialogTitle>
+                </DialogHeader>
+                <form onSubmit={handleSaveProvider} className="space-y-4">
+                  <div className="space-y-2">
+                    <Label>Name</Label>
+                    <Input value={providerForm.name} onChange={(e) => setProviderForm((f) => ({ ...f, name: e.target.value }))} placeholder="e.g. GPT-4o, Local Ollama" required />
+                  </div>
                   <div className="grid gap-4 sm:grid-cols-2">
                     <div className="space-y-2">
-                      <Label>Model</Label>
-                      <Input
-                        value={aiForm.model}
-                        onChange={(e) => setAiForm((f) => ({ ...f, model: e.target.value }))}
-                        placeholder="gpt-4o-mini, claude-3-sonnet, ollama/llama3..."
-                        required
-                      />
-                      <p className="text-xs text-muted-foreground">
-                        LiteLLM model string. Supports OpenAI, Anthropic, Ollama, Azure, Bedrock, etc.
-                      </p>
+                      <Label>Provider Type</Label>
+                      <Select value={providerForm.provider_type} onValueChange={(v) => setProviderForm((f) => ({ ...f, provider_type: v }))}>
+                        <SelectTrigger><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="openai">OpenAI</SelectItem>
+                          <SelectItem value="anthropic">Anthropic</SelectItem>
+                          <SelectItem value="azure">Azure OpenAI</SelectItem>
+                          <SelectItem value="ollama">Ollama</SelectItem>
+                          <SelectItem value="bedrock">AWS Bedrock</SelectItem>
+                          <SelectItem value="other">Other</SelectItem>
+                        </SelectContent>
+                      </Select>
                     </div>
                     <div className="space-y-2">
-                      <Label>API Key</Label>
-                      <div className="relative">
-                        <Input
-                          type={showApiKey ? "text" : "password"}
-                          value={aiForm.api_key}
-                          onChange={(e) => setAiForm((f) => ({ ...f, api_key: e.target.value }))}
-                          placeholder={aiSettings?.has_api_key ? "••••••• (key is set, enter new to replace)" : "sk-..."}
-                        />
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="icon"
-                          className="absolute right-1 top-1/2 -translate-y-1/2 h-7 w-7"
-                          onClick={() => setShowApiKey(!showApiKey)}
-                        >
-                          {showApiKey ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
-                        </Button>
-                      </div>
-                      <p className="text-xs text-muted-foreground">Encrypted at rest. Leave blank to keep existing key.</p>
+                      <Label>Model</Label>
+                      <Input value={providerForm.model} onChange={(e) => setProviderForm((f) => ({ ...f, model: e.target.value }))} placeholder="gpt-4o-mini, claude-3-sonnet..." required />
+                      <p className="text-xs text-muted-foreground">LiteLLM model identifier</p>
                     </div>
                   </div>
-                  <div className="grid gap-4 sm:grid-cols-3">
-                    <div className="space-y-2">
-                      <Label>Base URL (optional)</Label>
+                  <div className="space-y-2">
+                    <Label>API Key</Label>
+                    <div className="relative">
                       <Input
-                        value={aiForm.base_url}
-                        onChange={(e) => setAiForm((f) => ({ ...f, base_url: e.target.value }))}
-                        placeholder="https://api.openai.com/v1"
+                        type={showProviderKey ? "text" : "password"}
+                        value={providerForm.api_key}
+                        onChange={(e) => setProviderForm((f) => ({ ...f, api_key: e.target.value }))}
+                        placeholder={editProvider?.has_api_key ? "••••••• (key is set, enter new to replace)" : "sk-..."}
                       />
-                      <p className="text-xs text-muted-foreground">For self-hosted or proxy endpoints.</p>
+                      <Button type="button" variant="ghost" size="icon" className="absolute right-1 top-1/2 -translate-y-1/2 h-7 w-7" onClick={() => setShowProviderKey(!showProviderKey)}>
+                        {showProviderKey ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+                      </Button>
                     </div>
+                    <p className="text-xs text-muted-foreground">Encrypted at rest. Leave blank to keep existing key.</p>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Base URL (optional)</Label>
+                    <Input value={providerForm.base_url} onChange={(e) => setProviderForm((f) => ({ ...f, base_url: e.target.value }))} placeholder="https://api.openai.com/v1" />
+                  </div>
+                  <div className="grid gap-4 sm:grid-cols-2">
                     <div className="space-y-2">
                       <Label>Temperature</Label>
-                      <Input
-                        type="number"
-                        step="0.05"
-                        min="0"
-                        max="2"
-                        value={aiForm.temperature}
-                        onChange={(e) => setAiForm((f) => ({ ...f, temperature: e.target.value }))}
-                      />
+                      <Input type="number" step="0.05" min="0" max="2" value={providerForm.temperature} onChange={(e) => setProviderForm((f) => ({ ...f, temperature: e.target.value }))} />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Context Window</Label>
+                      <Input type="number" min="1024" value={providerForm.context_window} onChange={(e) => setProviderForm((f) => ({ ...f, context_window: e.target.value }))} placeholder="Auto-detect" />
+                      <p className="text-xs text-muted-foreground">Max input tokens. Leave blank to auto-detect.</p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <input type="checkbox" id="provider_default" checked={providerForm.is_default} onChange={(e) => setProviderForm((f) => ({ ...f, is_default: e.target.checked }))} />
+                    <Label htmlFor="provider_default">Default provider for new agents</Label>
+                  </div>
+                  <Button type="submit" className="w-full" disabled={createLlmProvider.isPending || updateLlmProvider.isPending}>
+                    {(createLlmProvider.isPending || updateLlmProvider.isPending) ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Saving...</> : "Save Provider"}
+                  </Button>
+                </form>
+              </DialogContent>
+            </Dialog>
+
+            {/* Knowledge Graphs Section */}
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between pb-2">
+                <div>
+                  <CardTitle className="flex items-center gap-2 text-base"><Database className="h-4 w-4" /> Knowledge Graphs</CardTitle>
+                  <CardDescription>Auto-generate data model context for agents from your database schema.</CardDescription>
+                </div>
+                <Button size="sm" onClick={() => setKgCreateOpen(true)}>
+                  <Plus className="mr-2 h-4 w-4" /> Add Knowledge Graph
+                </Button>
+              </CardHeader>
+              <CardContent>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Name</TableHead>
+                      <TableHead>Mode</TableHead>
+                      <TableHead>Entities</TableHead>
+                      <TableHead>Updated</TableHead>
+                      <TableHead className="w-[80px]" />
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {knowledgeGraphs.map((kg) => (
+                      <TableRow key={kg.id} className="cursor-pointer hover:bg-muted/50" onClick={() => setKgEditId(kg.id)}>
+                        <TableCell className="font-medium">{kg.name}</TableCell>
+                        <TableCell><Badge variant="secondary">{kg.generation_mode.replace(/_/g, " ")}</Badge></TableCell>
+                        <TableCell>{kg.node_count}</TableCell>
+                        <TableCell className="text-muted-foreground text-xs">{kg.updated_at.slice(0, 10)}</TableCell>
+                        <TableCell>
+                          <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive" onClick={(e) => { e.stopPropagation(); setDeleteKgId(kg.id); }}>
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </Button>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                    {knowledgeGraphs.length === 0 && (
+                      <TableRow>
+                        <TableCell colSpan={5} className="py-8 text-center text-muted-foreground">No knowledge graphs created.</TableCell>
+                      </TableRow>
+                    )}
+                  </TableBody>
+                </Table>
+              </CardContent>
+            </Card>
+
+            <CreateKnowledgeGraphDialog open={kgCreateOpen} onOpenChange={setKgCreateOpen} />
+
+            {/* KG Editor Dialog */}
+            <Dialog open={!!kgEditId} onOpenChange={(open) => { if (!open) setKgEditId(null); }}>
+              <DialogContent className="sm:max-w-4xl max-h-[90vh] overflow-y-auto">
+                <DialogHeader>
+                  <DialogTitle>Edit Knowledge Graph</DialogTitle>
+                </DialogHeader>
+                {kgDetail && (
+                  <KnowledgeGraphEditor
+                    kg={kgDetail}
+                    isSaving={updateKG.isPending}
+                    isRegenerating={regenerateKG.isPending}
+                    onSave={(data) => updateKG.mutateAsync({ id: kgDetail.id, data })}
+                    onRegenerate={() => regenerateKG.mutateAsync(kgDetail.id)}
+                  />
+                )}
+              </DialogContent>
+            </Dialog>
+
+            <ConfirmDialog
+              open={!!deleteKgId}
+              onOpenChange={() => setDeleteKgId(null)}
+              title="Delete Knowledge Graph"
+              description="This will permanently delete this knowledge graph and remove it from any assigned agents."
+              onConfirm={async () => { if (deleteKgId) { await deleteKG.mutateAsync(deleteKgId); setDeleteKgId(null); } }}
+            />
+
+            {/* Agents Section */}
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between pb-2">
+                <div>
+                  <CardTitle className="flex items-center gap-2 text-base"><Bot className="h-4 w-4" /> Agents</CardTitle>
+                  <CardDescription>Define AI agents with custom prompts, tools, and LLM assignments.</CardDescription>
+                </div>
+                <Button size="sm" onClick={() => openAgentDialog()}>
+                  <Plus className="mr-2 h-4 w-4" /> Add Agent
+                </Button>
+              </CardHeader>
+              <CardContent>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Name</TableHead>
+                      <TableHead>Slug</TableHead>
+                      <TableHead>LLM Provider</TableHead>
+                      <TableHead>Tools</TableHead>
+                      <TableHead>Enabled</TableHead>
+                      <TableHead className="w-28" />
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {agents.map((a) => {
+                      const provider = llmProviders.find((p) => p.id === a.llm_provider_id);
+                      return (
+                        <TableRow key={a.id}>
+                          <TableCell className="font-medium">
+                            <div className="flex items-center gap-2">
+                              {a.name}
+                              {a.is_builtin && <Badge variant="secondary" className="text-[10px]">built-in</Badge>}
+                            </div>
+                          </TableCell>
+                          <TableCell className="font-mono text-sm text-muted-foreground">{a.slug}</TableCell>
+                          <TableCell className="text-sm">{provider?.name || <span className="text-muted-foreground">None</span>}</TableCell>
+                          <TableCell><Badge variant="outline" className="text-[10px]">{a.tool_slugs.length} tools</Badge></TableCell>
+                          <TableCell>
+                            <Switch
+                              checked={a.enabled}
+                              onCheckedChange={(checked) => updateAgent.mutate({ slug: a.slug, data: { enabled: checked } })}
+                            />
+                          </TableCell>
+                          <TableCell className="flex items-center gap-1">
+                            <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openAgentDialog(a)}>
+                              <Pencil className="h-3 w-3" />
+                            </Button>
+                            {!a.is_builtin && (
+                              <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setDeleteAgentSlug(a.slug)}>
+                                <Trash2 className="h-3 w-3 text-destructive" />
+                              </Button>
+                            )}
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
+                    {agents.length === 0 && (
+                      <TableRow>
+                        <TableCell colSpan={6} className="py-8 text-center text-muted-foreground">No agents configured.</TableCell>
+                      </TableRow>
+                    )}
+                  </TableBody>
+                </Table>
+              </CardContent>
+            </Card>
+
+            {/* Agent Dialog */}
+            <Dialog open={agentOpen} onOpenChange={setAgentOpen}>
+              <DialogContent className="sm:max-w-4xl max-h-[85vh] overflow-y-auto">
+                <DialogHeader>
+                  <DialogTitle>{editAgentSlug ? "Edit Agent" : "Create Agent"}</DialogTitle>
+                </DialogHeader>
+                <form onSubmit={handleSaveAgent} className="space-y-4">
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <div className="space-y-2">
+                      <Label>Name</Label>
+                      <Input value={agentForm.name} onChange={(e) => setAgentForm((f) => ({ ...f, name: e.target.value }))} placeholder="Contribution Analyst" required />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Slug</Label>
+                      <Input value={agentForm.slug} onChange={(e) => setAgentForm((f) => ({ ...f, slug: e.target.value }))} placeholder="contribution-analyst" disabled={!!editAgentSlug} required />
+                      <p className="text-xs text-muted-foreground">Unique identifier. Cannot be changed after creation.</p>
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Description</Label>
+                    <Input value={agentForm.description} onChange={(e) => setAgentForm((f) => ({ ...f, description: e.target.value }))} placeholder="What does this agent do?" />
+                  </div>
+                  <div className="grid gap-4 sm:grid-cols-3">
+                    <div className="min-w-0 space-y-2">
+                      <Label>LLM Provider</Label>
+                      <Select value={agentForm.llm_provider_id} onValueChange={(v) => setAgentForm((f) => ({ ...f, llm_provider_id: v }))}>
+                        <SelectTrigger className="w-full overflow-hidden [&>span:first-child]:truncate"><SelectValue placeholder="Select a provider..." /></SelectTrigger>
+                        <SelectContent>
+                          {llmProviders.map((p) => (
+                            <SelectItem key={p.id} value={p.id}>
+                              {p.name} ({p.model})
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
                     </div>
                     <div className="space-y-2">
                       <Label>Max Iterations</Label>
-                      <Input
-                        type="number"
-                        min="1"
-                        max="25"
-                        value={aiForm.max_iterations}
-                        onChange={(e) => setAiForm((f) => ({ ...f, max_iterations: e.target.value }))}
-                      />
-                      <p className="text-xs text-muted-foreground">Max tool-calling loops per request.</p>
+                      <Input type="number" min="1" max="50" value={agentForm.max_iterations} onChange={(e) => setAgentForm((f) => ({ ...f, max_iterations: e.target.value }))} />
+                      <p className="text-xs text-muted-foreground">Max tool-calling loops.</p>
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Summary Token Limit</Label>
+                      <Input type="number" min="100" value={agentForm.summary_token_limit} onChange={(e) => setAgentForm((f) => ({ ...f, summary_token_limit: e.target.value }))} placeholder="Auto" />
+                      <p className="text-xs text-muted-foreground">~4% of context window.</p>
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>System Prompt</Label>
+                    <Textarea
+                      value={agentForm.system_prompt}
+                      onChange={(e) => setAgentForm((f) => ({ ...f, system_prompt: e.target.value }))}
+                      placeholder="You are an AI assistant that..."
+                      rows={10}
+                      className="font-mono text-sm"
+                    />
+                  </div>
+
+                  {/* Tool Assignment */}
+                  <div className="space-y-2">
+                    <Label className="flex items-center gap-2"><Wrench className="h-3.5 w-3.5" /> Assigned Tools</Label>
+                    <p className="text-xs text-muted-foreground">Select which tools this agent can use. If none are selected, the agent will have access to all tools.</p>
+                    <div className="grid gap-2 sm:grid-cols-2 mt-2">
+                      {aiTools.map((t) => (
+                        <label key={t.slug} className="flex items-start gap-2 rounded-md border p-2 cursor-pointer hover:bg-muted/50">
+                          <input
+                            type="checkbox"
+                            checked={agentForm.tool_slugs.includes(t.slug)}
+                            onChange={() => toggleToolSlug(t.slug)}
+                            className="mt-0.5"
+                          />
+                          <div className="min-w-0">
+                            <p className="text-sm font-medium leading-tight">{t.name}</p>
+                            <p className="text-xs text-muted-foreground truncate">{t.description}</p>
+                          </div>
+                        </label>
+                      ))}
                     </div>
                   </div>
 
-                  {aiError && (
-                    <div className="flex items-center gap-2 text-sm text-destructive">
-                      <AlertCircle className="h-4 w-4" />
-                      {aiError}
+                  {/* Knowledge Graphs */}
+                  {knowledgeGraphs.length > 0 && (
+                    <div className="space-y-2">
+                      <Label className="flex items-center gap-2"><Database className="h-3.5 w-3.5" /> Knowledge Graphs</Label>
+                      <p className="text-xs text-muted-foreground">Attach knowledge graphs to inject data model context into this agent&apos;s system prompt.</p>
+                      <div className="grid gap-2 sm:grid-cols-2 mt-2">
+                        {knowledgeGraphs.map((kg) => (
+                          <label key={kg.id} className="flex items-start gap-2 rounded-md border p-2 cursor-pointer hover:bg-muted/50">
+                            <input
+                              type="checkbox"
+                              checked={agentForm.knowledge_graph_ids.includes(kg.id)}
+                              onChange={() => {
+                                setAgentForm((f) => ({
+                                  ...f,
+                                  knowledge_graph_ids: f.knowledge_graph_ids.includes(kg.id)
+                                    ? f.knowledge_graph_ids.filter((id) => id !== kg.id)
+                                    : [...f.knowledge_graph_ids, kg.id],
+                                }));
+                              }}
+                              className="mt-0.5"
+                            />
+                            <div className="min-w-0">
+                              <p className="text-sm font-medium leading-tight">{kg.name}</p>
+                              <p className="text-xs text-muted-foreground truncate">{kg.generation_mode.replace(/_/g, " ")} &middot; {kg.node_count} entities</p>
+                            </div>
+                          </label>
+                        ))}
+                      </div>
                     </div>
                   )}
 
-                  <div className="flex items-center gap-3">
-                    <Button type="submit" disabled={aiSaving}>
-                      {aiSaving ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Saving...</> : "Save Configuration"}
-                    </Button>
-                    {aiSaved && (
-                      <span className="flex items-center gap-1 text-sm text-emerald-500">
-                        <CheckCircle2 className="h-4 w-4" /> Saved
-                      </span>
-                    )}
+                  <div className="flex items-center gap-2">
+                    <Switch checked={agentForm.enabled} onCheckedChange={(checked) => setAgentForm((f) => ({ ...f, enabled: checked }))} />
+                    <Label>Enabled</Label>
                   </div>
+                  <Button type="submit" className="w-full" disabled={createAgent.isPending || updateAgent.isPending}>
+                    {(createAgent.isPending || updateAgent.isPending) ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Saving...</> : "Save Agent"}
+                  </Button>
                 </form>
-              </CardContent>
-            </Card>
+              </DialogContent>
+            </Dialog>
           </TabsContent>
         )}
         <TabsContent value="file-exclusions" className="space-y-4">
@@ -646,17 +1087,10 @@ export default function SettingsPage() {
             <Button
               variant="outline"
               size="sm"
-              disabled={loadingDefaults}
-              onClick={async () => {
-                setLoadingDefaults(true);
-                try {
-                  const res = await api.loadDefaultExclusions();
-                  if (res.added > 0) setExclusions(await api.listFileExclusions());
-                } catch { /* ignore */ }
-                setLoadingDefaults(false);
-              }}
+              disabled={loadDefaults.isPending}
+              onClick={() => loadDefaults.mutate()}
             >
-              {loadingDefaults ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Plus className="mr-2 h-4 w-4" />}
+              {loadDefaults.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Plus className="mr-2 h-4 w-4" />}
               Load Defaults
             </Button>
             <TooltipProvider>
@@ -677,8 +1111,7 @@ export default function SettingsPage() {
                   e.preventDefault();
                   if (!newPattern.trim()) return;
                   try {
-                    await api.createFileExclusion({ pattern: newPattern.trim(), description: newDesc.trim() || undefined });
-                    setExclusions(await api.listFileExclusions());
+                    await createExclusion.mutateAsync({ pattern: newPattern.trim(), description: newDesc.trim() || undefined });
                     setNewPattern("");
                     setNewDesc("");
                   } catch { /* ignore dups */ }
@@ -701,7 +1134,7 @@ export default function SettingsPage() {
                     placeholder="e.g. Data files"
                   />
                 </div>
-                <Button type="submit" size="sm" disabled={!newPattern.trim()}>
+                <Button type="submit" size="sm" disabled={!newPattern.trim() || createExclusion.isPending}>
                   <Plus className="mr-1 h-3 w-3" /> Add
                 </Button>
               </form>
@@ -726,9 +1159,8 @@ export default function SettingsPage() {
                       <TableCell>
                         <Switch
                           checked={ex.enabled}
-                          onCheckedChange={async (checked) => {
-                            await api.updateFileExclusion(ex.id, { enabled: checked });
-                            setExclusions(await api.listFileExclusions());
+                          onCheckedChange={(checked) => {
+                            updateExclusion.mutate({ id: ex.id, data: { enabled: checked } });
                           }}
                         />
                       </TableCell>
@@ -746,10 +1178,7 @@ export default function SettingsPage() {
                           variant="ghost"
                           size="icon"
                           className="h-7 w-7 text-destructive hover:text-destructive"
-                          onClick={async () => {
-                            await api.deleteFileExclusion(ex.id);
-                            setExclusions(await api.listFileExclusions());
-                          }}
+                          onClick={() => setDeleteExclusionId(ex.id)}
                         >
                           <Trash2 className="h-3.5 w-3.5" />
                         </Button>
@@ -849,6 +1278,60 @@ export default function SettingsPage() {
           )}
         </TabsContent>
       </Tabs>
+
+      <ConfirmDialog
+        open={!!deleteKeyId}
+        onOpenChange={(v) => !v && setDeleteKeyId(null)}
+        title="Delete SSH Key"
+        description={<>This will permanently remove the SSH key <span className="font-semibold">{sshKeys.find((k) => k.id === deleteKeyId)?.name}</span>. Repositories using this key will no longer be able to authenticate.</>}
+        confirmLabel="Delete Key"
+        onConfirm={() => { if (deleteKeyId) { deleteSSHKey.mutate(deleteKeyId); setDeleteKeyId(null); } }}
+      />
+
+      <ConfirmDialog
+        open={!!deleteCredId}
+        onOpenChange={(v) => !v && setDeleteCredId(null)}
+        title="Delete Platform Token"
+        description={<>This will permanently remove the token <span className="font-semibold">{credentials.find((c) => c.id === deleteCredId)?.name}</span>. Projects using this token will lose access to PR and review data.</>}
+        confirmLabel="Delete Token"
+        onConfirm={() => { if (deleteCredId) { deleteCredential.mutate(deleteCredId); setDeleteCredId(null); } }}
+      />
+
+      <ConfirmDialog
+        open={!!deleteUserId}
+        onOpenChange={(v) => !v && setDeleteUserId(null)}
+        title="Delete User"
+        description={<>This will permanently remove <span className="font-semibold">{users.find((u) => u.id === deleteUserId)?.username}</span> and their chat history. This action cannot be undone.</>}
+        confirmLabel="Delete User"
+        onConfirm={() => { if (deleteUserId) { deleteUser.mutate(deleteUserId); setDeleteUserId(null); } }}
+      />
+
+      <ConfirmDialog
+        open={!!deleteProviderId}
+        onOpenChange={(v) => !v && setDeleteProviderId(null)}
+        title="Delete LLM Provider"
+        description={<>This will permanently remove <span className="font-semibold">{llmProviders.find((p) => p.id === deleteProviderId)?.name}</span>. Agents using this provider will stop working until reassigned.</>}
+        confirmLabel="Delete Provider"
+        onConfirm={() => { if (deleteProviderId) { deleteLlmProvider.mutate(deleteProviderId); setDeleteProviderId(null); } }}
+      />
+
+      <ConfirmDialog
+        open={!!deleteAgentSlug}
+        onOpenChange={(v) => !v && setDeleteAgentSlug(null)}
+        title="Delete Agent"
+        description={<>This will permanently remove the agent <span className="font-semibold">{agents.find((a) => a.slug === deleteAgentSlug)?.name}</span>.</>}
+        confirmLabel="Delete Agent"
+        onConfirm={() => { if (deleteAgentSlug) { deleteAgent.mutate(deleteAgentSlug); setDeleteAgentSlug(null); } }}
+      />
+
+      <ConfirmDialog
+        open={!!deleteExclusionId}
+        onOpenChange={(v) => !v && setDeleteExclusionId(null)}
+        title="Remove Exclusion Pattern"
+        description={<>This will remove the pattern <code className="rounded bg-muted px-1 py-0.5 text-xs">{exclusions.find((ex) => ex.id === deleteExclusionId)?.pattern}</code>. Files matching this pattern will be included in future syncs.</>}
+        confirmLabel="Remove"
+        onConfirm={() => { if (deleteExclusionId) { deleteExclusion.mutate(deleteExclusionId); setDeleteExclusionId(null); } }}
+      />
     </div>
   );
 }

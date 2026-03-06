@@ -1,9 +1,9 @@
 "use client";
 
-import { useEffect, useState, useCallback, useMemo } from "react";
+import { useState, useMemo } from "react";
 import { useParams } from "next/navigation";
-import { Flame, GitCommitHorizontal, FileCode2, FolderGit2 } from "lucide-react";
-import { Badge } from "@/components/ui/badge";
+import { FolderGit2, Search } from "lucide-react";
+import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { StatCard } from "@/components/stat-card";
 import { ContributionAreaChart } from "@/components/charts/contribution-area-chart";
@@ -13,98 +13,59 @@ import { StatDetailSheet } from "@/components/stat-detail-sheet";
 import { DateRangeFilter, defaultRange } from "@/components/date-range-filter";
 import type { DateRange } from "@/components/date-range-filter";
 import { BranchMultiSelect } from "@/components/branch-multi-select";
-import { api } from "@/lib/api-client";
-import type { Contributor, ContributorStats, DailyStat, Branch, PaginatedCommits } from "@/lib/types";
+import { useContributor, useContributorStats, useContributorRepos, useContributorCommits } from "@/hooks/use-contributors";
+import { useRepoBranches } from "@/hooks/use-repos";
+import { useDailyStats } from "@/hooks/use-daily-stats";
 
 export default function ContributorDetailPage() {
   const { contributorId } = useParams<{ contributorId: string }>();
-  const [contributor, setContributor] = useState<Contributor | null>(null);
-  const [stats, setStats] = useState<ContributorStats | null>(null);
-  const [daily, setDaily] = useState<DailyStat[]>([]);
-  const [repos, setRepos] = useState<{ id: string; name: string; platform: string }[]>([]);
   const [selectedRepo, setSelectedRepo] = useState<string>("");
-  const [branches, setBranches] = useState<Branch[]>([]);
   const [selectedBranches, setSelectedBranches] = useState<string[]>([]);
-  const [commits, setCommits] = useState<PaginatedCommits | null>(null);
   const [commitPage, setCommitPage] = useState(1);
-  const [commitsLoading, setCommitsLoading] = useState(false);
+  const [commitSearch, setCommitSearch] = useState("");
   const [dateRange, setDateRange] = useState<DateRange>(defaultRange);
   const [drillDown, setDrillDown] = useState<{ title: string; metric: string } | null>(null);
 
-  // Stable data: contributor profile + repos (only depends on contributorId)
-  useEffect(() => {
-    if (!contributorId) return;
-    Promise.all([
-      api.getContributor(contributorId),
-      api.getContributorRepos(contributorId),
-    ]).then(([c, r]) => {
-      setContributor(c);
-      setRepos(r);
-    });
-  }, [contributorId]);
+  const { data: contributor } = useContributor(contributorId);
+  const { data: repos = [] } = useContributorRepos(contributorId);
 
-  // Filter-dependent data: stats + daily activity
-  useEffect(() => {
-    if (!contributorId) return;
-    const branchParam = selectedBranches.length > 0 ? selectedBranches : undefined;
-    Promise.all([
-      api.getContributorStats(contributorId, {
-        from_date: dateRange.from,
-        to_date: dateRange.to,
-        repository_id: selectedRepo || undefined,
-        branch: branchParam,
-      }),
-      api.dailyStats({
-        contributor_id: contributorId,
-        from_date: dateRange.from,
-        to_date: dateRange.to,
-        repository_id: selectedRepo || undefined,
-        branch: branchParam,
-      }),
-    ]).then(([s, d]) => {
-      setStats(s);
-      setDaily(d);
-    });
-  }, [contributorId, dateRange, selectedRepo, selectedBranches]);
+  const branchParam = selectedBranches.length > 0 ? selectedBranches : undefined;
 
-  // Branches: scoped to the contributor within the selected repo
-  useEffect(() => {
-    if (selectedRepo && contributorId) {
-      api.listBranches(selectedRepo, contributorId).then(setBranches);
-    } else {
-      setBranches([]);
-      setSelectedBranches([]);
-    }
-  }, [selectedRepo, contributorId]);
+  const statsFilters = useMemo(() => ({
+    from_date: dateRange.from,
+    to_date: dateRange.to,
+    repository_id: selectedRepo || undefined,
+    branch: branchParam,
+  }), [dateRange, selectedRepo, branchParam]);
 
-  // Commits: depend on all filters including date range
-  const fetchCommits = useCallback(async (page: number) => {
-    if (!contributorId) return;
-    setCommitsLoading(true);
-    try {
-      const data = await api.listContributorCommits(contributorId, {
-        repository_id: selectedRepo || undefined,
-        branch: selectedBranches.length > 0 ? selectedBranches : undefined,
-        from_date: dateRange.from,
-        to_date: dateRange.to,
-        page,
-        per_page: 30,
-      });
-      setCommits(data);
-    } finally {
-      setCommitsLoading(false);
-    }
-  }, [contributorId, selectedRepo, selectedBranches, dateRange]);
+  const { data: stats } = useContributorStats(contributorId, statsFilters);
 
-  useEffect(() => {
-    setCommitPage(1);
-    fetchCommits(1);
-  }, [fetchCommits]);
+  const dailyParams = useMemo(() => ({
+    contributor_id: contributorId,
+    from_date: dateRange.from,
+    to_date: dateRange.to,
+    repository_id: selectedRepo || undefined,
+    branch: branchParam,
+  }), [contributorId, dateRange, selectedRepo, branchParam]);
 
-  function handlePageChange(page: number) {
-    setCommitPage(page);
-    fetchCommits(page);
-  }
+  const { data: daily = [] } = useDailyStats(dailyParams);
+
+  const { data: branches = [] } = useRepoBranches(
+    selectedRepo || "",
+    selectedRepo ? contributorId : undefined,
+  );
+
+  const commitFilters = useMemo(() => ({
+    repository_id: selectedRepo || undefined,
+    branch: branchParam,
+    from_date: dateRange.from,
+    to_date: dateRange.to,
+    search: commitSearch || undefined,
+    page: commitPage,
+    per_page: 30,
+  }), [selectedRepo, branchParam, dateRange, commitSearch, commitPage]);
+
+  const { data: commits, isLoading: commitsLoading } = useContributorCommits(contributorId, commitFilters);
 
   const heatmapData = useMemo(() => {
     const data: Record<string, number> = {};
@@ -198,7 +159,18 @@ export default function ContributorDetailPage() {
         <p className="text-sm text-muted-foreground">No activity data for this period.</p>
       )}
 
-      <h2 className="text-xl font-semibold">Commits</h2>
+      <div className="flex items-center justify-between gap-4">
+        <h2 className="text-xl font-semibold">Commits</h2>
+        <div className="relative w-72">
+          <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            placeholder="Search commit messages..."
+            value={commitSearch}
+            onChange={(e) => { setCommitSearch(e.target.value); setCommitPage(1); }}
+            className="h-8 pl-8 text-sm"
+          />
+        </div>
+      </div>
 
       {commits && (
         <CommitList
@@ -207,7 +179,7 @@ export default function ContributorDetailPage() {
           page={commitPage}
           perPage={commits.per_page}
           loading={commitsLoading}
-          onPageChange={handlePageChange}
+          onPageChange={setCommitPage}
           showRepo={!selectedRepo}
         />
       )}

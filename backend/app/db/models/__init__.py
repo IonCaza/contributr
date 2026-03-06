@@ -14,6 +14,9 @@ from app.db.models.chat import ChatSession, ChatMessage
 from app.db.models.ai_settings import AiSettings
 from app.db.models.file_exclusion import FileExclusionPattern
 from app.db.models.platform_credential import PlatformCredential
+from app.db.models.llm_provider import LlmProvider
+from app.db.models.agent_config import AgentConfig, AgentToolAssignment
+from app.db.models.knowledge_graph import KnowledgeGraph, AgentKnowledgeGraphAssignment
 
 __all__ = [
     "User",
@@ -35,4 +38,9 @@ __all__ = [
     "AiSettings",
     "FileExclusionPattern",
     "PlatformCredential",
+    "LlmProvider",
+    "AgentConfig",
+    "AgentToolAssignment",
+    "KnowledgeGraph",
+    "AgentKnowledgeGraphAssignment",
 ]

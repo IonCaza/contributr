@@ -5,6 +5,8 @@ import type {
   DuplicateGroup, CommitDetail, FileTreeNode, FileDetail, HotspotFile, PRStatItem,
   ChatSession, ChatMessage, AiSettings, AiStatus, FileExclusionPattern,
   PlatformCredential, PlatformCredentialTestResult,
+  LlmProvider, AgentConfig, ToolDefinition,
+  KnowledgeGraphListItem, KnowledgeGraph,
 } from "./types";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
@@ -34,6 +36,29 @@ function getToken(): string | null {
   return localStorage.getItem("access_token");
 }
 
+let refreshPromise: Promise<boolean> | null = null;
+let onSessionExpired: (() => void) | null = null;
+
+export function setSessionExpiredHandler(handler: () => void) {
+  onSessionExpired = handler;
+}
+
+async function tryRefreshTokens(): Promise<boolean> {
+  const rt = typeof window !== "undefined" ? localStorage.getItem("refresh_token") : null;
+  if (!rt) return false;
+
+  try {
+    const res = await fetch(`${API_BASE}/auth/refresh?refresh_token=${encodeURIComponent(rt)}`, { method: "POST" });
+    if (!res.ok) return false;
+    const data: { access_token: string; refresh_token: string } = await res.json();
+    localStorage.setItem("access_token", data.access_token);
+    localStorage.setItem("refresh_token", data.refresh_token);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const token = getToken();
   const headers: Record<string, string> = {
@@ -42,10 +67,36 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   };
   if (token) headers["Authorization"] = `Bearer ${token}`;
 
-  const res = await fetch(`${API_BASE}${path}`, { ...options, headers });
+  let res = await fetch(`${API_BASE}${path}`, { ...options, headers });
+
+  if (res.status === 401 && token && !path.startsWith("/auth/")) {
+    if (!refreshPromise) {
+      refreshPromise = tryRefreshTokens().finally(() => { refreshPromise = null; });
+    }
+    const refreshed = await refreshPromise;
+    if (refreshed) {
+      const newToken = getToken();
+      if (newToken) headers["Authorization"] = `Bearer ${newToken}`;
+      res = await fetch(`${API_BASE}${path}`, { ...options, headers });
+    } else {
+      localStorage.removeItem("access_token");
+      localStorage.removeItem("refresh_token");
+      onSessionExpired?.();
+    }
+  }
+
   if (!res.ok) {
     const body = await res.json().catch(() => ({ detail: res.statusText }));
-    throw new ApiError(res.status, body.detail || res.statusText);
+    let message: string;
+    if (Array.isArray(body.detail)) {
+      message = body.detail.map((e: { msg?: string; loc?: string[] }) => {
+        const field = e.loc?.filter((l) => l !== "body").join(".") || "";
+        return field ? `${field}: ${e.msg}` : (e.msg || "Validation error");
+      }).join("; ");
+    } else {
+      message = body.detail || res.statusText;
+    }
+    throw new ApiError(res.status, message);
   }
   if (res.status === 204) return undefined as T;
   return res.json();
@@ -95,19 +146,21 @@ export const api = {
     request<Branch[]>(`/repositories/${repoId}/branches${buildQuery({ contributor_id: contributorId })}`),
   listRepoContributors: (repoId: string, branches?: string[]) =>
     request<ContributorSummary[]>(`/repositories/${repoId}/contributors${buildQuery({ branch: branches })}`),
-  listRepoCommits: (repoId: string, params?: { branch?: string[]; contributor_id?: string; page?: number; per_page?: number }) =>
+  listRepoCommits: (repoId: string, params?: { branch?: string[]; contributor_id?: string; search?: string; page?: number; per_page?: number }) =>
     request<PaginatedCommits>(`/commits/by-repo/${repoId}${buildQuery({
       branch: params?.branch,
       contributor_id: params?.contributor_id,
+      search: params?.search,
       page: params?.page?.toString(),
       per_page: params?.per_page?.toString(),
     })}`),
-  listContributorCommits: (contributorId: string, params?: { repository_id?: string; branch?: string[]; from_date?: string; to_date?: string; page?: number; per_page?: number }) =>
+  listContributorCommits: (contributorId: string, params?: { repository_id?: string; branch?: string[]; from_date?: string; to_date?: string; search?: string; page?: number; per_page?: number }) =>
     request<PaginatedCommits>(`/commits/by-contributor/${contributorId}${buildQuery({
       repository_id: params?.repository_id,
       branch: params?.branch,
       from_date: params?.from_date,
       to_date: params?.to_date,
+      search: params?.search,
       page: params?.page?.toString(),
       per_page: params?.per_page?.toString(),
     })}`),
@@ -199,68 +252,54 @@ export const api = {
   loadDefaultExclusions: () =>
     request<{ added: number }>("/file-exclusions/load-defaults", { method: "POST" }),
 
-  getAiSettings: () => request<AiSettings>("/ai-settings"),
-  updateAiSettings: (data: { enabled?: boolean; model?: string; api_key?: string; base_url?: string; temperature?: number; max_iterations?: number }) =>
-    request<AiSettings>("/ai-settings", { method: "PUT", body: JSON.stringify(data) }),
-  getAiStatus: () => request<AiStatus>("/ai-settings/status"),
+  getAiSettings: () => request<AiSettings>("/ai/settings"),
+  updateAiSettings: (data: { enabled?: boolean }) =>
+    request<AiSettings>("/ai/settings", { method: "PUT", body: JSON.stringify(data) }),
+  getAiStatus: () => request<AiStatus>("/ai/settings/status"),
+
+  // LLM Providers
+  listLlmProviders: () => request<LlmProvider[]>("/ai/llm-providers"),
+  createLlmProvider: (data: { name: string; provider_type?: string; model: string; api_key?: string; base_url?: string; temperature?: number; context_window?: number | null; is_default?: boolean }) =>
+    request<LlmProvider>("/ai/llm-providers", { method: "POST", body: JSON.stringify(data) }),
+  updateLlmProvider: (id: string, data: { name?: string; provider_type?: string; model?: string; api_key?: string; base_url?: string; temperature?: number; context_window?: number | null; is_default?: boolean }) =>
+    request<LlmProvider>(`/ai/llm-providers/${id}`, { method: "PUT", body: JSON.stringify(data) }),
+  deleteLlmProvider: (id: string) => request<void>(`/ai/llm-providers/${id}`, { method: "DELETE" }),
+
+  // Agents
+  listAgents: () => request<AgentConfig[]>("/ai/agents"),
+  getAgent: (slug: string) => request<AgentConfig>(`/ai/agents/${slug}`),
+  createAgent: (data: { slug: string; name: string; description?: string; llm_provider_id?: string; system_prompt?: string; max_iterations?: number; summary_token_limit?: number | null; enabled?: boolean; tool_slugs?: string[]; knowledge_graph_ids?: string[] }) =>
+    request<AgentConfig>("/ai/agents", { method: "POST", body: JSON.stringify(data) }),
+  updateAgent: (slug: string, data: { name?: string; description?: string; llm_provider_id?: string; system_prompt?: string; max_iterations?: number; summary_token_limit?: number | null; enabled?: boolean; tool_slugs?: string[]; knowledge_graph_ids?: string[] }) =>
+    request<AgentConfig>(`/ai/agents/${slug}`, { method: "PUT", body: JSON.stringify(data) }),
+  deleteAgent: (slug: string) => request<void>(`/ai/agents/${slug}`, { method: "DELETE" }),
+
+  // AI Tools (read-only registry)
+  listAiTools: () => request<ToolDefinition[]>("/ai/tools"),
+
+  // Knowledge Graphs
+  listKnowledgeGraphs: () => request<KnowledgeGraphListItem[]>("/ai/knowledge-graphs"),
+  getKnowledgeGraph: (id: string) => request<KnowledgeGraph>(`/ai/knowledge-graphs/${id}`),
+  createKnowledgeGraph: (data: { name: string; description?: string; generation_mode?: string }) =>
+    request<KnowledgeGraph>("/ai/knowledge-graphs", { method: "POST", body: JSON.stringify(data) }),
+  updateKnowledgeGraph: (id: string, data: { name?: string; description?: string; content?: string; excluded_entities?: string[] }) =>
+    request<KnowledgeGraph>(`/ai/knowledge-graphs/${id}`, { method: "PUT", body: JSON.stringify(data) }),
+  deleteKnowledgeGraph: (id: string) => request<void>(`/ai/knowledge-graphs/${id}`, { method: "DELETE" }),
+  regenerateKnowledgeGraph: (id: string) =>
+    request<KnowledgeGraph>(`/ai/knowledge-graphs/${id}/regenerate`, { method: "POST" }),
 
   // Chat
   listChatSessions: () => request<ChatSession[]>("/chat/sessions"),
   getChatSessionMessages: (id: string) => request<ChatMessage[]>(`/chat/sessions/${id}`),
+  createChatSession: () => request<ChatSession>("/chat/sessions", { method: "POST" }),
+  renameChatSession: (id: string, title: string) =>
+    request<ChatSession>(`/chat/sessions/${id}`, { method: "PATCH", body: JSON.stringify({ title }) }),
+  archiveChatSession: (id: string) =>
+    request<ChatSession>(`/chat/sessions/${id}/archive`, { method: "POST" }),
+  unarchiveChatSession: (id: string) =>
+    request<ChatSession>(`/chat/sessions/${id}/unarchive`, { method: "POST" }),
   deleteChatSession: (id: string) => request<void>(`/chat/sessions/${id}`, { method: "DELETE" }),
-  sendChatMessage: async (
-    sessionId: string | null,
-    message: string,
-    onToken: (token: string) => void,
-    onSessionId: (id: string) => void,
-    onDone: (fullContent: string) => void,
-    onError: (error: string) => void,
-  ): Promise<void> => {
-    const token = getToken();
-    const headers: Record<string, string> = { "Content-Type": "application/json" };
-    if (token) headers["Authorization"] = `Bearer ${token}`;
-    const res = await fetch(`${API_BASE}/chat`, {
-      method: "POST",
-      headers,
-      body: JSON.stringify({ session_id: sessionId, message }),
-    });
-    if (!res.ok) {
-      const body = await res.json().catch(() => ({ detail: res.statusText }));
-      onError(body.detail || res.statusText);
-      return;
-    }
-    const reader = res.body?.getReader();
-    if (!reader) { onError("No response stream"); return; }
-    const decoder = new TextDecoder();
-    let buffer = "";
-    let currentEvent = "";
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split("\n");
-      buffer = lines.pop() || "";
-      for (const line of lines) {
-        if (line.startsWith("event: ")) {
-          currentEvent = line.slice(7).trim();
-        } else if (line.startsWith("data: ")) {
-          try {
-            const data = JSON.parse(line.slice(6));
-            if (currentEvent === "session" && data.session_id) {
-              onSessionId(data.session_id);
-            } else if (currentEvent === "done") {
-              onDone(data.content ?? "");
-            } else if (currentEvent === "error") {
-              onError(data.detail ?? "Unknown error");
-            } else if (currentEvent === "token" && data.content !== undefined) {
-              onToken(data.content);
-            }
-          } catch { /* skip malformed */ }
-          currentEvent = "";
-        } else if (line.trim() === "") {
-          currentEvent = "";
-        }
-      }
-    }
-  },
+
+  getApiBase: () => API_BASE,
+  getAuthToken: () => getToken(),
 };

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import Link from "next/link";
 import { FolderGit2, Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -8,31 +8,24 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
-import { api } from "@/lib/api-client";
-import type { Project } from "@/lib/types";
+import { ConfirmDialog } from "@/components/confirm-dialog";
+import { useProjects, useCreateProject, useDeleteProject } from "@/hooks/use-projects";
 
 export default function ProjectsPage() {
-  const [projects, setProjects] = useState<Project[]>([]);
-  const [loading, setLoading] = useState(true);
+  const { data: projects = [], isLoading } = useProjects();
+  const createProject = useCreateProject();
+  const deleteProject = useDeleteProject();
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState({ name: "", description: "" });
   const [search, setSearch] = useState("");
-
-  useEffect(() => {
-    api.listProjects().then(setProjects).finally(() => setLoading(false));
-  }, []);
+  const [deleteId, setDeleteId] = useState<string | null>(null);
+  const projectToDelete = projects.find((p) => p.id === deleteId);
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
-    const project = await api.createProject(form);
-    setProjects((prev) => [...prev, project]);
+    await createProject.mutateAsync(form);
     setForm({ name: "", description: "" });
     setOpen(false);
-  }
-
-  async function handleDelete(id: string) {
-    await api.deleteProject(id);
-    setProjects((prev) => prev.filter((p) => p.id !== id));
   }
 
   const filtered = projects.filter((p) => p.name.toLowerCase().includes(search.toLowerCase()));
@@ -61,7 +54,9 @@ export default function ProjectsPage() {
                 <Label htmlFor="desc">Description</Label>
                 <Input id="desc" value={form.description} onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))} />
               </div>
-              <Button type="submit" className="w-full">Create</Button>
+              <Button type="submit" className="w-full" disabled={createProject.isPending}>
+                {createProject.isPending ? "Creating..." : "Create"}
+              </Button>
             </form>
           </DialogContent>
         </Dialog>
@@ -69,7 +64,7 @@ export default function ProjectsPage() {
 
       <Input placeholder="Search projects..." value={search} onChange={(e) => setSearch(e.target.value)} className="max-w-sm" />
 
-      {loading ? (
+      {isLoading ? (
         <div className="animate-pulse text-muted-foreground">Loading...</div>
       ) : filtered.length === 0 ? (
         <Card>
@@ -95,7 +90,7 @@ export default function ProjectsPage() {
                   variant="ghost"
                   size="icon"
                   className="relative z-20 opacity-0 group-hover:opacity-100"
-                  onClick={(e) => { e.preventDefault(); handleDelete(p.id); }}
+                  onClick={(e) => { e.preventDefault(); setDeleteId(p.id); }}
                 >
                   <Trash2 className="h-4 w-4 text-destructive" />
                 </Button>
@@ -104,6 +99,15 @@ export default function ProjectsPage() {
           ))}
         </div>
       )}
+
+      <ConfirmDialog
+        open={!!deleteId}
+        onOpenChange={(v) => !v && setDeleteId(null)}
+        title="Delete Project"
+        description={<>This will permanently delete <span className="font-semibold">{projectToDelete?.name}</span> and all its repositories, commits, and associated data. This action cannot be undone.</>}
+        confirmLabel="Delete Project"
+        onConfirm={() => { if (deleteId) { deleteProject.mutate(deleteId); setDeleteId(null); } }}
+      />
     </div>
   );
 }

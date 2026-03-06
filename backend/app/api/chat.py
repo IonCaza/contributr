@@ -15,8 +15,9 @@ from app.auth.dependencies import get_current_user
 from app.db.base import get_db
 from app.db.models.chat import ChatSession, ChatMessage, MessageRole
 from app.db.models.ai_settings import AiSettings, SINGLETON_ID
+from app.db.models.agent_config import AgentConfig
 from app.db.models.user import User
-from app.agent.agent import run_agent_stream
+from app.agents.runner import run_agent_stream
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/chat", tags=["chat"])
@@ -25,11 +26,14 @@ router = APIRouter(prefix="/chat", tags=["chat"])
 class ChatRequest(BaseModel):
     session_id: uuid.UUID | None = None
     message: str
+    agent_slug: str = "contribution-analyst"
 
 
 class ChatSessionOut(BaseModel):
     id: uuid.UUID
     title: str
+    agent_slug: str | None = None
+    archived_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -52,14 +56,20 @@ async def send_message(
     db: AsyncSession = Depends(get_db),
 ):
     ai_row = (await db.execute(select(AiSettings).where(AiSettings.id == SINGLETON_ID))).scalar_one_or_none()
-    ai_enabled = ai_row and ai_row.enabled and ai_row.api_key_encrypted
-    if not ai_enabled:
-        from app.config import settings
-        if not settings.ai_api_key:
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="AI agent is not configured. An admin must configure it in Settings.",
-            )
+    if not (ai_row and ai_row.enabled):
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="AI is not enabled. An admin must enable it in Settings > AI.",
+        )
+
+    agent_row = (await db.execute(
+        select(AgentConfig).where(AgentConfig.slug == body.agent_slug, AgentConfig.enabled.is_(True))
+    )).scalar_one_or_none()
+    if not agent_row:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Agent '{body.agent_slug}' not found or not enabled.",
+        )
 
     try:
         if body.session_id:
@@ -74,7 +84,7 @@ async def send_message(
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
         else:
             title = body.message[:100].strip() or "New chat"
-            session = ChatSession(user_id=user.id, title=title)
+            session = ChatSession(user_id=user.id, title=title, agent_id=agent_row.id)
             db.add(session)
             await db.flush()
 
@@ -97,6 +107,11 @@ async def send_message(
             detail="Failed to process chat message.",
         )
 
+    session_row = (await db.execute(
+        select(ChatSession).where(ChatSession.id == session_id)
+    )).scalar_one()
+    existing_summary = session_row.context_summary
+
     history_result = await db.execute(
         select(ChatMessage)
         .where(ChatMessage.session_id == session_id)
@@ -109,11 +124,19 @@ async def send_message(
         if m.id != user_msg_id
     ]
 
+    context_state: dict = {}
+
     async def event_generator():
         collected = ""
         try:
             yield {"event": "session", "data": json.dumps({"session_id": str(session_id)})}
-            async for chunk in run_agent_stream(db, body.message, chat_history):
+            async for chunk in run_agent_stream(
+                db, body.message, chat_history,
+                agent_slug=body.agent_slug,
+                session_id=session_id,
+                session_summary=existing_summary,
+                context_state=context_state,
+            ):
                 collected += chunk
                 yield {"event": "token", "data": json.dumps({"content": chunk})}
             yield {"event": "done", "data": json.dumps({"content": collected})}
@@ -134,10 +157,13 @@ async def send_message(
                         content=content,
                     )
                     db.add(assistant_msg)
+                    update_values: dict = {"updated_at": datetime.now(timezone.utc)}
+                    if "new_summary" in context_state:
+                        update_values["context_summary"] = context_state["new_summary"]
                     await db.execute(
                         update(ChatSession)
                         .where(ChatSession.id == session_id)
-                        .values(updated_at=datetime.now(timezone.utc))
+                        .values(**update_values)
                     )
                     await db.commit()
                     break
@@ -150,6 +176,56 @@ async def send_message(
     return EventSourceResponse(event_generator())
 
 
+class RenameRequest(BaseModel):
+    title: str
+
+
+def _session_out(s: ChatSession) -> ChatSessionOut:
+    return ChatSessionOut(
+        id=s.id,
+        title=s.title,
+        agent_slug=None,
+        archived_at=s.archived_at,
+        created_at=s.created_at,
+        updated_at=s.updated_at,
+    )
+
+
+@router.post("/sessions", response_model=ChatSessionOut, status_code=status.HTTP_201_CREATED)
+async def create_session(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    session = ChatSession(user_id=user.id, title="New chat")
+    db.add(session)
+    await db.commit()
+    await db.refresh(session)
+    return _session_out(session)
+
+
+@router.patch("/sessions/{session_id}", response_model=ChatSessionOut)
+async def rename_session(
+    session_id: uuid.UUID,
+    body: RenameRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(
+        select(ChatSession).where(
+            ChatSession.id == session_id,
+            ChatSession.user_id == user.id,
+        )
+    )
+    session = result.scalar_one_or_none()
+    if not session:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+    session.title = body.title
+    session.updated_at = datetime.now(timezone.utc)
+    await db.commit()
+    await db.refresh(session)
+    return _session_out(session)
+
+
 @router.get("/sessions", response_model=list[ChatSessionOut])
 async def list_sessions(
     user: User = Depends(get_current_user),
@@ -160,7 +236,8 @@ async def list_sessions(
         .where(ChatSession.user_id == user.id)
         .order_by(ChatSession.updated_at.desc())
     )
-    return result.scalars().all()
+    sessions = result.scalars().all()
+    return [_session_out(s) for s in sessions]
 
 
 @router.get("/sessions/{session_id}", response_model=list[ChatMessageOut])
@@ -185,6 +262,48 @@ async def get_session_messages(
         .order_by(ChatMessage.created_at)
     )
     return msgs.scalars().all()
+
+
+@router.post("/sessions/{session_id}/archive", response_model=ChatSessionOut)
+async def archive_session(
+    session_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(
+        select(ChatSession).where(
+            ChatSession.id == session_id,
+            ChatSession.user_id == user.id,
+        )
+    )
+    session = result.scalar_one_or_none()
+    if not session:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+    session.archived_at = datetime.now(timezone.utc)
+    await db.commit()
+    await db.refresh(session)
+    return _session_out(session)
+
+
+@router.post("/sessions/{session_id}/unarchive", response_model=ChatSessionOut)
+async def unarchive_session(
+    session_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(
+        select(ChatSession).where(
+            ChatSession.id == session_id,
+            ChatSession.user_id == user.id,
+        )
+    )
+    session = result.scalar_one_or_none()
+    if not session:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+    session.archived_at = None
+    await db.commit()
+    await db.refresh(session)
+    return _session_out(session)
 
 
 @router.delete("/sessions/{session_id}", status_code=status.HTTP_204_NO_CONTENT)

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, useCallback } from "react";
+import { useRef, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth-context";
 import { SidebarNav } from "@/components/sidebar-nav";
@@ -11,7 +11,7 @@ import {
   ResizableHandle,
   type PanelImperativeHandle,
 } from "@/components/ui/resizable";
-import { api } from "@/lib/api-client";
+import { useAiStatus } from "@/hooks/use-settings";
 
 export default function DashboardLayout({
   children,
@@ -21,28 +21,20 @@ export default function DashboardLayout({
   const { user, loading } = useAuth();
   const router = useRouter();
   const [chatOpen, setChatOpen] = useState(false);
-  const [aiEnabled, setAiEnabled] = useState(false);
   const chatPanelRef = useRef<PanelImperativeHandle>(null);
 
-  useEffect(() => {
-    if (!loading && !user) {
-      router.replace("/login");
-    }
-  }, [user, loading, router]);
+  const { data: aiStatusData } = useAiStatus();
+  const aiEnabled = !!(aiStatusData?.enabled && aiStatusData?.configured);
 
-  useEffect(() => {
-    if (user) {
-      api
-        .getAiStatus()
-        .then((s) => setAiEnabled(s.enabled && s.configured))
-        .catch(() => {});
-    }
-  }, [user]);
+  if (!loading && !user) {
+    router.replace("/login");
+  }
 
   const handleChatToggle = useCallback(() => {
     if (chatOpen) {
       chatPanelRef.current?.collapse();
     } else {
+      chatPanelRef.current?.expand();
       chatPanelRef.current?.resize("40%");
     }
   }, [chatOpen]);
@@ -71,13 +63,17 @@ export default function DashboardLayout({
         chatOpen={chatOpen}
         onChatToggle={handleChatToggle}
       />
-      <ResizablePanelGroup orientation="vertical" className="flex-1 min-w-0">
+      <ResizablePanelGroup orientation="vertical" className="flex-1 min-w-0 h-full overflow-hidden">
         <ResizablePanel id="main" defaultSize="100%" minSize="20%">
           <main className="h-full overflow-y-auto bg-background p-6">
             {children}
           </main>
         </ResizablePanel>
-        <ResizableHandle className="h-[3px] bg-transparent transition-colors hover:bg-accent/50 data-[separator]:hover:bg-accent/50" />
+        <ResizableHandle className="group relative h-2 bg-border/40 transition-colors hover:bg-accent/60 active:bg-accent">
+          <div className="absolute inset-x-0 top-1/2 flex -translate-y-1/2 items-center justify-center">
+            <div className="h-1 w-12 rounded-full bg-muted-foreground/30 transition-colors group-hover:bg-muted-foreground/60 group-active:bg-muted-foreground/80" />
+          </div>
+        </ResizableHandle>
         <ResizablePanel
           id="chat"
           panelRef={chatPanelRef}

@@ -6,12 +6,10 @@ from datetime import datetime, timezone
 from celery.signals import worker_ready
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
-from sqlalchemy.orm import selectinload
-
 from app.config import settings
 from app.workers.celery_app import celery
 from app.db.base import Base
-from app.db.models import Repository, SyncJob, Project, PlatformCredential
+from app.db.models import Repository, SyncJob, PlatformCredential
 from app.db.models.sync_job import SyncStatus
 from app.db.models.repository import Platform
 from app.services.git_analyzer import clone_and_analyze
@@ -68,38 +66,26 @@ async def _check_cancelled(db: AsyncSession, job_id: uuid.UUID) -> None:
 
 
 async def _resolve_platform_token(
-    db: AsyncSession, project_id: uuid.UUID, platform: Platform | None = None,
+    db: AsyncSession, platform: Platform | None = None,
 ) -> tuple[str | None, str | None]:
-    """Resolve decrypted token and base_url from project's platform credential.
-
-    Falls back to auto-discovering a credential matching the repo's platform
-    if the project has no explicit assignment.
-    """
+    """Auto-discover a platform credential matching the repo's platform."""
     from app.api.platform_credentials import decrypt_token
 
-    result = await db.execute(
-        select(Project).options(selectinload(Project.platform_credential)).where(Project.id == project_id)
-    )
-    project = result.scalar_one_or_none()
+    if not platform:
+        return None, None
 
-    cred = None
-    if project and project.platform_credential:
-        cred = project.platform_credential
-        logger.info("Using project-assigned credential '%s' for platform %s", cred.name, cred.platform.value)
-    elif platform:
-        auto = await db.execute(
-            select(PlatformCredential).where(
-                PlatformCredential.platform == platform
-            ).order_by(PlatformCredential.created_at.desc()).limit(1)
-        )
-        cred = auto.scalar_one_or_none()
-        if cred:
-            logger.info("Auto-matched credential '%s' for platform %s (no project assignment)", cred.name, platform.value)
-        else:
-            logger.warning("No platform credential found for %s — PR/review data will not be fetched", platform.value)
+    result = await db.execute(
+        select(PlatformCredential).where(
+            PlatformCredential.platform == platform
+        ).order_by(PlatformCredential.created_at.desc()).limit(1)
+    )
+    cred = result.scalar_one_or_none()
 
     if not cred:
+        logger.warning("No platform credential found for %s — PR/review data will not be fetched", platform.value)
         return None, None
+
+    logger.info("Auto-matched credential '%s' for platform %s", cred.name, platform.value)
 
     try:
         token = decrypt_token(cred.token_encrypted)
@@ -149,7 +135,7 @@ async def _run_sync(repo_id: str, job_id: str) -> None:
             await _check_cancelled(db, uuid.UUID(job_id))
 
             slog.info("prs", f"Resolving platform credentials for {repo.platform.value if repo.platform else 'unknown'}...")
-            token, base_url = await _resolve_platform_token(db, repo.project_id, platform=repo.platform)
+            token, base_url = await _resolve_platform_token(db, platform=repo.platform)
 
             if repo.platform == Platform.GITHUB:
                 slog.info("prs", f"Fetching PRs from GitHub ({repo.platform_owner}/{repo.platform_repo})...")

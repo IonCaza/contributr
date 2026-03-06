@@ -75,13 +75,17 @@ DEFAULT_PATTERNS = [
 
 class FileExclusionPattern(Base):
     __tablename__ = "file_exclusion_patterns"
+    __table_args__ = {
+        "comment": "Glob patterns for excluding files and directories from contribution analysis (e.g., vendor/, *.lock, *.min.js).",
+    }
 
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    pattern: Mapped[str] = mapped_column(String(512), nullable=False, unique=True)
-    description: Mapped[str | None] = mapped_column(Text)
-    enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
-    is_default: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, comment="Auto-generated unique identifier")
+    pattern: Mapped[str] = mapped_column(String(512), nullable=False, unique=True, comment="Glob pattern to match against file paths (e.g. *.lock, vendor/*)")
+    description: Mapped[str | None] = mapped_column(Text, comment="Human-readable explanation of what the pattern excludes")
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False, comment="Whether this exclusion is currently active")
+    is_default: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, comment="Whether this pattern was auto-generated from built-in defaults")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc),
+        comment="Timestamp when the pattern was created",
     )

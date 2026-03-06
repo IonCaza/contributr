@@ -8,8 +8,16 @@ from sqlalchemy import select
 from app.config import settings
 from app.db.base import engine, async_session
 from app.db.models import Repository
-from app.api import auth, projects, repositories, contributors, stats, ssh_keys, commits, backup, chat, ai_settings, file_exclusions, platform_credentials
+from app.db.models.agent_config import AgentConfig, AgentToolAssignment
+from app.db.models.ai_settings import AiSettings, SINGLETON_ID
+from app.api import (
+    auth, projects, repositories, contributors, stats,
+    ssh_keys, commits, backup, chat, ai_settings,
+    file_exclusions, platform_credentials,
+    llm_providers, agents, ai_tools, knowledge_graphs,
+)
 from app.api.repositories import _parse_platform_fields
+from app.agents.builtin import get_builtin_agents
 
 logger = logging.getLogger(__name__)
 
@@ -34,9 +42,61 @@ async def _backfill_platform_fields():
             logger.info("Backfilled platform_owner/platform_repo for %d repositories", updated)
 
 
+async def _ensure_ai_settings():
+    """Ensure the AiSettings singleton row exists."""
+    async with async_session() as db:
+        result = await db.execute(select(AiSettings).where(AiSettings.id == SINGLETON_ID))
+        if not result.scalar_one_or_none():
+            db.add(AiSettings(id=SINGLETON_ID, enabled=False))
+            await db.commit()
+
+
+async def _seed_builtin_agents():
+    """Ensure all builtin agent definitions exist.
+
+    Fresh DB: creates agents with full spec (prompt, tools, description).
+    Existing DB: respects user customizations -- only fills in a blank system
+    prompt and adds new tool assignments.
+    """
+    async with async_session() as db:
+        changed = False
+        for spec in get_builtin_agents():
+            result = await db.execute(
+                select(AgentConfig).where(AgentConfig.slug == spec.slug)
+            )
+            agent = result.scalar_one_or_none()
+            if agent is None:
+                agent = AgentConfig(
+                    slug=spec.slug,
+                    name=spec.name,
+                    description=spec.description,
+                    system_prompt=spec.system_prompt,
+                    is_builtin=True,
+                    enabled=True,
+                )
+                db.add(agent)
+                await db.flush()
+                for tool_slug in spec.tool_slugs:
+                    db.add(AgentToolAssignment(agent_id=agent.id, tool_slug=tool_slug))
+                changed = True
+                logger.info("Seeded builtin agent: %s", spec.slug)
+            else:
+                if not agent.system_prompt or agent.system_prompt == "":
+                    agent.system_prompt = spec.system_prompt
+                    changed = True
+                existing_slugs = {a.tool_slug for a in agent.tool_assignments}
+                for slug in set(spec.tool_slugs) - existing_slugs:
+                    db.add(AgentToolAssignment(agent_id=agent.id, tool_slug=slug))
+                    changed = True
+        if changed:
+            await db.commit()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await _backfill_platform_fields()
+    await _ensure_ai_settings()
+    await _seed_builtin_agents()
     yield
     await engine.dispose()
 
@@ -61,6 +121,10 @@ app.include_router(commits.router, prefix="/api")
 app.include_router(backup.router, prefix="/api")
 app.include_router(chat.router, prefix="/api")
 app.include_router(ai_settings.router, prefix="/api")
+app.include_router(llm_providers.router, prefix="/api")
+app.include_router(agents.router, prefix="/api")
+app.include_router(ai_tools.router, prefix="/api")
+app.include_router(knowledge_graphs.router, prefix="/api")
 app.include_router(file_exclusions.router, prefix="/api")
 app.include_router(platform_credentials.router, prefix="/api")
 

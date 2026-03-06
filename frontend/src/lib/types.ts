@@ -195,11 +195,6 @@ export interface PaginatedCommits {
 
 export interface AiSettings {
   enabled: boolean;
-  model: string;
-  has_api_key: boolean;
-  base_url: string | null;
-  temperature: number;
-  max_iterations: number;
 }
 
 export interface AiStatus {
@@ -207,9 +202,87 @@ export interface AiStatus {
   configured: boolean;
 }
 
+export interface LlmProvider {
+  id: string;
+  name: string;
+  provider_type: string;
+  model: string;
+  has_api_key: boolean;
+  base_url: string | null;
+  temperature: number;
+  context_window: number | null;
+  is_default: boolean;
+}
+
+export interface AgentConfig {
+  id: string;
+  slug: string;
+  name: string;
+  description: string | null;
+  llm_provider_id: string | null;
+  system_prompt: string;
+  max_iterations: number;
+  summary_token_limit: number | null;
+  enabled: boolean;
+  is_builtin: boolean;
+  tool_slugs: string[];
+  knowledge_graph_ids: string[];
+}
+
+export interface KnowledgeGraphListItem {
+  id: string;
+  name: string;
+  description: string | null;
+  generation_mode: string;
+  excluded_entities: string[];
+  node_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface KnowledgeGraph {
+  id: string;
+  name: string;
+  description: string | null;
+  generation_mode: string;
+  content: string;
+  graph_data: {
+    nodes: KGNode[];
+    edges: KGEdge[];
+  };
+  excluded_entities: string[];
+  created_at: string;
+  updated_at: string;
+}
+
+export interface KGNode {
+  id: string;
+  label: string;
+  description?: string;
+  columns?: { name: string; type: string; pk?: boolean; unique?: boolean; required?: boolean; comment?: string }[];
+  row_count?: number;
+}
+
+export interface KGEdge {
+  id: string;
+  source: string;
+  target: string;
+  label: string;
+  type: "fk" | "m2m";
+}
+
+export interface ToolDefinition {
+  slug: string;
+  name: string;
+  description: string;
+  category: string;
+}
+
 export interface ChatSession {
   id: string;
   title: string;
+  agent_slug: string | null;
+  archived_at: string | null;
   created_at: string;
   updated_at: string;
 }

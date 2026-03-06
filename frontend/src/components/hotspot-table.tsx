@@ -1,12 +1,12 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { Flame, AlertTriangle, Loader2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { api } from "@/lib/api-client";
-import type { HotspotFile } from "@/lib/types";
+import { queryKeys } from "@/lib/query-keys";
 
 interface HotspotTableProps {
   repoId: string;
@@ -15,15 +15,13 @@ interface HotspotTableProps {
 }
 
 export function HotspotTable({ repoId, branch, onSelectFile }: HotspotTableProps) {
-  const [hotspots, setHotspots] = useState<HotspotFile[]>([]);
-  const [loading, setLoading] = useState(true);
+  const { data: hotspots = [], isLoading } = useQuery({
+    queryKey: queryKeys.repos.hotspots(repoId, branch),
+    queryFn: () => api.getHotspots(repoId, 50, branch),
+    enabled: !!repoId,
+  });
 
-  useEffect(() => {
-    setLoading(true);
-    api.getHotspots(repoId, 50, branch).then(setHotspots).finally(() => setLoading(false));
-  }, [repoId, branch]);
-
-  if (loading) return <div className="flex items-center gap-2 py-8 justify-center text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Loading hotspots...</div>;
+  if (isLoading) return <div className="flex items-center gap-2 py-8 justify-center text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Loading hotspots...</div>;
   if (hotspots.length === 0) return <p className="py-8 text-center text-sm text-muted-foreground">No file data available. Sync the repository to populate.</p>;
 
   const maxCommits = Math.max(...hotspots.map((h) => h.commit_count));

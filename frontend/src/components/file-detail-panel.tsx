@@ -1,13 +1,13 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
-import { FileCode2, Users, GitCommitHorizontal, Crown, Loader2 } from "lucide-react";
+import { FileCode2, Users, GitCommitHorizontal, Crown, Loader2, ExternalLink } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { api } from "@/lib/api-client";
-import type { FileDetail } from "@/lib/types";
+import { queryKeys } from "@/lib/query-keys";
 
 interface FileDetailPanelProps {
   repoId: string;
@@ -16,15 +16,13 @@ interface FileDetailPanelProps {
 }
 
 export function FileDetailPanel({ repoId, filePath, branch }: FileDetailPanelProps) {
-  const [detail, setDetail] = useState<FileDetail | null>(null);
-  const [loading, setLoading] = useState(true);
+  const { data: detail, isLoading } = useQuery({
+    queryKey: queryKeys.repos.fileDetail(repoId, filePath, branch),
+    queryFn: () => api.getFileDetail(repoId, filePath, branch),
+    enabled: !!repoId && !!filePath,
+  });
 
-  useEffect(() => {
-    setLoading(true);
-    api.getFileDetail(repoId, filePath, branch).then(setDetail).finally(() => setLoading(false));
-  }, [repoId, filePath, branch]);
-
-  if (loading) return <div className="flex items-center gap-2 py-8 justify-center text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Loading file details...</div>;
+  if (isLoading) return <div className="flex items-center gap-2 py-8 justify-center text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Loading file details...</div>;
   if (!detail) return <p className="py-8 text-center text-sm text-muted-foreground">Could not load file details.</p>;
 
   return (
@@ -103,7 +101,14 @@ export function FileDetailPanel({ repoId, filePath, branch }: FileDetailPanelPro
             <div className="space-y-0 divide-y">
               {detail.recent_commits.map((c) => (
                 <div key={c.id} className="flex items-center gap-3 px-4 py-2">
-                  <code className="text-xs text-primary shrink-0">{c.sha.slice(0, 7)}</code>
+                  {c.commit_url ? (
+                    <a href={c.commit_url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 font-mono text-xs text-primary hover:underline shrink-0">
+                      {c.sha.slice(0, 7)}
+                      <ExternalLink className="h-2.5 w-2.5 opacity-50" />
+                    </a>
+                  ) : (
+                    <code className="text-xs text-primary shrink-0">{c.sha.slice(0, 7)}</code>
+                  )}
                   <span className="text-sm truncate flex-1">{c.message?.split("\n")[0] || "-"}</span>
                   <span className="text-xs text-muted-foreground shrink-0 whitespace-nowrap">{c.contributor_name}</span>
                   <span className="text-xs text-muted-foreground shrink-0">{new Date(c.authored_at).toLocaleDateString()}</span>

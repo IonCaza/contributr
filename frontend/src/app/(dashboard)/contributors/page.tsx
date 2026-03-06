@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useState } from "react";
 import Link from "next/link";
 import { Users, AlertTriangle, ChevronDown, ChevronRight, Merge, Check } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -11,50 +11,29 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
 } from "@/components/ui/dialog";
-import { api } from "@/lib/api-client";
-import type { Contributor, DuplicateGroup } from "@/lib/types";
+import { useContributors, useDuplicateContributors, useMergeContributors } from "@/hooks/use-contributors";
+import type { DuplicateGroup } from "@/lib/types";
 
 export default function ContributorsPage() {
-  const [contributors, setContributors] = useState<Contributor[]>([]);
-  const [duplicates, setDuplicates] = useState<DuplicateGroup[]>([]);
-  const [loading, setLoading] = useState(true);
+  const { data: contributors = [], isLoading } = useContributors();
+  const { data: duplicates = [] } = useDuplicateContributors();
+  const mergeMutation = useMergeContributors();
   const [search, setSearch] = useState("");
   const [dupExpanded, setDupExpanded] = useState(true);
   const [mergeGroup, setMergeGroup] = useState<DuplicateGroup | null>(null);
   const [mergeTarget, setMergeTarget] = useState<string | null>(null);
-  const [merging, setMerging] = useState(false);
-
-  const refresh = useCallback(async () => {
-    const [c, d] = await Promise.all([
-      api.listContributors(),
-      api.getDuplicateContributors(),
-    ]);
-    setContributors(c);
-    setDuplicates(d);
-  }, []);
-
-  useEffect(() => {
-    refresh().finally(() => setLoading(false));
-  }, [refresh]);
 
   const contribMap = new Map(contributors.map((c) => [c.id, c]));
-
   const dupContributorIds = new Set(duplicates.flatMap((g) => g.contributor_ids));
 
   async function handleMerge() {
     if (!mergeGroup || !mergeTarget) return;
-    setMerging(true);
-    try {
-      const sources = mergeGroup.contributor_ids.filter((id) => id !== mergeTarget);
-      for (const sourceId of sources) {
-        await api.mergeContributors(sourceId, mergeTarget);
-      }
-      setMergeGroup(null);
-      setMergeTarget(null);
-      await refresh();
-    } finally {
-      setMerging(false);
+    const sources = mergeGroup.contributor_ids.filter((id) => id !== mergeTarget);
+    for (const sourceId of sources) {
+      await mergeMutation.mutateAsync({ sourceId, targetId: mergeTarget });
     }
+    setMergeGroup(null);
+    setMergeTarget(null);
   }
 
   const filtered = contributors.filter(
@@ -132,7 +111,7 @@ export default function ContributorsPage() {
         </Card>
       )}
 
-      {loading ? (
+      {isLoading ? (
         <div className="animate-pulse text-muted-foreground">Loading...</div>
       ) : filtered.length === 0 ? (
         <Card>
@@ -238,8 +217,8 @@ export default function ContributorsPage() {
                 <Button variant="outline" onClick={() => { setMergeGroup(null); setMergeTarget(null); }}>
                   Cancel
                 </Button>
-                <Button onClick={handleMerge} disabled={!mergeTarget || merging}>
-                  {merging ? "Merging..." : "Merge"}
+                <Button onClick={handleMerge} disabled={!mergeTarget || mergeMutation.isPending}>
+                  {mergeMutation.isPending ? "Merging..." : "Merge"}
                 </Button>
               </div>
             </div>

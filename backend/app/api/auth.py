@@ -1,7 +1,8 @@
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, field_validator
+import re
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -13,11 +14,21 @@ from app.auth.dependencies import get_current_user, require_admin
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 
+_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+
 class RegisterRequest(BaseModel):
-    email: EmailStr
+    email: str
     username: str
     password: str
     full_name: str | None = None
+
+    @field_validator("email")
+    @classmethod
+    def validate_email(cls, v: str) -> str:
+        if not _EMAIL_RE.match(v):
+            raise ValueError("Not a valid email address")
+        return v.lower().strip()
 
 
 class LoginRequest(BaseModel):
@@ -43,11 +54,18 @@ class UserResponse(BaseModel):
 
 
 class CreateUserRequest(BaseModel):
-    email: EmailStr
+    email: str
     username: str
     password: str
     full_name: str | None = None
     is_admin: bool = False
+
+    @field_validator("email")
+    @classmethod
+    def validate_email(cls, v: str) -> str:
+        if not _EMAIL_RE.match(v):
+            raise ValueError("Not a valid email address")
+        return v.lower().strip()
 
 
 @router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)

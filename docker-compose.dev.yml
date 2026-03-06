@@ -1,0 +1,29 @@
+# Dev override -- hot reload for backend, frontend, and worker.
+# Usage: docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
+
+services:
+  backend:
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    volumes:
+      - ./backend:/app
+      - repos_cache:/tmp/contributr_repos
+
+  worker:
+    command: watchfiles --filter python 'celery -A app.workers.celery_app:celery worker --loglevel=info --pool=solo' ./app
+    volumes:
+      - ./backend:/app
+      - repos_cache:/tmp/contributr_repos
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.dev
+    environment:
+      - WATCHPACK_POLLING=true
+    volumes:
+      - ./frontend/src:/app/src
+      - ./frontend/public:/app/public
+      - ./frontend/tailwind.config.ts:/app/tailwind.config.ts
+      - ./frontend/next.config.ts:/app/next.config.ts
+      - ./frontend/tsconfig.json:/app/tsconfig.json
+      - /app/node_modules

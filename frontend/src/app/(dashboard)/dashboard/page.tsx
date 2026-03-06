@@ -1,34 +1,19 @@
 "use client";
 
-import { useEffect, useState } from "react";
 import Link from "next/link";
 import { FolderGit2, GitCommitHorizontal, Users, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { StatCard } from "@/components/stat-card";
-import { api } from "@/lib/api-client";
-import type { Project, TrendData } from "@/lib/types";
+import { useProjects } from "@/hooks/use-projects";
+import { useTrends } from "@/hooks/use-daily-stats";
 
 export default function DashboardPage() {
-  const [projects, setProjects] = useState<Project[]>([]);
-  const [trends, setTrends] = useState<TrendData | null>(null);
-  const [loading, setLoading] = useState(true);
+  const { data: projects = [], isLoading: loadingProjects } = useProjects();
+  const { data: trends, isLoading: loadingTrends } = useTrends({});
 
-  useEffect(() => {
-    async function load() {
-      try {
-        const [p, t] = await Promise.all([api.listProjects(), api.trends({})]);
-        setProjects(p);
-        setTrends(t);
-      } catch {
-        // api may not be reachable yet
-      } finally {
-        setLoading(false);
-      }
-    }
-    load();
-  }, []);
+  const loading = loadingProjects || loadingTrends;
 
   if (loading) {
     return <div className="animate-pulse text-muted-foreground">Loading dashboard...</div>;
