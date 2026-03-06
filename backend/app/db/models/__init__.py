@@ -17,6 +17,11 @@ from app.db.models.platform_credential import PlatformCredential
 from app.db.models.llm_provider import LlmProvider
 from app.db.models.agent_config import AgentConfig, AgentToolAssignment
 from app.db.models.knowledge_graph import KnowledgeGraph, AgentKnowledgeGraphAssignment
+from app.db.models.team import Team, TeamMember
+from app.db.models.iteration import Iteration
+from app.db.models.work_item import WorkItem, WorkItemRelation
+from app.db.models.daily_delivery_stats import DailyDeliveryStats
+from app.db.models.delivery_sync_job import DeliverySyncJob
 
 __all__ = [
     "User",
@@ -43,4 +48,11 @@ __all__ = [
     "AgentToolAssignment",
     "KnowledgeGraph",
     "AgentKnowledgeGraphAssignment",
+    "Team",
+    "TeamMember",
+    "Iteration",
+    "WorkItem",
+    "WorkItemRelation",
+    "DailyDeliveryStats",
+    "DeliverySyncJob",
 ]

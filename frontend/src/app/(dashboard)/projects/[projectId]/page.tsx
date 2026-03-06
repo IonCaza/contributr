@@ -24,6 +24,8 @@ import { SyncLogViewer } from "@/components/sync-log-viewer";
 import { api } from "@/lib/api-client";
 import { queryKeys } from "@/lib/query-keys";
 import type { ContributorSummary } from "@/lib/types";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { ProjectDeliveryTab } from "@/components/project-delivery-tab";
 import { useProject, useProjectStats } from "@/hooks/use-projects";
 import { useSSHKeys } from "@/hooks/use-settings";
 import { useCreateRepo, useUpdateRepo, useDeleteRepo, usePurgeRepo, useSyncRepo, useCancelSync } from "@/hooks/use-repos";
@@ -211,6 +213,14 @@ export default function ProjectDetailPage() {
         <h1 className="text-3xl font-bold tracking-tight">{project.name}</h1>
         {project.description && <p className="text-muted-foreground">{project.description}</p>}
       </div>
+
+      <Tabs defaultValue="code" className="w-full">
+        <TabsList>
+          <TabsTrigger value="code">Code</TabsTrigger>
+          <TabsTrigger value="delivery">Delivery</TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="code" className="space-y-6 mt-4">
 
       <div className="flex flex-wrap items-center gap-3 rounded-lg border border-border bg-muted/30 px-4 py-3">
         <DateRangeFilter value={dateRange} onChange={setDateRange} />
@@ -621,6 +631,13 @@ export default function ProjectDetailPage() {
           </>
         );
       })()}
+
+        </TabsContent>
+
+        <TabsContent value="delivery" className="mt-4">
+          <ProjectDeliveryTab projectId={projectId} />
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }

@@ -2,7 +2,7 @@
 
 import { useState, useMemo } from "react";
 import { useParams } from "next/navigation";
-import { FolderGit2, Search } from "lucide-react";
+import { FolderGit2, Search, Users } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { StatCard } from "@/components/stat-card";
@@ -10,9 +10,13 @@ import { ContributionAreaChart } from "@/components/charts/contribution-area-cha
 import { ContributorHeatmap } from "@/components/contributor-heatmap";
 import { CommitList } from "@/components/commit-list";
 import { StatDetailSheet } from "@/components/stat-detail-sheet";
+import { Badge } from "@/components/ui/badge";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { DateRangeFilter, defaultRange } from "@/components/date-range-filter";
 import type { DateRange } from "@/components/date-range-filter";
 import { BranchMultiSelect } from "@/components/branch-multi-select";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { ContributorDeliveryTab } from "@/components/contributor-delivery-tab";
 import { useContributor, useContributorStats, useContributorRepos, useContributorCommits } from "@/hooks/use-contributors";
 import { useRepoBranches } from "@/hooks/use-repos";
 import { useDailyStats } from "@/hooks/use-daily-stats";
@@ -96,6 +100,49 @@ export default function ContributorDetailPage() {
           <p className="text-muted-foreground">{contributor.canonical_email}</p>
         </div>
       </div>
+
+      {((contributor.alias_emails && contributor.alias_emails.length > 0) ||
+        (contributor.alias_names && contributor.alias_names.length > 0)) && (
+        <Collapsible>
+          <CollapsibleTrigger className="flex w-full items-center gap-2 rounded-lg border border-border bg-muted/30 px-4 py-2.5 text-sm hover:bg-muted/50 transition-colors">
+            <Users className="h-4 w-4 text-muted-foreground" />
+            <span className="font-medium">Merged Profiles</span>
+            <Badge variant="secondary" className="ml-1 text-[10px]">
+              {new Set([
+                ...(contributor.alias_emails ?? []),
+                ...(contributor.alias_names ?? []),
+              ]).size}
+            </Badge>
+            <span className="ml-auto text-xs text-muted-foreground">Click to expand</span>
+          </CollapsibleTrigger>
+          <CollapsibleContent className="mt-2 rounded-lg border border-border bg-muted/20 px-4 py-3 space-y-2">
+            {contributor.alias_names && contributor.alias_names.length > 0 && (
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-xs font-medium text-muted-foreground w-20 shrink-0">Names:</span>
+                {contributor.alias_names.map((name) => (
+                  <Badge key={name} variant="outline" className="text-xs">{name}</Badge>
+                ))}
+              </div>
+            )}
+            {contributor.alias_emails && contributor.alias_emails.length > 0 && (
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-xs font-medium text-muted-foreground w-20 shrink-0">Emails:</span>
+                {contributor.alias_emails.map((email) => (
+                  <Badge key={email} variant="outline" className="text-xs">{email}</Badge>
+                ))}
+              </div>
+            )}
+          </CollapsibleContent>
+        </Collapsible>
+      )}
+
+      <Tabs defaultValue="code" className="w-full">
+        <TabsList>
+          <TabsTrigger value="code">Code</TabsTrigger>
+          <TabsTrigger value="delivery">Delivery</TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="code" className="space-y-6 mt-4">
 
       <div className="flex flex-wrap items-center gap-3 rounded-lg border border-border bg-muted/30 px-4 py-3">
         <div className="flex items-center gap-2">
@@ -183,6 +230,13 @@ export default function ContributorDetailPage() {
           showRepo={!selectedRepo}
         />
       )}
+
+        </TabsContent>
+
+        <TabsContent value="delivery" className="mt-4">
+          <ContributorDeliveryTab contributorId={contributorId} contributor={contributor} />
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }

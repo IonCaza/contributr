@@ -63,6 +63,7 @@ export function useMergeContributors() {
       api.mergeContributors(sourceId, targetId),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["contributors"] });
+      qc.invalidateQueries({ queryKey: queryKeys.contributors.duplicates });
     },
   });
 }

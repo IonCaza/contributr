@@ -369,3 +369,80 @@ export interface PlatformCredentialTestResult {
   success: boolean;
   message: string;
 }
+
+// ── Delivery / Teams ────────────────────────────────────────────────
+
+export interface Team {
+  id: string;
+  project_id: string;
+  name: string;
+  description: string | null;
+  platform: string | null;
+  member_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface TeamMember {
+  contributor_id: string;
+  contributor_name: string;
+  contributor_email: string;
+  role: string;
+  joined_at: string;
+}
+
+export interface Iteration {
+  id: string;
+  name: string;
+  path: string | null;
+  start_date: string | null;
+  end_date: string | null;
+  stats: IterationStats | null;
+}
+
+export interface IterationStats {
+  total_items: number;
+  completed_items: number;
+  total_points: number;
+  completed_points: number;
+}
+
+export interface WorkItem {
+  id: string;
+  platform_work_item_id: number;
+  work_item_type: "epic" | "feature" | "user_story" | "task" | "bug";
+  title: string;
+  state: string;
+  assigned_to: { id: string; name: string | null } | null;
+  iteration_id: string | null;
+  story_points: number | null;
+  priority: number | null;
+  tags: string[];
+  created_at: string;
+  resolved_at: string | null;
+  closed_at: string | null;
+  platform_url: string | null;
+  children_count: number;
+  parent_id: string | null;
+}
+
+export interface PaginatedWorkItems {
+  items: WorkItem[];
+  total: number;
+  page: number;
+  page_size: number;
+}
+
+export interface DeliveryStats {
+  total_work_items: number;
+  open_items: number;
+  completed_items: number;
+  total_story_points: number;
+  completed_story_points: number;
+  avg_cycle_time_hours: number;
+  avg_lead_time_hours: number;
+  velocity_trend: { iteration: string; points: number }[];
+  throughput_trend: { date: string; completed: number; created: number }[];
+  backlog_by_type: { type: string; count: number }[];
+  backlog_by_state: { state: string; count: number }[];
+}

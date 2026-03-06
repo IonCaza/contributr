@@ -9,13 +9,17 @@ from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sess
 from app.config import settings
 from app.workers.celery_app import celery
 from app.db.base import Base
-from app.db.models import Repository, SyncJob, PlatformCredential
+from app.db.models import Repository, SyncJob, PlatformCredential, Project
 from app.db.models.sync_job import SyncStatus
 from app.db.models.repository import Platform
 from app.services.git_analyzer import clone_and_analyze
 from app.services.github_client import fetch_github_prs
 from app.services.gitlab_client import fetch_gitlab_mrs
 from app.services.azure_client import fetch_azure_prs
+from app.services.azure_workitems_client import (
+    fetch_ado_teams, fetch_ado_iterations, fetch_ado_work_items,
+    rebuild_daily_delivery_stats, _parse_ado_project,
+)
 from app.services.metrics import rebuild_daily_stats
 from app.services.sync_logger import SyncLogger
 
@@ -243,3 +247,105 @@ def sync_repository(repo_id: str, job_id: str) -> dict:
     logger.info("Celery task sync_repository called: repo=%s job=%s", repo_id, job_id)
     asyncio.run(_run_sync(repo_id, job_id))
     return {"repo_id": repo_id, "job_id": job_id}
+
+
+async def _run_delivery_sync(project_id: str, job_id: str | None = None) -> dict:
+    """Sync teams, iterations, and work items from Azure DevOps for a project."""
+    slog = SyncLogger(f"delivery-{project_id}")
+    slog.info("init", f"Starting delivery sync for project={project_id}")
+    Session = _get_session()
+    async with Session() as db:
+        from sqlalchemy.orm import selectinload
+        from app.db.models.delivery_sync_job import DeliverySyncJob
+
+        job: DeliverySyncJob | None = None
+        if job_id:
+            r = await db.execute(select(DeliverySyncJob).where(DeliverySyncJob.id == uuid.UUID(job_id)))
+            job = r.scalar_one_or_none()
+            if job:
+                job.status = SyncStatus.RUNNING
+                job.started_at = datetime.now(timezone.utc)
+                await db.commit()
+
+        async def _fail_job(msg: str):
+            if job:
+                job.status = SyncStatus.FAILED
+                job.finished_at = datetime.now(timezone.utc)
+                job.error_message = msg[:2000]
+                await db.commit()
+
+        result = await db.execute(
+            select(Project)
+            .options(selectinload(Project.repositories))
+            .where(Project.id == uuid.UUID(project_id))
+        )
+        project = result.scalar_one_or_none()
+        if not project:
+            slog.error("init", f"Project not found: {project_id}")
+            slog.close()
+            await _fail_job("Project not found")
+            return {"error": "Project not found"}
+
+        ado_project_name = _parse_ado_project(project)
+        if not ado_project_name:
+            slog.error("init", "No Azure DevOps repository found in project — cannot sync delivery data")
+            slog.close()
+            await _fail_job("No Azure repo in project")
+            return {"error": "No Azure repo in project"}
+
+        token, base_url = await _resolve_platform_token(db, Platform.AZURE)
+        if not token:
+            slog.error("init", "No Azure DevOps credential found")
+            slog.close()
+            await _fail_job("No Azure credential")
+            return {"error": "No Azure credential"}
+
+        azure_repo = next(
+            (r for r in project.repositories if r.platform and r.platform.value == "azure"),
+            None,
+        )
+        org_url = base_url or (_derive_azure_org_url(azure_repo) if azure_repo else None)
+        if not org_url:
+            slog.error("init", "Cannot determine Azure DevOps org URL")
+            slog.close()
+            await _fail_job("No org URL")
+            return {"error": "No org URL"}
+
+        try:
+            slog.info("teams", "Fetching teams from Azure DevOps...")
+            teams_count = await fetch_ado_teams(db, project, org_url, token, ado_project_name, slog)
+            slog.info("teams", f"Synced {teams_count} teams")
+
+            slog.info("iterations", "Fetching iterations from Azure DevOps...")
+            iter_count = await fetch_ado_iterations(db, project, org_url, token, ado_project_name, slog)
+            slog.info("iterations", f"Synced {iter_count} iterations")
+
+            slog.info("work_items", "Fetching work items from Azure DevOps...")
+            wi_count = await fetch_ado_work_items(db, project, org_url, token, ado_project_name, slog)
+            slog.info("work_items", f"Synced {wi_count} work items")
+
+            slog.info("stats", "Rebuilding daily delivery stats...")
+            await rebuild_daily_delivery_stats(db, project.id)
+            slog.info("stats", "Daily delivery stats rebuilt")
+
+            if job:
+                job.status = SyncStatus.COMPLETED
+                job.finished_at = datetime.now(timezone.utc)
+
+            await db.commit()
+            slog.complete()
+            return {"teams": teams_count, "iterations": iter_count, "work_items": wi_count}
+
+        except Exception as e:
+            logger.exception("Delivery sync FAILED for project %s: %s", project_id, e)
+            slog.fail(str(e)[:500])
+            await _fail_job(str(e)[:500])
+            return {"error": str(e)}
+        finally:
+            slog.close()
+
+
+@celery.task(name="sync_delivery")
+def sync_delivery(project_id: str, job_id: str | None = None) -> dict:
+    logger.info("Celery task sync_delivery called: project=%s job=%s", project_id, job_id)
+    return asyncio.run(_run_delivery_sync(project_id, job_id))

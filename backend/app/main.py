@@ -15,6 +15,7 @@ from app.api import (
     ssh_keys, commits, backup, chat, ai_settings,
     file_exclusions, platform_credentials,
     llm_providers, agents, ai_tools, knowledge_graphs,
+    teams as teams_api, delivery as delivery_api,
 )
 from app.api.repositories import _parse_platform_fields
 from app.agents.builtin import get_builtin_agents
@@ -127,6 +128,8 @@ app.include_router(ai_tools.router, prefix="/api")
 app.include_router(knowledge_graphs.router, prefix="/api")
 app.include_router(file_exclusions.router, prefix="/api")
 app.include_router(platform_credentials.router, prefix="/api")
+app.include_router(teams_api.router)
+app.include_router(delivery_api.router)
 
 
 @app.get("/api/health")

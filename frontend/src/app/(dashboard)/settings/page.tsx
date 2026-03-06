@@ -296,10 +296,11 @@ export default function SettingsPage() {
 
   async function handleSaveAgent(e: React.FormEvent) {
     e.preventDefault();
+    if (!agentForm.llm_provider_id) return;
     const data = {
       name: agentForm.name,
       description: agentForm.description || undefined,
-      llm_provider_id: agentForm.llm_provider_id || undefined,
+      llm_provider_id: agentForm.llm_provider_id,
       system_prompt: agentForm.system_prompt,
       max_iterations: parseInt(agentForm.max_iterations) || 10,
       summary_token_limit: agentForm.summary_token_limit ? parseInt(agentForm.summary_token_limit) : null,
@@ -977,9 +978,9 @@ export default function SettingsPage() {
                   </div>
                   <div className="grid gap-4 sm:grid-cols-3">
                     <div className="min-w-0 space-y-2">
-                      <Label>LLM Provider</Label>
+                      <Label>LLM Provider <span className="text-destructive">*</span></Label>
                       <Select value={agentForm.llm_provider_id} onValueChange={(v) => setAgentForm((f) => ({ ...f, llm_provider_id: v }))}>
-                        <SelectTrigger className="w-full overflow-hidden [&>span:first-child]:truncate"><SelectValue placeholder="Select a provider..." /></SelectTrigger>
+                        <SelectTrigger className={`w-full overflow-hidden [&>span:first-child]:truncate ${!agentForm.llm_provider_id ? "border-destructive/50" : ""}`}><SelectValue placeholder="Select a provider..." /></SelectTrigger>
                         <SelectContent>
                           {llmProviders.map((p) => (
                             <SelectItem key={p.id} value={p.id}>
@@ -988,6 +989,7 @@ export default function SettingsPage() {
                           ))}
                         </SelectContent>
                       </Select>
+                      {!agentForm.llm_provider_id && <p className="text-xs text-destructive">An LLM provider is required.</p>}
                     </div>
                     <div className="space-y-2">
                       <Label>Max Iterations</Label>
@@ -1068,7 +1070,7 @@ export default function SettingsPage() {
                     <Switch checked={agentForm.enabled} onCheckedChange={(checked) => setAgentForm((f) => ({ ...f, enabled: checked }))} />
                     <Label>Enabled</Label>
                   </div>
-                  <Button type="submit" className="w-full" disabled={createAgent.isPending || updateAgent.isPending}>
+                  <Button type="submit" className="w-full" disabled={!agentForm.llm_provider_id || createAgent.isPending || updateAgent.isPending}>
                     {(createAgent.isPending || updateAgent.isPending) ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Saving...</> : "Save Agent"}
                   </Button>
                 </form>

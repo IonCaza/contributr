@@ -40,3 +40,4 @@ class Project(Base):
     repositories = relationship("Repository", back_populates="project", cascade="all, delete-orphan")
     contributors = relationship("Contributor", secondary=project_contributors, back_populates="projects")
     platform_credential = relationship("PlatformCredential")
+    delivery_sync_jobs = relationship("DeliverySyncJob", back_populates="project", cascade="all, delete-orphan", order_by="DeliverySyncJob.created_at.desc()")

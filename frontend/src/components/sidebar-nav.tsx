@@ -4,7 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useTheme } from "next-themes";
 import {
-  LayoutDashboard, FolderGit2, Users, Settings, Sun, Moon,
+  LayoutDashboard, FolderGit2, Users, Users2, Settings, Sun, Moon,
   LogOut, ChevronLeft, ChevronRight, Bot,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -18,6 +18,7 @@ const NAV_ITEMS = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { href: "/projects", label: "Projects", icon: FolderGit2 },
   { href: "/contributors", label: "Contributors", icon: Users },
+  { href: "/teams", label: "Teams", icon: Users2 },
   { href: "/settings", label: "Settings", icon: Settings },
 ];
 

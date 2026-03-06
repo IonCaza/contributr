@@ -24,6 +24,9 @@ const PHASE_COLORS: Record<string, string> = {
   complete: "bg-green-500",
   error: "bg-red-500",
   cancelled: "bg-yellow-600",
+  teams: "bg-indigo-500",
+  iterations: "bg-sky-500",
+  work_items: "bg-orange-500",
 };
 
 const LEVEL_CLASSES: Record<string, string> = {
@@ -38,13 +41,14 @@ function formatTime(ts: number): string {
 }
 
 interface SyncLogViewerProps {
-  repoId: string;
-  jobId: string;
+  repoId?: string;
+  jobId?: string;
+  logUrl?: string;
   compact?: boolean;
   onDone?: () => void;
 }
 
-export function SyncLogViewer({ repoId, jobId, compact = false, onDone }: SyncLogViewerProps) {
+export function SyncLogViewer({ repoId, jobId, logUrl, compact = false, onDone }: SyncLogViewerProps) {
   const [entries, setEntries] = useState<LogEntry[]>([]);
   const [live, setLive] = useState(true);
   const [expanded, setExpanded] = useState(!compact);
@@ -54,8 +58,14 @@ export function SyncLogViewer({ repoId, jobId, compact = false, onDone }: SyncLo
 
   const connect = useCallback(() => {
     const token = typeof window !== "undefined" ? localStorage.getItem("access_token") : null;
-    const apiBase = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
-    const url = `${apiBase}/repositories/${repoId}/sync-jobs/${jobId}/logs${token ? `?token=${encodeURIComponent(token)}` : ""}`;
+    const tokenSuffix = token ? `?token=${encodeURIComponent(token)}` : "";
+    let url: string;
+    if (logUrl) {
+      url = `${logUrl}${tokenSuffix}`;
+    } else {
+      const apiBase = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
+      url = `${apiBase}/repositories/${repoId}/sync-jobs/${jobId}/logs${tokenSuffix}`;
+    }
 
     const es = new EventSource(url);
     esRef.current = es;
@@ -79,7 +89,7 @@ export function SyncLogViewer({ repoId, jobId, compact = false, onDone }: SyncLo
     };
 
     return es;
-  }, [repoId, jobId, onDone]);
+  }, [repoId, jobId, logUrl, onDone]);
 
   useEffect(() => {
     const es = connect();
@@ -158,11 +168,12 @@ export function SyncLogViewer({ repoId, jobId, compact = false, onDone }: SyncLo
 }
 
 interface ViewLogsButtonProps {
-  repoId: string;
-  jobId: string;
+  repoId?: string;
+  jobId?: string;
+  logUrl?: string;
 }
 
-export function ViewLogsButton({ repoId, jobId }: ViewLogsButtonProps) {
+export function ViewLogsButton({ repoId, jobId, logUrl }: ViewLogsButtonProps) {
   const [open, setOpen] = useState(false);
 
   if (!open) {
@@ -173,5 +184,5 @@ export function ViewLogsButton({ repoId, jobId }: ViewLogsButtonProps) {
     );
   }
 
-  return <SyncLogViewer repoId={repoId} jobId={jobId} />;
+  return <SyncLogViewer repoId={repoId} jobId={jobId} logUrl={logUrl} />;
 }

@@ -1,11 +1,12 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useCallback } from "react";
 import Link from "next/link";
 import { Users, AlertTriangle, ChevronDown, ChevronRight, Merge, Check } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import {
@@ -22,9 +23,26 @@ export default function ContributorsPage() {
   const [dupExpanded, setDupExpanded] = useState(true);
   const [mergeGroup, setMergeGroup] = useState<DuplicateGroup | null>(null);
   const [mergeTarget, setMergeTarget] = useState<string | null>(null);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
 
   const contribMap = new Map(contributors.map((c) => [c.id, c]));
   const dupContributorIds = new Set(duplicates.flatMap((g) => g.contributor_ids));
+
+  const toggleSelect = useCallback((id: string) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+
+  function openManualMerge() {
+    if (selected.size < 2) return;
+    const ids = Array.from(selected);
+    setMergeGroup({ group_key: "manual", reason: "Manual selection", contributor_ids: ids });
+    setMergeTarget(ids[0]);
+  }
 
   async function handleMerge() {
     if (!mergeGroup || !mergeTarget) return;
@@ -34,6 +52,7 @@ export default function ContributorsPage() {
     }
     setMergeGroup(null);
     setMergeTarget(null);
+    setSelected(new Set());
   }
 
   const filtered = contributors.filter(
@@ -49,7 +68,18 @@ export default function ContributorsPage() {
         <p className="text-muted-foreground">All contributors across all projects and repositories</p>
       </div>
 
-      <Input placeholder="Search by name or email..." value={search} onChange={(e) => setSearch(e.target.value)} className="max-w-sm" />
+      <div className="flex items-center gap-3">
+        <Input placeholder="Search by name or email..." value={search} onChange={(e) => setSearch(e.target.value)} className="max-w-sm" />
+        {selected.size >= 2 && (
+          <Button size="sm" variant="outline" onClick={openManualMerge}>
+            <Merge className="mr-1.5 h-3.5 w-3.5" />
+            Merge {selected.size} selected
+          </Button>
+        )}
+        {selected.size === 1 && (
+          <span className="text-xs text-muted-foreground">Select at least 2 contributors to merge</span>
+        )}
+      </div>
 
       {duplicates.length > 0 && (
         <Card className="border-amber-500/30 bg-amber-500/5">
@@ -126,6 +156,7 @@ export default function ContributorsPage() {
           <Table>
             <TableHeader>
               <TableRow>
+                <TableHead className="w-10" />
                 <TableHead>Name</TableHead>
                 <TableHead>Email</TableHead>
                 <TableHead>Projects</TableHead>
@@ -133,7 +164,14 @@ export default function ContributorsPage() {
             </TableHeader>
             <TableBody>
               {filtered.map((c) => (
-                <TableRow key={c.id}>
+                <TableRow key={c.id} className={selected.has(c.id) ? "bg-primary/5" : undefined}>
+                  <TableCell className="w-10 pr-0">
+                    <Checkbox
+                      checked={selected.has(c.id)}
+                      onCheckedChange={() => toggleSelect(c.id)}
+                      aria-label={`Select ${c.canonical_name}`}
+                    />
+                  </TableCell>
                   <TableCell>
                     <Link href={`/contributors/${c.id}`} className="flex items-center gap-2 font-medium hover:underline">
                       <div className="flex h-7 w-7 items-center justify-center rounded-full bg-primary/10 text-xs font-bold text-primary">

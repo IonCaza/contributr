@@ -7,6 +7,7 @@ import type {
   PlatformCredential, PlatformCredentialTestResult,
   LlmProvider, AgentConfig, ToolDefinition,
   KnowledgeGraphListItem, KnowledgeGraph,
+  Team, TeamMember, DeliveryStats, PaginatedWorkItems, Iteration,
 } from "./types";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
@@ -299,6 +300,51 @@ export const api = {
   unarchiveChatSession: (id: string) =>
     request<ChatSession>(`/chat/sessions/${id}/unarchive`, { method: "POST" }),
   deleteChatSession: (id: string) => request<void>(`/chat/sessions/${id}`, { method: "DELETE" }),
+
+  // Teams
+  listTeams: (projectId?: string) =>
+    request<Team[]>(`/teams${buildQuery({ project_id: projectId })}`),
+  getTeam: (id: string) => request<Team>(`/teams/${id}`),
+  createTeam: (data: { project_id: string; name: string; description?: string }) =>
+    request<Team>("/teams", { method: "POST", body: JSON.stringify(data) }),
+  updateTeam: (id: string, data: { name?: string; description?: string }) =>
+    request<Team>(`/teams/${id}`, { method: "PUT", body: JSON.stringify(data) }),
+  deleteTeam: (id: string) => request<void>(`/teams/${id}`, { method: "DELETE" }),
+  listTeamMembers: (teamId: string) => request<TeamMember[]>(`/teams/${teamId}/members`),
+  addTeamMember: (teamId: string, data: { contributor_id: string; role?: string }) =>
+    request<{ status: string }>(`/teams/${teamId}/members`, { method: "POST", body: JSON.stringify(data) }),
+  removeTeamMember: (teamId: string, contributorId: string) =>
+    request<void>(`/teams/${teamId}/members/${contributorId}`, { method: "DELETE" }),
+
+  // Delivery
+  getDeliveryStats: (projectId: string, params?: { team_id?: string; contributor_id?: string }) =>
+    request<DeliveryStats>(`/projects/${projectId}/delivery/stats${buildQuery({ team_id: params?.team_id, contributor_id: params?.contributor_id })}`),
+  listWorkItems: (projectId: string, params?: { work_item_type?: string; state?: string; assignee_id?: string; iteration_id?: string; parent_id?: string; page?: number; page_size?: number }) =>
+    request<PaginatedWorkItems>(`/projects/${projectId}/delivery/work-items${buildQuery({
+      work_item_type: params?.work_item_type,
+      state: params?.state,
+      assignee_id: params?.assignee_id,
+      iteration_id: params?.iteration_id,
+      parent_id: params?.parent_id,
+      page: params?.page?.toString(),
+      page_size: params?.page_size?.toString(),
+    })}`),
+  getWorkItem: (projectId: string, workItemId: string) =>
+    request<unknown>(`/projects/${projectId}/delivery/work-items/${workItemId}`),
+  listIterations: (projectId: string) =>
+    request<Iteration[]>(`/projects/${projectId}/delivery/iterations`),
+  getIteration: (projectId: string, iterationId: string) =>
+    request<Iteration>(`/projects/${projectId}/delivery/iterations/${iterationId}`),
+  getVelocity: (projectId: string, limit?: number) =>
+    request<{ iteration: string; points: number }[]>(`/projects/${projectId}/delivery/velocity${buildQuery({ limit: limit?.toString() })}`),
+  getDeliveryTrends: (projectId: string, days?: number) =>
+    request<{ date: string; created: number; completed: number }[]>(`/projects/${projectId}/delivery/trends${buildQuery({ days: days?.toString() })}`),
+  triggerDeliverySync: (projectId: string) =>
+    request<{ task_id: string; job_id: string; status: string }>(`/projects/${projectId}/delivery/sync`, { method: "POST" }),
+  listDeliverySyncJobs: (projectId: string) =>
+    request<{ id: string; status: string; started_at: string | null; finished_at: string | null; error_message: string | null; created_at: string }[]>(`/projects/${projectId}/delivery/sync-jobs`),
+  getDeliverySyncLogUrl: (projectId: string) =>
+    `${API_BASE}/projects/${projectId}/delivery/sync/logs`,
 
   getApiBase: () => API_BASE,
   getAuthToken: () => getToken(),

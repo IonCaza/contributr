@@ -41,4 +41,17 @@ export const queryKeys = {
   knowledgeGraphs: ["knowledgeGraphs"] as const,
   knowledgeGraphDetail: (id: string) => ["knowledgeGraphs", id] as const,
   commitDetail: (id: string) => ["commitDetail", id] as const,
+  teams: {
+    all: (projectId?: string) => ["teams", { projectId }] as const,
+    detail: (id: string) => ["teams", id] as const,
+    members: (id: string) => ["teams", id, "members"] as const,
+  },
+  delivery: {
+    stats: (projectId: string, filters?: Record<string, unknown>) => ["delivery", projectId, "stats", filters] as const,
+    workItems: (projectId: string, filters?: Record<string, unknown>) => ["delivery", projectId, "workItems", filters] as const,
+    iterations: (projectId: string) => ["delivery", projectId, "iterations"] as const,
+    velocity: (projectId: string) => ["delivery", projectId, "velocity"] as const,
+    trends: (projectId: string) => ["delivery", projectId, "trends"] as const,
+    syncJobs: (projectId: string) => ["delivery", projectId, "syncJobs"] as const,
+  },
 };
