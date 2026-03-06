@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useRef } from "react";
-import { Key, Users, Plus, Trash2, Copy, Check, Download, Upload, Database, Loader2, CheckCircle2, AlertCircle } from "lucide-react";
+import { Key, Users, Plus, Trash2, Copy, Check, Download, Upload, Database, Loader2, CheckCircle2, AlertCircle, Bot, Eye, EyeOff, FileX2, ShieldCheck, Play } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -11,9 +11,11 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
+import { Switch } from "@/components/ui/switch";
 import { useAuth } from "@/lib/auth-context";
 import { api } from "@/lib/api-client";
-import type { SSHKey, User } from "@/lib/types";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import type { SSHKey, User, AiSettings, FileExclusionPattern, PlatformCredential } from "@/lib/types";
 
 function CopyButton({ text }: { text: string }) {
   const [copied, setCopied] = useState(false);
@@ -49,10 +51,40 @@ export default function SettingsPage() {
   const [backupError, setBackupError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  const [exclusions, setExclusions] = useState<FileExclusionPattern[]>([]);
+  const [newPattern, setNewPattern] = useState("");
+  const [newDesc, setNewDesc] = useState("");
+  const [loadingDefaults, setLoadingDefaults] = useState(false);
+
+  const [credentials, setCredentials] = useState<PlatformCredential[]>([]);
+  const [credOpen, setCredOpen] = useState(false);
+  const [credForm, setCredForm] = useState({ name: "", platform: "azure", token: "", base_url: "" });
+  const [credTesting, setCredTesting] = useState<string | null>(null);
+  const [credTestResult, setCredTestResult] = useState<{ id: string; success: boolean; message: string } | null>(null);
+
+  const [aiSettings, setAiSettings] = useState<AiSettings | null>(null);
+  const [aiForm, setAiForm] = useState({ model: "", api_key: "", base_url: "", temperature: "0.1", max_iterations: "10" });
+  const [aiSaving, setAiSaving] = useState(false);
+  const [aiSaved, setAiSaved] = useState(false);
+  const [aiError, setAiError] = useState<string | null>(null);
+  const [showApiKey, setShowApiKey] = useState(false);
+
   useEffect(() => {
     api.listSSHKeys().then(setSSHKeys);
+    api.listPlatformCredentials().then(setCredentials).catch(() => {});
+    api.listFileExclusions().then(setExclusions).catch(() => {});
     if (user?.is_admin) {
       api.listUsers().then(setUsers);
+      api.getAiSettings().then((s) => {
+        setAiSettings(s);
+        setAiForm({
+          model: s.model,
+          api_key: "",
+          base_url: s.base_url || "",
+          temperature: String(s.temperature),
+          max_iterations: String(s.max_iterations),
+        });
+      }).catch(() => {});
     }
   }, [user]);
 
@@ -75,6 +107,37 @@ export default function SettingsPage() {
     setSSHKeys((prev) => prev.filter((k) => k.id !== id));
   }
 
+  async function handleCreateCredential(e: React.FormEvent) {
+    e.preventDefault();
+    const cred = await api.createPlatformCredential({
+      name: credForm.name,
+      platform: credForm.platform,
+      token: credForm.token,
+      base_url: credForm.base_url || undefined,
+    });
+    setCredentials((prev) => [cred, ...prev]);
+    setCredForm({ name: "", platform: "azure", token: "", base_url: "" });
+    setCredOpen(false);
+  }
+
+  async function handleDeleteCredential(id: string) {
+    await api.deletePlatformCredential(id);
+    setCredentials((prev) => prev.filter((c) => c.id !== id));
+  }
+
+  async function handleTestCredential(id: string) {
+    setCredTesting(id);
+    setCredTestResult(null);
+    try {
+      const result = await api.testPlatformCredential(id);
+      setCredTestResult({ id, ...result });
+    } catch {
+      setCredTestResult({ id, success: false, message: "Request failed" });
+    } finally {
+      setCredTesting(null);
+    }
+  }
+
   async function handleCreateUser(e: React.FormEvent) {
     e.preventDefault();
     const u = await api.createUser(userForm);
@@ -86,6 +149,42 @@ export default function SettingsPage() {
   async function handleDeleteUser(id: string) {
     await api.deleteUser(id);
     setUsers((prev) => prev.filter((u) => u.id !== id));
+  }
+
+  async function handleSaveAi(e: React.FormEvent) {
+    e.preventDefault();
+    setAiSaving(true);
+    setAiError(null);
+    setAiSaved(false);
+    try {
+      const payload: Record<string, unknown> = {
+        model: aiForm.model,
+        temperature: parseFloat(aiForm.temperature) || 0.1,
+        max_iterations: parseInt(aiForm.max_iterations) || 10,
+        base_url: aiForm.base_url || "",
+      };
+      if (aiForm.api_key) payload.api_key = aiForm.api_key;
+      const updated = await api.updateAiSettings(payload as Parameters<typeof api.updateAiSettings>[0]);
+      setAiSettings(updated);
+      setAiForm((f) => ({ ...f, api_key: "" }));
+      setAiSaved(true);
+      setTimeout(() => setAiSaved(false), 3000);
+    } catch (err) {
+      setAiError(err instanceof Error ? err.message : "Failed to save");
+    } finally {
+      setAiSaving(false);
+    }
+  }
+
+  async function handleToggleAi(checked?: boolean) {
+    if (!aiSettings) return;
+    const newValue = checked !== undefined ? checked : !aiSettings.enabled;
+    try {
+      const updated = await api.updateAiSettings({ enabled: newValue });
+      setAiSettings(updated);
+    } catch (err) {
+      setAiError(err instanceof Error ? err.message : "Failed to toggle");
+    }
   }
 
   async function handleExport() {
@@ -131,7 +230,10 @@ export default function SettingsPage() {
       <Tabs defaultValue="ssh-keys">
         <TabsList>
           <TabsTrigger value="ssh-keys" className="gap-2"><Key className="h-4 w-4" /> SSH Keys</TabsTrigger>
+          <TabsTrigger value="platform-tokens" className="gap-2"><ShieldCheck className="h-4 w-4" /> Platform Tokens</TabsTrigger>
           {user?.is_admin && <TabsTrigger value="users" className="gap-2"><Users className="h-4 w-4" /> Users</TabsTrigger>}
+          {user?.is_admin && <TabsTrigger value="ai" className="gap-2"><Bot className="h-4 w-4" /> AI Agent</TabsTrigger>}
+          <TabsTrigger value="file-exclusions" className="gap-2"><FileX2 className="h-4 w-4" /> File Exclusions</TabsTrigger>
           <TabsTrigger value="backup" className="gap-2"><Database className="h-4 w-4" /> Backup</TabsTrigger>
         </TabsList>
 
@@ -230,6 +332,105 @@ export default function SettingsPage() {
           </Card>
         </TabsContent>
 
+        <TabsContent value="platform-tokens" className="space-y-4">
+          <div className="flex items-center justify-between">
+            <p className="text-sm text-muted-foreground">Configure API tokens (PATs) for GitHub, GitLab, or Azure DevOps to fetch PR, review, and comment data. Assign tokens to projects.</p>
+            <Dialog open={credOpen} onOpenChange={setCredOpen}>
+              <DialogTrigger asChild>
+                <Button size="sm"><Plus className="mr-2 h-4 w-4" /> Add Token</Button>
+              </DialogTrigger>
+              <DialogContent>
+                <DialogHeader><DialogTitle>Add Platform Token</DialogTitle></DialogHeader>
+                <form onSubmit={handleCreateCredential} className="space-y-4">
+                  <div className="space-y-2">
+                    <Label>Name</Label>
+                    <Input placeholder="e.g. My Azure PAT" value={credForm.name} onChange={(e) => setCredForm((f) => ({ ...f, name: e.target.value }))} required />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Platform</Label>
+                    <Select value={credForm.platform} onValueChange={(v) => setCredForm((f) => ({ ...f, platform: v }))}>
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="azure">Azure DevOps</SelectItem>
+                        <SelectItem value="github">GitHub</SelectItem>
+                        <SelectItem value="gitlab">GitLab</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Token (PAT)</Label>
+                    <Input type="password" placeholder="Paste your personal access token" value={credForm.token} onChange={(e) => setCredForm((f) => ({ ...f, token: e.target.value }))} required />
+                  </div>
+                  {(credForm.platform === "azure" || credForm.platform === "gitlab") && (
+                    <div className="space-y-2">
+                      <Label>{credForm.platform === "azure" ? "Organization URL" : "GitLab URL"}</Label>
+                      <Input
+                        placeholder={credForm.platform === "azure" ? "https://dev.azure.com/your-org" : "https://gitlab.com"}
+                        value={credForm.base_url}
+                        onChange={(e) => setCredForm((f) => ({ ...f, base_url: e.target.value }))}
+                      />
+                      <p className="text-xs text-muted-foreground">{credForm.platform === "azure" ? "Required for Azure DevOps." : "Leave empty for gitlab.com."}</p>
+                    </div>
+                  )}
+                  <Button type="submit" className="w-full">Save Token</Button>
+                </form>
+              </DialogContent>
+            </Dialog>
+          </div>
+
+          <Card>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Name</TableHead>
+                  <TableHead>Platform</TableHead>
+                  <TableHead>Base URL</TableHead>
+                  <TableHead>Created</TableHead>
+                  <TableHead className="w-40" />
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {credentials.map((c) => (
+                  <TableRow key={c.id}>
+                    <TableCell className="font-medium">{c.name}</TableCell>
+                    <TableCell>
+                      <Badge variant="outline" className="text-[10px] uppercase">{c.platform}</Badge>
+                    </TableCell>
+                    <TableCell className="text-sm text-muted-foreground">{c.base_url || "-"}</TableCell>
+                    <TableCell className="text-muted-foreground">{new Date(c.created_at).toLocaleDateString()}</TableCell>
+                    <TableCell className="flex items-center gap-1">
+                      <TooltipProvider>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button variant="ghost" size="icon" className="h-7 w-7" disabled={credTesting === c.id} onClick={() => handleTestCredential(c.id)}>
+                              {credTesting === c.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <Play className="h-3 w-3" />}
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent>Test connection</TooltipContent>
+                        </Tooltip>
+                      </TooltipProvider>
+                      {credTestResult?.id === c.id && (
+                        <span className={`text-xs ${credTestResult.success ? "text-emerald-500" : "text-destructive"}`}>
+                          {credTestResult.success ? <CheckCircle2 className="h-3.5 w-3.5 inline mr-1" /> : <AlertCircle className="h-3.5 w-3.5 inline mr-1" />}
+                          {credTestResult.message.slice(0, 60)}
+                        </span>
+                      )}
+                      <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => handleDeleteCredential(c.id)}>
+                        <Trash2 className="h-3 w-3 text-destructive" />
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                ))}
+                {credentials.length === 0 && (
+                  <TableRow>
+                    <TableCell colSpan={5} className="py-8 text-center text-muted-foreground">No platform tokens configured</TableCell>
+                  </TableRow>
+                )}
+              </TableBody>
+            </Table>
+          </Card>
+        </TabsContent>
+
         {user?.is_admin && (
           <TabsContent value="users" className="space-y-4">
             <div className="flex items-center justify-between">
@@ -303,6 +504,264 @@ export default function SettingsPage() {
             </Card>
           </TabsContent>
         )}
+        {user?.is_admin && (
+          <TabsContent value="ai" className="space-y-4">
+            <p className="text-sm text-muted-foreground">
+              Configure the AI agent that powers the conversational assistant. Requires an API key from your LLM provider.
+            </p>
+
+            {aiSettings && (
+              <Card>
+                <CardContent className="flex items-center justify-between p-4">
+                  <div className="flex items-center gap-3">
+                    <Bot className="h-5 w-5 text-muted-foreground" />
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <p className="text-sm font-medium">Enable AI Assistant</p>
+                        <Badge variant={aiSettings.enabled && aiSettings.has_api_key ? "default" : "secondary"} className="text-[10px]">
+                          {aiSettings.enabled && aiSettings.has_api_key ? "Active" : "Inactive"}
+                        </Badge>
+                      </div>
+                      <p className="text-xs text-muted-foreground">
+                        {aiSettings.has_api_key
+                          ? "Show the AI assistant to all users in the sidebar."
+                          : "Configure an API key below before enabling."}
+                      </p>
+                    </div>
+                  </div>
+                  <Switch
+                    checked={aiSettings.enabled}
+                    onCheckedChange={handleToggleAi}
+                    disabled={!aiSettings.has_api_key}
+                  />
+                </CardContent>
+              </Card>
+            )}
+
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">Model Configuration</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <form onSubmit={handleSaveAi} className="space-y-4">
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <div className="space-y-2">
+                      <Label>Model</Label>
+                      <Input
+                        value={aiForm.model}
+                        onChange={(e) => setAiForm((f) => ({ ...f, model: e.target.value }))}
+                        placeholder="gpt-4o-mini, claude-3-sonnet, ollama/llama3..."
+                        required
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        LiteLLM model string. Supports OpenAI, Anthropic, Ollama, Azure, Bedrock, etc.
+                      </p>
+                    </div>
+                    <div className="space-y-2">
+                      <Label>API Key</Label>
+                      <div className="relative">
+                        <Input
+                          type={showApiKey ? "text" : "password"}
+                          value={aiForm.api_key}
+                          onChange={(e) => setAiForm((f) => ({ ...f, api_key: e.target.value }))}
+                          placeholder={aiSettings?.has_api_key ? "••••••• (key is set, enter new to replace)" : "sk-..."}
+                        />
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className="absolute right-1 top-1/2 -translate-y-1/2 h-7 w-7"
+                          onClick={() => setShowApiKey(!showApiKey)}
+                        >
+                          {showApiKey ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+                        </Button>
+                      </div>
+                      <p className="text-xs text-muted-foreground">Encrypted at rest. Leave blank to keep existing key.</p>
+                    </div>
+                  </div>
+                  <div className="grid gap-4 sm:grid-cols-3">
+                    <div className="space-y-2">
+                      <Label>Base URL (optional)</Label>
+                      <Input
+                        value={aiForm.base_url}
+                        onChange={(e) => setAiForm((f) => ({ ...f, base_url: e.target.value }))}
+                        placeholder="https://api.openai.com/v1"
+                      />
+                      <p className="text-xs text-muted-foreground">For self-hosted or proxy endpoints.</p>
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Temperature</Label>
+                      <Input
+                        type="number"
+                        step="0.05"
+                        min="0"
+                        max="2"
+                        value={aiForm.temperature}
+                        onChange={(e) => setAiForm((f) => ({ ...f, temperature: e.target.value }))}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Max Iterations</Label>
+                      <Input
+                        type="number"
+                        min="1"
+                        max="25"
+                        value={aiForm.max_iterations}
+                        onChange={(e) => setAiForm((f) => ({ ...f, max_iterations: e.target.value }))}
+                      />
+                      <p className="text-xs text-muted-foreground">Max tool-calling loops per request.</p>
+                    </div>
+                  </div>
+
+                  {aiError && (
+                    <div className="flex items-center gap-2 text-sm text-destructive">
+                      <AlertCircle className="h-4 w-4" />
+                      {aiError}
+                    </div>
+                  )}
+
+                  <div className="flex items-center gap-3">
+                    <Button type="submit" disabled={aiSaving}>
+                      {aiSaving ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Saving...</> : "Save Configuration"}
+                    </Button>
+                    {aiSaved && (
+                      <span className="flex items-center gap-1 text-sm text-emerald-500">
+                        <CheckCircle2 className="h-4 w-4" /> Saved
+                      </span>
+                    )}
+                  </div>
+                </form>
+              </CardContent>
+            </Card>
+          </TabsContent>
+        )}
+        <TabsContent value="file-exclusions" className="space-y-4">
+          <p className="text-sm text-muted-foreground">
+            Exclude files matching these patterns from line-count metrics during sync.
+            Binary files, data files, and lock files can heavily skew contribution statistics.
+            Changes take effect on the next sync — purge and re-sync existing repos to recompute metrics.
+          </p>
+
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={loadingDefaults}
+              onClick={async () => {
+                setLoadingDefaults(true);
+                try {
+                  const res = await api.loadDefaultExclusions();
+                  if (res.added > 0) setExclusions(await api.listFileExclusions());
+                } catch { /* ignore */ }
+                setLoadingDefaults(false);
+              }}
+            >
+              {loadingDefaults ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Plus className="mr-2 h-4 w-4" />}
+              Load Defaults
+            </Button>
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <span className="text-xs text-muted-foreground cursor-help">({exclusions.filter((e) => e.enabled).length} active patterns)</span>
+                </TooltipTrigger>
+                <TooltipContent>Adds common patterns for binary, data, lock, and build files if not already present</TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          </div>
+
+          <Card>
+            <CardContent className="pt-4">
+              <form
+                className="flex items-end gap-3"
+                onSubmit={async (e) => {
+                  e.preventDefault();
+                  if (!newPattern.trim()) return;
+                  try {
+                    await api.createFileExclusion({ pattern: newPattern.trim(), description: newDesc.trim() || undefined });
+                    setExclusions(await api.listFileExclusions());
+                    setNewPattern("");
+                    setNewDesc("");
+                  } catch { /* ignore dups */ }
+                }}
+              >
+                <div className="flex-1 space-y-1">
+                  <Label className="text-xs">Pattern</Label>
+                  <Input
+                    value={newPattern}
+                    onChange={(e) => setNewPattern(e.target.value)}
+                    placeholder="e.g. *.csv, vendor/*, *.min.js"
+                    className="font-mono text-sm"
+                  />
+                </div>
+                <div className="flex-1 space-y-1">
+                  <Label className="text-xs">Description (optional)</Label>
+                  <Input
+                    value={newDesc}
+                    onChange={(e) => setNewDesc(e.target.value)}
+                    placeholder="e.g. Data files"
+                  />
+                </div>
+                <Button type="submit" size="sm" disabled={!newPattern.trim()}>
+                  <Plus className="mr-1 h-3 w-3" /> Add
+                </Button>
+              </form>
+            </CardContent>
+          </Card>
+
+          {exclusions.length > 0 && (
+            <Card>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="w-10">On</TableHead>
+                    <TableHead>Pattern</TableHead>
+                    <TableHead>Description</TableHead>
+                    <TableHead className="w-20">Type</TableHead>
+                    <TableHead className="w-10"></TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {exclusions.map((ex) => (
+                    <TableRow key={ex.id} className={!ex.enabled ? "opacity-50" : ""}>
+                      <TableCell>
+                        <Switch
+                          checked={ex.enabled}
+                          onCheckedChange={async (checked) => {
+                            await api.updateFileExclusion(ex.id, { enabled: checked });
+                            setExclusions(await api.listFileExclusions());
+                          }}
+                        />
+                      </TableCell>
+                      <TableCell className="font-mono text-sm">{ex.pattern}</TableCell>
+                      <TableCell className="text-sm text-muted-foreground">{ex.description || "—"}</TableCell>
+                      <TableCell>
+                        {ex.is_default ? (
+                          <Badge variant="secondary" className="text-[10px]">default</Badge>
+                        ) : (
+                          <Badge variant="outline" className="text-[10px]">custom</Badge>
+                        )}
+                      </TableCell>
+                      <TableCell>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-7 w-7 text-destructive hover:text-destructive"
+                          onClick={async () => {
+                            await api.deleteFileExclusion(ex.id);
+                            setExclusions(await api.listFileExclusions());
+                          }}
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </Button>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </Card>
+          )}
+        </TabsContent>
+
         <TabsContent value="backup" className="space-y-4">
           <div className="grid gap-4 md:grid-cols-2">
             <Card>

@@ -16,7 +16,10 @@ const COLORS = {
   commits: "var(--chart-1)",
 };
 
-export function ContributionAreaChart({ data, title }: { data: DataPoint[]; title?: string }) {
+export function ContributionAreaChart({ data, title, seriesNames }: { data: DataPoint[]; title?: string; seriesNames?: { added?: string; deleted?: string } }) {
+  const addedLabel = seriesNames?.added ?? "Lines added";
+  const deletedLabel = seriesNames?.deleted ?? "Lines deleted";
+  const hideSeries2 = data.every((d) => d.lines_deleted === 0);
   return (
     <Card>
       {title && (
@@ -52,8 +55,10 @@ export function ContributionAreaChart({ data, title }: { data: DataPoint[]; titl
                 itemStyle={{ color: "var(--popover-foreground)" }}
                 labelStyle={{ color: "var(--muted-foreground)", fontWeight: 600, marginBottom: 4 }}
               />
-              <Area type="monotone" dataKey="lines_added" name="Lines added" stroke={COLORS.added} fill="url(#addedGrad)" strokeWidth={2} dot={false} activeDot={{ r: 4, strokeWidth: 2 }} />
-              <Area type="monotone" dataKey="lines_deleted" name="Lines deleted" stroke={COLORS.deleted} fill="url(#deletedGrad)" strokeWidth={2} dot={false} activeDot={{ r: 4, strokeWidth: 2 }} />
+              <Area type="monotone" dataKey="lines_added" name={addedLabel} stroke={COLORS.added} fill="url(#addedGrad)" strokeWidth={2} dot={false} activeDot={{ r: 4, strokeWidth: 2 }} />
+              {!hideSeries2 && (
+                <Area type="monotone" dataKey="lines_deleted" name={deletedLabel} stroke={COLORS.deleted} fill="url(#deletedGrad)" strokeWidth={2} dot={false} activeDot={{ r: 4, strokeWidth: 2 }} />
+              )}
             </AreaChart>
           </ResponsiveContainer>
         </div>

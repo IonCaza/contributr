@@ -10,8 +10,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.db.base import get_db
-from app.db.models import Contributor, ContributorAlias, Commit, User, DailyContributorStats, Repository, Branch
+from app.db.models import Contributor, ContributorAlias, Commit, User, DailyContributorStats, Repository, Branch, PullRequest, Review
 from app.db.models.branch import commit_branches
+from app.db.models.pull_request import PRState
 from app.db.models.project import Project
 from app.auth.dependencies import get_current_user
 from app.services.metrics import get_trends
@@ -294,11 +295,59 @@ async def get_contributor_stats(
             else:
                 break
 
+    avg_commit_size = round((total_lines_added + total_lines_deleted) / total_commits, 1) if total_commits else 0
+    code_velocity = total_lines_added - total_lines_deleted
+
+    merge_q = select(func.count()).where(Commit.id.in_(select(sub.c.id)), Commit.is_merge.is_(True))
+    merge_count = await db.scalar(merge_q) or 0
+    merge_ratio = round(merge_count / total_commits * 100, 1) if total_commits else 0
+
+    active_days_q = (
+        select(func.count(func.distinct(func.date_trunc("day", Commit.authored_at))))
+        .where(Commit.id.in_(select(sub.c.id)))
+    )
+    active_days = await db.scalar(active_days_q) or 0
+
+    repo_ids_q = select(Commit.repository_id.distinct()).where(Commit.contributor_id == contributor_id)
+    repo_ids_sub = repo_ids_q.subquery()
+
+    reviews_q = (
+        select(func.count())
+        .select_from(Review)
+        .where(Review.reviewer_id == contributor_id)
+    )
+    reviews_given = await db.scalar(reviews_q) or 0
+
+    prs_authored_q = (
+        select(func.count())
+        .select_from(PullRequest)
+        .where(PullRequest.contributor_id == contributor_id)
+    )
+    prs_authored = await db.scalar(prs_authored_q) or 0
+
+    review_engagement = round(reviews_given / prs_authored, 2) if prs_authored else 0
+
+    impact_score = round(
+        total_commits * 1
+        + (total_lines_added + total_lines_deleted) * 0.1
+        + prs_authored * 5
+        + reviews_given * 3,
+        1,
+    )
+
     return {
         "total_commits": total_commits,
         "total_lines_added": total_lines_added,
         "total_lines_deleted": total_lines_deleted,
         "repository_count": repo_count,
         "current_streak_days": streak,
+        "avg_commit_size": avg_commit_size,
+        "code_velocity": code_velocity,
+        "merge_ratio": merge_ratio,
+        "active_days": active_days,
+        "review_engagement": review_engagement,
+        "impact_score": impact_score,
+        "prs_authored": prs_authored,
+        "reviews_given": reviews_given,
         "trends": trends,
     }

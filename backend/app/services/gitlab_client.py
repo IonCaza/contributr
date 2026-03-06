@@ -9,12 +9,18 @@ from app.db.models.pull_request import PRState
 from app.db.models.review import ReviewState
 from app.services.identity import resolve_contributor
 
+if __import__("typing").TYPE_CHECKING:
+    from app.services.sync_logger import SyncLogger
+
 logger = logging.getLogger(__name__)
 
 STATE_MAP = {"opened": PRState.OPEN, "closed": PRState.CLOSED, "merged": PRState.MERGED}
 
 
-async def fetch_gitlab_mrs(db: AsyncSession, repo: Repository, token: str | None = None, url: str = "https://gitlab.com") -> int:
+async def fetch_gitlab_mrs(
+    db: AsyncSession, repo: Repository, token: str | None = None,
+    url: str = "https://gitlab.com", sync_log: "SyncLogger | None" = None,
+) -> int:
     """Fetch merge requests and approvals from GitLab. Returns count of new MRs."""
     if not repo.platform_owner or not repo.platform_repo:
         return 0
@@ -24,8 +30,12 @@ async def fetch_gitlab_mrs(db: AsyncSession, repo: Repository, token: str | None
 
     try:
         gl_project = gl.projects.get(project_path)
+        if sync_log:
+            sync_log.info("prs", f"Connected to GitLab: {project_path}")
     except gitlab.exceptions.GitlabGetError as e:
         logger.error("GitLab API error for %s: %s", project_path, e)
+        if sync_log:
+            sync_log.error("prs", f"GitLab API error: {e}")
         return 0
 
     existing = await db.execute(

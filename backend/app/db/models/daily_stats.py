@@ -26,3 +26,4 @@ class DailyContributorStats(Base):
     prs_opened: Mapped[int] = mapped_column(Integer, default=0)
     prs_merged: Mapped[int] = mapped_column(Integer, default=0)
     reviews_given: Mapped[int] = mapped_column(Integer, default=0)
+    pr_comments: Mapped[int] = mapped_column(Integer, default=0)

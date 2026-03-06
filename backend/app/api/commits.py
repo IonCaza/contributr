@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.db.base import get_db
-from app.db.models import Commit, Contributor, User, Branch, Repository
+from app.db.models import Commit, Contributor, User, Branch, Repository, CommitFile
 from app.db.models.repository import Platform
 from app.db.models.branch import commit_branches
 from app.auth.dependencies import get_current_user
@@ -171,4 +171,50 @@ async def list_contributor_commits(
         to_date=to_date,
         page=page,
         per_page=per_page,
+    )
+
+
+class CommitFileResponse(BaseModel):
+    id: uuid.UUID
+    file_path: str
+    lines_added: int
+    lines_deleted: int
+
+
+class CommitDetailResponse(CommitResponse):
+    files: list[CommitFileResponse] = []
+
+
+@router.get("/{commit_id}", response_model=CommitDetailResponse)
+async def get_commit_detail(
+    commit_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    _user: User = Depends(get_current_user),
+):
+    from fastapi import HTTPException, status as http_status
+    result = await db.execute(
+        select(Commit)
+        .options(selectinload(Commit.contributor), selectinload(Commit.repository), selectinload(Commit.branches), selectinload(Commit.files))
+        .where(Commit.id == commit_id)
+    )
+    c = result.scalar_one_or_none()
+    if not c:
+        raise HTTPException(status_code=http_status.HTTP_404_NOT_FOUND, detail="Commit not found")
+
+    return CommitDetailResponse(
+        id=c.id,
+        sha=c.sha,
+        message=c.message,
+        authored_at=c.authored_at,
+        lines_added=c.lines_added,
+        lines_deleted=c.lines_deleted,
+        files_changed=c.files_changed,
+        is_merge=c.is_merge,
+        contributor_name=c.contributor.canonical_name if c.contributor else None,
+        contributor_email=c.contributor.canonical_email if c.contributor else None,
+        repository_name=c.repository.name if c.repository else None,
+        repository_id=c.repository_id,
+        commit_url=_build_commit_url(c.repository, c.sha) if c.repository else None,
+        branches=[b.name for b in c.branches] if c.branches else [],
+        files=[CommitFileResponse(id=f.id, file_path=f.file_path, lines_added=f.lines_added, lines_deleted=f.lines_deleted) for f in (c.files or [])],
     )

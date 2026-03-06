@@ -9,6 +9,9 @@ from app.db.models.pull_request import PRState
 from app.db.models.review import ReviewState
 from app.services.identity import resolve_contributor
 
+if __import__("typing").TYPE_CHECKING:
+    from app.services.sync_logger import SyncLogger
+
 logger = logging.getLogger(__name__)
 
 STATE_MAP = {"open": PRState.OPEN, "closed": PRState.CLOSED, "merged": PRState.MERGED}
@@ -19,7 +22,10 @@ REVIEW_STATE_MAP = {
 }
 
 
-async def fetch_github_prs(db: AsyncSession, repo: Repository, token: str | None = None) -> int:
+async def fetch_github_prs(
+    db: AsyncSession, repo: Repository, token: str | None = None,
+    sync_log: "SyncLogger | None" = None,
+) -> int:
     """Fetch PRs and reviews from GitHub. Returns count of new PRs."""
     if not repo.platform_owner or not repo.platform_repo:
         return 0
@@ -27,8 +33,12 @@ async def fetch_github_prs(db: AsyncSession, repo: Repository, token: str | None
     gh = Github(token) if token else Github()
     try:
         gh_repo = gh.get_repo(f"{repo.platform_owner}/{repo.platform_repo}")
+        if sync_log:
+            sync_log.info("prs", f"Connected to GitHub: {repo.platform_owner}/{repo.platform_repo}")
     except GithubException as e:
         logger.error("GitHub API error for %s/%s: %s", repo.platform_owner, repo.platform_repo, e)
+        if sync_log:
+            sync_log.error("prs", f"GitHub API error: {e}")
         return 0
 
     existing = await db.execute(

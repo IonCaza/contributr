@@ -31,22 +31,101 @@ async def rebuild_daily_stats(db: AsyncSession, repository_id: uuid.UUID) -> int
         .group_by(Commit.contributor_id, text("day"))
     )
 
+    stats_map: dict[tuple, DailyContributorStats] = {}
+
     rows = commit_stats.all()
     for row in rows:
+        d = row.day.date() if hasattr(row.day, "date") else row.day
+        key = (row.contributor_id, d)
         stat = DailyContributorStats(
             contributor_id=row.contributor_id,
             repository_id=repository_id,
-            date=row.day.date() if hasattr(row.day, "date") else row.day,
+            date=d,
             commits=row.commits,
             lines_added=row.lines_added or 0,
             lines_deleted=row.lines_deleted or 0,
             files_changed=row.files_changed or 0,
             merges=row.merges or 0,
         )
+        stats_map[key] = stat
         db.add(stat)
 
+    prs_opened_q = await db.execute(
+        select(
+            PullRequest.contributor_id,
+            func.date_trunc("day", PullRequest.created_at).label("day"),
+            func.count().label("cnt"),
+        )
+        .where(PullRequest.repository_id == repository_id, PullRequest.contributor_id.isnot(None))
+        .group_by(PullRequest.contributor_id, text("day"))
+    )
+    for row in prs_opened_q.all():
+        d = row.day.date() if hasattr(row.day, "date") else row.day
+        key = (row.contributor_id, d)
+        if key in stats_map:
+            stats_map[key].prs_opened = row.cnt
+        else:
+            stat = DailyContributorStats(
+                contributor_id=row.contributor_id, repository_id=repository_id,
+                date=d, prs_opened=row.cnt,
+            )
+            stats_map[key] = stat
+            db.add(stat)
+
+    prs_merged_q = await db.execute(
+        select(
+            PullRequest.contributor_id,
+            func.date_trunc("day", PullRequest.merged_at).label("day"),
+            func.count().label("cnt"),
+        )
+        .where(
+            PullRequest.repository_id == repository_id,
+            PullRequest.contributor_id.isnot(None),
+            PullRequest.state == PRState.MERGED,
+            PullRequest.merged_at.isnot(None),
+        )
+        .group_by(PullRequest.contributor_id, text("day"))
+    )
+    for row in prs_merged_q.all():
+        d = row.day.date() if hasattr(row.day, "date") else row.day
+        key = (row.contributor_id, d)
+        if key in stats_map:
+            stats_map[key].prs_merged = row.cnt
+        else:
+            stat = DailyContributorStats(
+                contributor_id=row.contributor_id, repository_id=repository_id,
+                date=d, prs_merged=row.cnt,
+            )
+            stats_map[key] = stat
+            db.add(stat)
+
+    reviews_q = await db.execute(
+        select(
+            Review.reviewer_id,
+            func.date_trunc("day", Review.submitted_at).label("day"),
+            func.count().label("cnt"),
+            func.coalesce(func.sum(Review.comment_count), 0).label("comments"),
+        )
+        .join(PullRequest, PullRequest.id == Review.pull_request_id)
+        .where(PullRequest.repository_id == repository_id, Review.reviewer_id.isnot(None))
+        .group_by(Review.reviewer_id, text("day"))
+    )
+    for row in reviews_q.all():
+        d = row.day.date() if hasattr(row.day, "date") else row.day
+        key = (row.reviewer_id, d)
+        if key in stats_map:
+            stats_map[key].reviews_given = row.cnt
+            stats_map[key].pr_comments = row.comments
+        else:
+            stat = DailyContributorStats(
+                contributor_id=row.reviewer_id, repository_id=repository_id,
+                date=d, reviews_given=row.cnt, pr_comments=row.comments,
+            )
+            stats_map[key] = stat
+            db.add(stat)
+
     await db.flush()
-    return len(rows)
+    return len(stats_map)
 
 
 async def _daily_stats_from_commits(
@@ -337,3 +416,59 @@ async def get_bus_factor(db: AsyncSession, repository_id: uuid.UUID, days: int =
         if cumulative >= total * 0.5:
             return i
     return len(rows)
+
+
+async def get_top_contributors(
+    db: AsyncSession,
+    *,
+    project_id: uuid.UUID | None = None,
+    repository_id: uuid.UUID | None = None,
+    metric: str = "commits",
+    from_date: date | None = None,
+    to_date: date | None = None,
+    limit: int = 10,
+) -> list[dict]:
+    """Rank contributors by a configurable metric within a project or repository scope."""
+    valid_metrics = {
+        "commits", "lines_added", "lines_deleted", "files_changed",
+        "prs_opened", "prs_merged", "reviews_given",
+    }
+    if metric not in valid_metrics:
+        metric = "commits"
+
+    metric_col = getattr(DailyContributorStats, metric)
+
+    stmt = (
+        select(
+            Contributor.canonical_name,
+            Contributor.canonical_email,
+            func.sum(metric_col).label("metric_value"),
+            func.sum(DailyContributorStats.commits).label("commits"),
+            func.sum(DailyContributorStats.lines_added).label("lines_added"),
+            func.sum(DailyContributorStats.lines_deleted).label("lines_deleted"),
+            func.sum(DailyContributorStats.prs_opened).label("prs_opened"),
+            func.sum(DailyContributorStats.prs_merged).label("prs_merged"),
+            func.sum(DailyContributorStats.reviews_given).label("reviews_given"),
+        )
+        .join(Contributor, Contributor.id == DailyContributorStats.contributor_id)
+        .group_by(Contributor.id, Contributor.canonical_name, Contributor.canonical_email)
+        .order_by(func.sum(metric_col).desc())
+        .limit(limit)
+    )
+
+    from app.db.models import Repository
+    filters = []
+    if project_id:
+        stmt = stmt.join(Repository, Repository.id == DailyContributorStats.repository_id)
+        filters.append(Repository.project_id == project_id)
+    if repository_id:
+        filters.append(DailyContributorStats.repository_id == repository_id)
+    if from_date:
+        filters.append(DailyContributorStats.date >= from_date)
+    if to_date:
+        filters.append(DailyContributorStats.date <= to_date)
+    if filters:
+        stmt = stmt.where(and_(*filters))
+
+    result = await db.execute(stmt)
+    return [row._asdict() for row in result.all()]

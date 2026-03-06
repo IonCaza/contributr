@@ -12,7 +12,7 @@ from app.db.base import get_db
 from app.db.models import (
     User, Commit, Branch, Contributor, ContributorAlias,
     Repository, PullRequest, Review, SSHCredential, SyncJob,
-    DailyContributorStats,
+    DailyContributorStats, CommitFile, FileExclusionPattern,
 )
 from app.db.models.project import Project, project_contributors
 from app.db.models.branch import commit_branches
@@ -32,10 +32,12 @@ TABLE_MODELS = [
     ("repositories", Repository),
     ("branches", Branch),
     ("commits", Commit),
+    ("commit_files", CommitFile),
     ("pull_requests", PullRequest),
     ("reviews", Review),
     ("sync_jobs", SyncJob),
     ("daily_contributor_stats", DailyContributorStats),
+    ("file_exclusion_patterns", FileExclusionPattern),
 ]
 
 ASSOC_TABLES = [

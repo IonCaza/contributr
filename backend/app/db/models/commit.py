@@ -28,3 +28,4 @@ class Commit(Base):
     repository = relationship("Repository", back_populates="commits")
     contributor = relationship("Contributor", back_populates="commits")
     branches = relationship("Branch", secondary="commit_branches", back_populates="commits")
+    files = relationship("CommitFile", back_populates="commit", cascade="all, delete-orphan")

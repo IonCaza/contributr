@@ -4,21 +4,28 @@ import { useEffect, useState, useCallback, useRef } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import { useMemo } from "react";
-import { RefreshCw, AlertCircle, CheckCircle2, Clock, Loader2, XCircle, Ban, Search, ArrowUpDown, ChevronDown, ChevronRight } from "lucide-react";
+import { RefreshCw, AlertCircle, CheckCircle2, Clock, Loader2, XCircle, Ban, Search, ArrowUpDown, ChevronDown, ChevronRight, FileCode2, Flame, GitBranch, Terminal } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { StatCard } from "@/components/stat-card";
+import { StatDetailSheet } from "@/components/stat-detail-sheet";
 import { ContributionAreaChart } from "@/components/charts/contribution-area-chart";
 import { AuthorBarChart } from "@/components/charts/author-bar-chart";
+import { FileTree } from "@/components/file-tree";
+import { FileDetailPanel } from "@/components/file-detail-panel";
+import { HotspotTable } from "@/components/hotspot-table";
 import { MiniSparkline } from "@/components/charts/mini-sparkline";
 import { DateRangeFilter, defaultRange } from "@/components/date-range-filter";
 import type { DateRange } from "@/components/date-range-filter";
 import { BranchMultiSelect } from "@/components/branch-multi-select";
+import { SyncLogViewer, ViewLogsButton } from "@/components/sync-log-viewer";
 import { api } from "@/lib/api-client";
-import type { Repository, RepoStats, DailyStat, SyncJob, Branch, ContributorSummary } from "@/lib/types";
+import type { Repository, RepoStats, DailyStat, SyncJob, Branch, ContributorSummary, FileTreeNode } from "@/lib/types";
 
 const STATUS_ICON: Record<string, React.ReactNode> = {
   completed: <CheckCircle2 className="h-4 w-4 text-emerald-500" />,
@@ -42,6 +49,10 @@ export default function RepoDetailPage() {
   const [showInactive, setShowInactive] = useState(false);
   const [dateRange, setDateRange] = useState<DateRange>(defaultRange);
   const [syncing, setSyncing] = useState(false);
+  const [drillDown, setDrillDown] = useState<{ title: string; metric: string } | null>(null);
+  const [fileTree, setFileTree] = useState<FileTreeNode[]>([]);
+  const [selectedFile, setSelectedFile] = useState<string | null>(null);
+  const [filesBranch, setFilesBranch] = useState<string | undefined>(undefined);
   const [activeJobId, setActiveJobId] = useState<string | null>(null);
   const pollTimer = useRef<NodeJS.Timeout | null>(null);
 
@@ -50,27 +61,29 @@ export default function RepoDetailPage() {
   const refreshData = useCallback(async (branchFilter?: string[]) => {
     if (!repoId) return;
     const [s, d, c] = await Promise.all([
-      api.getRepoStats(repoId, branchFilter),
+      api.getRepoStats(repoId, { branches: branchFilter, from_date: dateRange.from, to_date: dateRange.to }),
       api.dailyStats({ repository_id: repoId, branch: branchFilter, from_date: dateRange.from, to_date: dateRange.to }),
       api.listRepoContributors(repoId, branchFilter),
     ]);
     setStats(s);
     setDaily(d);
     setContributors(c);
-  }, [repoId]);
+  }, [repoId, dateRange]);
 
   const refreshAll = useCallback(async () => {
     if (!repoId) return;
-    const [r, j, b] = await Promise.all([
+    const [r, j, b, ft] = await Promise.all([
       api.getRepo(repoId),
       api.listSyncJobs(repoId),
       api.listBranches(repoId),
+      api.getFileTree(repoId, filesBranch),
     ]);
     setRepo(r);
     setSyncJobs(j);
     setBranches(b);
+    setFileTree(ft);
     await refreshData(selectedBranches.length > 0 ? selectedBranches : undefined);
-  }, [repoId, refreshData, selectedBranches]);
+  }, [repoId, refreshData, selectedBranches, filesBranch]);
 
   useEffect(() => {
     if (!repoId) return;
@@ -78,7 +91,7 @@ export default function RepoDetailPage() {
       api.getRepo(repoId),
       api.listSyncJobs(repoId),
       api.listBranches(repoId),
-      api.getRepoStats(repoId),
+      api.getRepoStats(repoId, { from_date: dateRange.from, to_date: dateRange.to }),
       api.dailyStats({ repository_id: repoId, from_date: dateRange.from, to_date: dateRange.to }),
       api.listRepoContributors(repoId),
     ]).then(([r, j, b, s, d, c]) => {
@@ -88,13 +101,22 @@ export default function RepoDetailPage() {
       setStats(s);
       setDaily(d);
       setContributors(c);
+      const defaultBr = r.default_branch || undefined;
+      setFilesBranch(defaultBr);
+      api.getFileTree(repoId, defaultBr).then(setFileTree);
     });
-  }, [repoId]);
+  }, [repoId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!repoId) return;
     refreshData(branchParam);
   }, [selectedBranches, dateRange]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (!repoId || filesBranch === undefined) return;
+    setSelectedFile(null);
+    api.getFileTree(repoId, filesBranch).then(setFileTree);
+  }, [repoId, filesBranch]);
 
   useEffect(() => {
     return () => { if (pollTimer.current) clearTimeout(pollTimer.current); };
@@ -249,6 +271,10 @@ export default function RepoDetailPage() {
         </div>
       </div>
 
+      {syncing && activeJobId && (
+        <SyncLogViewer repoId={repoId} jobId={activeJobId} onDone={() => { stopPolling(); refreshAll(); }} />
+      )}
+
       <div className="flex flex-wrap items-center gap-3 rounded-lg border border-border bg-muted/30 px-4 py-3">
         {branches.length > 0 && (
           <BranchMultiSelect
@@ -262,12 +288,30 @@ export default function RepoDetailPage() {
       </div>
 
       {stats && (
-        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-          <StatCard title="Total Commits" value={stats.total_commits} />
-          <StatCard title="Contributors" value={stats.contributor_count} />
-          <StatCard title="Bus Factor" value={stats.bus_factor} subtitle="50% commit threshold" />
-          <StatCard title="Commits/Day (7d)" value={stats.trends.avg_commits_7d} trend={stats.trends.wow_commits_delta} />
-        </div>
+        <>
+          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+            <StatCard title="Total Commits" value={stats.total_commits} tooltip="Total number of commits in this repository for the selected period" onClick={() => setDrillDown({ title: "Total Commits", metric: "commits" })} />
+            <StatCard title="Contributors" value={stats.contributor_count} tooltip="Number of unique people who made commits in the selected period" onClick={() => setDrillDown({ title: "Contributors", metric: "contributors" })} />
+            <StatCard title="Bus Factor" value={stats.bus_factor} subtitle="50% commit threshold" tooltip="Minimum number of contributors whose combined work accounts for 50% of all commits. Low values mean knowledge is concentrated in few people — a risk if they leave." onClick={() => setDrillDown({ title: "Bus Factor", metric: "bus_factor" })} />
+            <StatCard title="Commits/Day (7d)" value={stats.trends.avg_commits_7d} trend={stats.trends.wow_commits_delta} tooltip="Average number of commits per day over the last 7 days. The trend shows week-over-week change." onClick={() => setDrillDown({ title: "Commits/Day (7d)", metric: "commits_per_day" })} />
+          </div>
+          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+            <StatCard title="PR Cycle Time" value={`${stats.pr_cycle_time_hours}h`} subtitle="Avg open to merge" tooltip="Average time from when a pull request is opened to when it gets merged. Lower is better." />
+            <StatCard title="Review Turnaround" value={`${stats.pr_review_turnaround_hours}h`} subtitle="Avg to first review" tooltip="Average time from when a pull request is opened until it receives its first code review. Lower means faster feedback." />
+            <StatCard title="Churn Ratio" value={stats.churn_ratio} subtitle="Deleted / added lines" tooltip="Ratio of lines deleted to lines added. High churn can indicate rework, refactoring, or unstable code." onClick={() => setDrillDown({ title: "Churn Ratio", metric: "churn" })} />
+            <StatCard title="Work Distribution" value={stats.contribution_gini} subtitle="Gini (0=even, 1=concentrated)" tooltip="Measures how evenly work is spread across contributors. 0 means everyone contributes equally, 1 means one person does all the work." onClick={() => setDrillDown({ title: "Work Distribution", metric: "work_distribution" })} />
+          </div>
+
+          <StatDetailSheet
+            open={!!drillDown}
+            onOpenChange={(v) => { if (!v) setDrillDown(null); }}
+            title={drillDown?.title ?? ""}
+            metric={drillDown?.metric ?? "commits"}
+            daily={daily}
+            contributorNames={Object.fromEntries(contributors.map((c) => [c.id, c.canonical_name]))}
+            repoNames={repo ? { [repo.id]: repo.name } : {}}
+          />
+        </>
       )}
 
       {chartData.length > 0 ? (
@@ -383,6 +427,45 @@ export default function RepoDetailPage() {
         </>
       )}
 
+      <Tabs defaultValue="files" className="space-y-4">
+        <div className="flex items-center gap-3">
+          <TabsList>
+            <TabsTrigger value="files" className="gap-2"><FileCode2 className="h-4 w-4" /> Files</TabsTrigger>
+            <TabsTrigger value="hotspots" className="gap-2"><Flame className="h-4 w-4" /> Hotspots</TabsTrigger>
+          </TabsList>
+          {branches.length > 0 && (
+            <Select value={filesBranch ?? ""} onValueChange={(v) => setFilesBranch(v || undefined)}>
+              <SelectTrigger className="w-48 h-9">
+                <GitBranch className="h-3.5 w-3.5 mr-1.5 text-muted-foreground" />
+                <SelectValue placeholder="All branches" />
+              </SelectTrigger>
+              <SelectContent>
+                {branches.map((b) => (
+                  <SelectItem key={b.id} value={b.name}>{b.name}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
+        </div>
+
+        <TabsContent value="files">
+          <div className="grid gap-4 lg:grid-cols-2">
+            <FileTree nodes={fileTree} onSelectFile={setSelectedFile} selectedPath={selectedFile ?? undefined} />
+            {selectedFile ? (
+              <FileDetailPanel repoId={repoId} filePath={selectedFile} branch={filesBranch} />
+            ) : (
+              <div className="flex items-center justify-center rounded-lg border border-dashed p-12 text-sm text-muted-foreground">
+                Select a file to view contributor details
+              </div>
+            )}
+          </div>
+        </TabsContent>
+
+        <TabsContent value="hotspots">
+          <HotspotTable repoId={repoId} branch={filesBranch} onSelectFile={(p) => setSelectedFile(p)} />
+        </TabsContent>
+      </Tabs>
+
       <div>
         <h2 className="mb-3 text-xl font-semibold">Recent Sync Jobs</h2>
         <Card>
@@ -393,6 +476,7 @@ export default function RepoDetailPage() {
                 <TableHead>Started</TableHead>
                 <TableHead>Finished</TableHead>
                 <TableHead>Error</TableHead>
+                <TableHead className="w-16"></TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -405,6 +489,9 @@ export default function RepoDetailPage() {
                   <TableCell>{j.started_at ? new Date(j.started_at).toLocaleString() : "-"}</TableCell>
                   <TableCell>{j.finished_at ? new Date(j.finished_at).toLocaleString() : "-"}</TableCell>
                   <TableCell className="max-w-xs truncate text-destructive">{j.error_message || "-"}</TableCell>
+                  <TableCell>
+                    <ViewLogsButton repoId={repoId} jobId={j.id} />
+                  </TableCell>
                 </TableRow>
               ))}
             </TableBody>

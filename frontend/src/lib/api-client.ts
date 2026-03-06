@@ -2,7 +2,9 @@ import type {
   TokenResponse, User, Project, ProjectDetail, ProjectStats,
   Repository, RepoStats, Contributor, ContributorStats, DailyStat,
   SSHKey, SyncJob, TrendData, Branch, PaginatedCommits, ContributorSummary,
-  DuplicateGroup,
+  DuplicateGroup, CommitDetail, FileTreeNode, FileDetail, HotspotFile, PRStatItem,
+  ChatSession, ChatMessage, AiSettings, AiStatus, FileExclusionPattern,
+  PlatformCredential, PlatformCredentialTestResult,
 } from "./types";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
@@ -68,7 +70,7 @@ export const api = {
   createProject: (data: { name: string; description?: string }) =>
     request<Project>("/projects", { method: "POST", body: JSON.stringify(data) }),
   getProject: (id: string) => request<ProjectDetail>(`/projects/${id}`),
-  updateProject: (id: string, data: { name?: string; description?: string }) =>
+  updateProject: (id: string, data: { name?: string; description?: string; platform_credential_id?: string | null }) =>
     request<Project>(`/projects/${id}`, { method: "PUT", body: JSON.stringify(data) }),
   deleteProject: (id: string) => request<void>(`/projects/${id}`, { method: "DELETE" }),
   getProjectStats: (id: string, params?: { from_date?: string; to_date?: string }) =>
@@ -82,11 +84,12 @@ export const api = {
   updateRepo: (id: string, data: Record<string, unknown>) =>
     request<Repository>(`/repositories/${id}`, { method: "PUT", body: JSON.stringify(data) }),
   deleteRepo: (id: string) => request<void>(`/repositories/${id}`, { method: "DELETE" }),
+  purgeRepoData: (id: string) => request<{ status: string; repository_id: string }>(`/repositories/${id}/purge-data`, { method: "POST" }),
   syncRepo: (id: string) => request<SyncJob>(`/repositories/${id}/sync`, { method: "POST" }),
   cancelSyncJob: (repoId: string, jobId: string) =>
     request<SyncJob>(`/repositories/${repoId}/sync-jobs/${jobId}/cancel`, { method: "POST" }),
-  getRepoStats: (id: string, branches?: string[]) =>
-    request<RepoStats>(`/repositories/${id}/stats${buildQuery({ branch: branches })}`),
+  getRepoStats: (id: string, params?: { branches?: string[]; from_date?: string; to_date?: string }) =>
+    request<RepoStats>(`/repositories/${id}/stats${buildQuery({ branch: params?.branches, from_date: params?.from_date, to_date: params?.to_date })}`),
   listSyncJobs: (id: string) => request<SyncJob[]>(`/repositories/${id}/sync-jobs`),
   listBranches: (repoId: string, contributorId?: string) =>
     request<Branch[]>(`/repositories/${repoId}/branches${buildQuery({ contributor_id: contributorId })}`),
@@ -135,11 +138,32 @@ export const api = {
   trends: (params: Record<string, string | string[] | undefined>) =>
     request<TrendData>(`/stats/trends${buildQuery(params)}`),
 
+  getCommitDetail: (id: string) => request<CommitDetail>(`/commits/${id}`),
+
+  // File tree & ownership
+  getFileTree: (repoId: string, branch?: string) =>
+    request<FileTreeNode[]>(`/repositories/${repoId}/file-tree${buildQuery({ branch })}`),
+  getFileDetail: (repoId: string, path: string, branch?: string) =>
+    request<FileDetail>(`/repositories/${repoId}/files/${encodeURIComponent(path)}${buildQuery({ branch })}`),
+  getHotspots: (repoId: string, limit?: number, branch?: string) =>
+    request<HotspotFile[]>(`/repositories/${repoId}/hotspots${buildQuery({ limit: limit?.toString(), branch })}`),
+
+  // PR stats
+  getProjectPRStats: (projectId: string) => request<PRStatItem[]>(`/projects/${projectId}/pr-stats`),
+
   // SSH Keys
   listSSHKeys: () => request<SSHKey[]>("/ssh-keys"),
   createSSHKey: (data: { name: string; key_type: string; rsa_bits?: number }) =>
     request<SSHKey>("/ssh-keys", { method: "POST", body: JSON.stringify(data) }),
   deleteSSHKey: (id: string) => request<void>(`/ssh-keys/${id}`, { method: "DELETE" }),
+
+  // Platform Credentials
+  listPlatformCredentials: () => request<PlatformCredential[]>("/platform-credentials"),
+  createPlatformCredential: (data: { name: string; platform: string; token: string; base_url?: string }) =>
+    request<PlatformCredential>("/platform-credentials", { method: "POST", body: JSON.stringify(data) }),
+  deletePlatformCredential: (id: string) => request<void>(`/platform-credentials/${id}`, { method: "DELETE" }),
+  testPlatformCredential: (id: string) =>
+    request<PlatformCredentialTestResult>(`/platform-credentials/${id}/test`, { method: "POST" }),
 
   // Backup
   exportBackup: async (): Promise<Blob> => {
@@ -162,5 +186,81 @@ export const api = {
       throw new ApiError(res.status, body.detail || res.statusText);
     }
     return res.json();
+  },
+
+  // AI Settings
+  listFileExclusions: () => request<FileExclusionPattern[]>("/file-exclusions"),
+  createFileExclusion: (data: { pattern: string; description?: string; enabled?: boolean }) =>
+    request<FileExclusionPattern>("/file-exclusions", { method: "POST", body: JSON.stringify(data) }),
+  updateFileExclusion: (id: string, data: { enabled?: boolean; description?: string }) =>
+    request<FileExclusionPattern>(`/file-exclusions/${id}`, { method: "PUT", body: JSON.stringify(data) }),
+  deleteFileExclusion: (id: string) =>
+    request<void>(`/file-exclusions/${id}`, { method: "DELETE" }),
+  loadDefaultExclusions: () =>
+    request<{ added: number }>("/file-exclusions/load-defaults", { method: "POST" }),
+
+  getAiSettings: () => request<AiSettings>("/ai-settings"),
+  updateAiSettings: (data: { enabled?: boolean; model?: string; api_key?: string; base_url?: string; temperature?: number; max_iterations?: number }) =>
+    request<AiSettings>("/ai-settings", { method: "PUT", body: JSON.stringify(data) }),
+  getAiStatus: () => request<AiStatus>("/ai-settings/status"),
+
+  // Chat
+  listChatSessions: () => request<ChatSession[]>("/chat/sessions"),
+  getChatSessionMessages: (id: string) => request<ChatMessage[]>(`/chat/sessions/${id}`),
+  deleteChatSession: (id: string) => request<void>(`/chat/sessions/${id}`, { method: "DELETE" }),
+  sendChatMessage: async (
+    sessionId: string | null,
+    message: string,
+    onToken: (token: string) => void,
+    onSessionId: (id: string) => void,
+    onDone: (fullContent: string) => void,
+    onError: (error: string) => void,
+  ): Promise<void> => {
+    const token = getToken();
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    if (token) headers["Authorization"] = `Bearer ${token}`;
+    const res = await fetch(`${API_BASE}/chat`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ session_id: sessionId, message }),
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({ detail: res.statusText }));
+      onError(body.detail || res.statusText);
+      return;
+    }
+    const reader = res.body?.getReader();
+    if (!reader) { onError("No response stream"); return; }
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let currentEvent = "";
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() || "";
+      for (const line of lines) {
+        if (line.startsWith("event: ")) {
+          currentEvent = line.slice(7).trim();
+        } else if (line.startsWith("data: ")) {
+          try {
+            const data = JSON.parse(line.slice(6));
+            if (currentEvent === "session" && data.session_id) {
+              onSessionId(data.session_id);
+            } else if (currentEvent === "done") {
+              onDone(data.content ?? "");
+            } else if (currentEvent === "error") {
+              onError(data.detail ?? "Unknown error");
+            } else if (currentEvent === "token" && data.content !== undefined) {
+              onToken(data.content);
+            }
+          } catch { /* skip malformed */ }
+          currentEvent = "";
+        } else if (line.trim() === "") {
+          currentEvent = "";
+        }
+      }
+    }
   },
 };

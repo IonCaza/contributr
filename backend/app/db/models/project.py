@@ -22,6 +22,9 @@ class Project(Base):
     name: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
     description: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    platform_credential_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("platform_credentials.id", ondelete="SET NULL")
+    )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc),
@@ -30,3 +33,4 @@ class Project(Base):
 
     repositories = relationship("Repository", back_populates="project", cascade="all, delete-orphan")
     contributors = relationship("Contributor", secondary=project_contributors, back_populates="projects")
+    platform_credential = relationship("PlatformCredential")

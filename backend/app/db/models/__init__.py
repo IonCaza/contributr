@@ -9,6 +9,11 @@ from app.db.models.review import Review
 from app.db.models.ssh_credential import SSHCredential
 from app.db.models.sync_job import SyncJob
 from app.db.models.daily_stats import DailyContributorStats
+from app.db.models.commit_file import CommitFile
+from app.db.models.chat import ChatSession, ChatMessage
+from app.db.models.ai_settings import AiSettings
+from app.db.models.file_exclusion import FileExclusionPattern
+from app.db.models.platform_credential import PlatformCredential
 
 __all__ = [
     "User",
@@ -24,4 +29,10 @@ __all__ = [
     "SSHCredential",
     "SyncJob",
     "DailyContributorStats",
+    "CommitFile",
+    "ChatSession",
+    "ChatMessage",
+    "AiSettings",
+    "FileExclusionPattern",
+    "PlatformCredential",
 ]

@@ -17,3 +17,7 @@ PyGithub==2.6.0
 python-gitlab==5.6.0
 azure-devops==7.1.0b4
 httpx==0.28.1
+langchain>=0.3
+langchain-community>=0.3
+litellm>=1.60
+sse-starlette>=2.0

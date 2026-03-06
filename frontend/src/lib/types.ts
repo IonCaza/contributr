@@ -17,6 +17,7 @@ export interface Project {
   id: string;
   name: string;
   description: string | null;
+  platform_credential_id: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -87,6 +88,14 @@ export interface ContributorStats {
   total_lines_deleted: number;
   repository_count: number;
   current_streak_days: number;
+  avg_commit_size: number;
+  code_velocity: number;
+  merge_ratio: number;
+  active_days: number;
+  review_engagement: number;
+  impact_score: number;
+  prs_authored: number;
+  reviews_given: number;
   trends: TrendData;
 }
 
@@ -119,6 +128,10 @@ export interface ProjectStats {
   repository_count: number;
   total_commits: number;
   contributor_count: number;
+  churn_ratio: number;
+  pr_cycle_time_hours: number;
+  pr_review_turnaround_hours: number;
+  contribution_gini: number;
   trends: TrendData;
 }
 
@@ -126,6 +139,10 @@ export interface RepoStats {
   total_commits: number;
   contributor_count: number;
   bus_factor: number;
+  churn_ratio: number;
+  pr_cycle_time_hours: number;
+  pr_review_turnaround_hours: number;
+  contribution_gini: number;
   trends: TrendData;
 }
 
@@ -174,4 +191,108 @@ export interface PaginatedCommits {
   total: number;
   page: number;
   per_page: number;
+}
+
+export interface AiSettings {
+  enabled: boolean;
+  model: string;
+  has_api_key: boolean;
+  base_url: string | null;
+  temperature: number;
+  max_iterations: number;
+}
+
+export interface AiStatus {
+  enabled: boolean;
+  configured: boolean;
+}
+
+export interface ChatSession {
+  id: string;
+  title: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ChatMessage {
+  id: string;
+  role: "user" | "assistant" | "tool";
+  content: string;
+  created_at: string;
+}
+
+export interface CommitFileItem {
+  id: string;
+  file_path: string;
+  lines_added: number;
+  lines_deleted: number;
+}
+
+export interface CommitDetail extends CommitItem {
+  files: CommitFileItem[];
+}
+
+export interface FileTreeNode {
+  name: string;
+  path: string;
+  type: "file" | "directory";
+  commits: number;
+  contributors: number;
+  lines_added: number;
+  lines_deleted: number;
+  last_modified: string | null;
+  children?: FileTreeNode[];
+}
+
+export interface FileDetail {
+  path: string;
+  total_commits: number;
+  total_lines_added: number;
+  total_lines_deleted: number;
+  primary_owner: { id: string; name: string; email: string; commits: number } | null;
+  contributors: { id: string; name: string; email: string; commits: number; lines_added: number; lines_deleted: number; last_touched: string }[];
+  recent_commits: CommitItem[];
+}
+
+export interface HotspotFile {
+  file_path: string;
+  commit_count: number;
+  contributor_count: number;
+  total_lines_added: number;
+  total_lines_deleted: number;
+  bus_factor: number;
+}
+
+export interface PRStatItem {
+  id: string;
+  title: string | null;
+  state: string;
+  repository_id: string;
+  contributor_id: string | null;
+  created_at: string;
+  merged_at: string | null;
+  cycle_time_hours: number | null;
+  review_turnaround_hours: number | null;
+}
+
+export interface FileExclusionPattern {
+  id: string;
+  pattern: string;
+  description: string | null;
+  enabled: boolean;
+  is_default: boolean;
+  created_at: string | null;
+}
+
+export interface PlatformCredential {
+  id: string;
+  name: string;
+  platform: string;
+  base_url: string | null;
+  created_at: string;
+}
+
+export interface PlatformCredentialTestResult {
+  success: boolean;
+  message: string;
 }

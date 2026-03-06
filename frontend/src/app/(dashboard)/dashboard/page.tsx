@@ -60,17 +60,20 @@ export default function DashboardPage() {
           value={trends?.current_week.commits ?? 0}
           trend={trends?.wow_commits_delta}
           subtitle="Week over week"
+          tooltip="Total commits across all projects in the last 7 days. The trend compares this week to last week."
         />
         <StatCard
           title="Lines Changed (7d)"
           value={(trends?.current_week.lines_added ?? 0) + (trends?.current_week.lines_deleted ?? 0)}
           trend={trends?.wow_lines_delta}
           subtitle="Added + deleted"
+          tooltip="Total lines added plus lines deleted across all projects in the last 7 days"
         />
         <StatCard
           title="Avg Commits/Day"
           value={trends?.avg_commits_30d ?? 0}
           subtitle="30-day average"
+          tooltip="Average number of commits per day over the last 30 days across all projects"
         />
       </div>
 

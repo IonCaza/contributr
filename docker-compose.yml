@@ -33,6 +33,10 @@ services:
     restart: on-failure:3
     environment:
       - RUN_MIGRATIONS=true
+      - AI_MODEL=${AI_MODEL:-gpt-4o-mini}
+      - AI_API_KEY=${AI_API_KEY:-}
+      - AI_BASE_URL=${AI_BASE_URL:-}
+      - AI_TEMPERATURE=${AI_TEMPERATURE:-0.1}
     depends_on:
       postgres:
         condition: service_healthy
