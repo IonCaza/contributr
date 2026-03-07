@@ -9,6 +9,7 @@ import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogDescription } from "@/components/ui/dialog";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
+import { ConfirmDialog } from "@/components/confirm-dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -486,20 +487,16 @@ export default function ProjectCodePage({
         </DialogContent>
       </Dialog>
 
-      <AlertDialog open={!!deleteRepoId} onOpenChange={(v) => !v && setDeleteRepoId(null)}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Delete Repository</AlertDialogTitle>
-            <AlertDialogDescription>
-              This will permanently delete the repository and all associated data including commits, branches, sync history, and contributor statistics. This action cannot be undone.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={handleDeleteRepo} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">Delete</AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      <ConfirmDialog
+        open={!!deleteRepoId}
+        onOpenChange={(v) => !v && setDeleteRepoId(null)}
+        title="Delete Repository"
+        description={<>This will permanently delete the repository <span className="font-semibold">{project.repositories.find((r) => r.id === deleteRepoId)?.name}</span> and all associated data including commits, branches, sync history, and contributor statistics. This action cannot be undone.</>}
+        confirmLabel="Delete"
+        expectedName={project.repositories.find((r) => r.id === deleteRepoId)?.name}
+        expectedNameLabel="Type the repository name to confirm"
+        onConfirm={handleDeleteRepo}
+      />
 
       <AlertDialog open={!!purgeRepoId} onOpenChange={(v) => !v && setPurgeRepoId(null)}>
         <AlertDialogContent>

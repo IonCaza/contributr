@@ -11,6 +11,7 @@ import {
   AlertCircle,
   Clock,
   Search,
+  Eraser,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -19,6 +20,8 @@ import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { StatCard } from "@/components/stat-card";
 import { DateRangeFilter, defaultRange } from "@/components/date-range-filter";
 import type { DateRange } from "@/components/date-range-filter";
@@ -39,8 +42,10 @@ import { api } from "@/lib/api-client";
 import {
   useDeliveryStats,
   useWorkItems,
+  useWorkItemsTree,
   useIterations,
   useTriggerDeliverySync,
+  usePurgeDelivery,
   useDeliverySyncJobs,
   useFlowMetrics,
   useBacklogHealth,
@@ -50,6 +55,7 @@ import {
   useContributorDeliverySummary,
 } from "@/hooks/use-delivery";
 import { DeliveryDetailSheet } from "@/components/delivery-detail-sheet";
+import { WorkItemsTreeView } from "@/components/work-items-tree-view";
 import type { DeliveryFilters } from "@/lib/types";
 
 const TYPE_COLORS: Record<string, string> = {
@@ -120,6 +126,17 @@ export function ProjectDeliveryTab({ projectId }: { projectId: string }) {
   const [debouncedSearch, setDebouncedSearch] = useState<string>("");
   const [page, setPage] = useState(1);
   const pageSize = 25;
+  const [workItemsView, setWorkItemsView] = useState<"list" | "tree">("list");
+  const [sortBy, setSortBy] = useState<string>("updated_at");
+  const [sortOrder, setSortOrder] = useState<string>("desc");
+  const [priorityFilter, setPriorityFilter] = useState<string>("");
+  const [storyPointsMin, setStoryPointsMin] = useState<string>("");
+  const [storyPointsMax, setStoryPointsMax] = useState<string>("");
+  const [resolvedFrom, setResolvedFrom] = useState<string>("");
+  const [resolvedTo, setResolvedTo] = useState<string>("");
+  const [closedFrom, setClosedFrom] = useState<string>("");
+  const [closedTo, setClosedTo] = useState<string>("");
+  const [moreFiltersOpen, setMoreFiltersOpen] = useState(false);
   const [sprintScope, setSprintScope] = useState<string>(() => {
     if (typeof window !== "undefined") {
       return localStorage.getItem("contributr:sprint_scope") || "recent";
@@ -131,6 +148,8 @@ export function ProjectDeliveryTab({ projectId }: { projectId: string }) {
   const [syncing, setSyncing] = useState(false);
   const qc = useQueryClient();
   const syncMutation = useTriggerDeliverySync(projectId);
+  const purgeMutation = usePurgeDelivery(projectId);
+  const [purgeConfirmOpen, setPurgeConfirmOpen] = useState(false);
 
   // ── Data hooks ──────────────────────────────────────────────────
   const { data: stats, isLoading: statsLoading } = useDeliveryStats(projectId, deliveryFilters);
@@ -139,15 +158,50 @@ export function ProjectDeliveryTab({ projectId }: { projectId: string }) {
   const { data: backlog, isLoading: backlogLoading } = useBacklogHealth(projectId, deliveryFilters);
   const { data: quality, isLoading: qualityLoading } = useQualityMetrics(projectId, deliveryFilters);
   const { data: intersection } = useIntersectionMetrics(projectId, deliveryFilters);
+  const workItemFilters = useMemo(
+    () => ({
+      work_item_type: typeFilter || undefined,
+      state: stateFilter || undefined,
+      search: debouncedSearch || undefined,
+      from_date: deliveryFilters.from_date,
+      to_date: deliveryFilters.to_date,
+      resolved_from: resolvedFrom || undefined,
+      resolved_to: resolvedTo || undefined,
+      closed_from: closedFrom || undefined,
+      closed_to: closedTo || undefined,
+      priority: priorityFilter ? parseInt(priorityFilter, 10) : undefined,
+      story_points_min: storyPointsMin ? parseFloat(storyPointsMin) : undefined,
+      story_points_max: storyPointsMax ? parseFloat(storyPointsMax) : undefined,
+      sort_by: sortBy,
+      sort_order: sortOrder,
+    }),
+    [
+      typeFilter,
+      stateFilter,
+      debouncedSearch,
+      deliveryFilters.from_date,
+      deliveryFilters.to_date,
+      resolvedFrom,
+      resolvedTo,
+      closedFrom,
+      closedTo,
+      priorityFilter,
+      storyPointsMin,
+      storyPointsMax,
+      sortBy,
+      sortOrder,
+    ],
+  );
   const { data: workItemsData, isLoading: wiLoading } = useWorkItems(projectId, {
-    work_item_type: typeFilter || undefined,
-    state: stateFilter || undefined,
-    search: debouncedSearch || undefined,
-    from_date: deliveryFilters.from_date,
-    to_date: deliveryFilters.to_date,
+    ...workItemFilters,
     page,
     page_size: pageSize,
   });
+  const { data: workItemsTreeData, isLoading: wiTreeLoading } = useWorkItemsTree(
+    projectId,
+    { ...workItemFilters, max_items: 2000 },
+    { enabled: workItemsView === "tree" },
+  );
   const { data: syncJobs = [] } = useDeliverySyncJobs(projectId, syncing);
 
   // ── Drill-down state ───────────────────────────────────────────
@@ -178,6 +232,12 @@ export function ProjectDeliveryTab({ projectId }: { projectId: string }) {
       onSuccess: () => setSyncing(true),
     });
   }, [syncMutation]);
+
+  const handlePurgeDelivery = useCallback(() => {
+    purgeMutation.mutate(undefined, {
+      onSuccess: () => setPurgeConfirmOpen(false),
+    });
+  }, [purgeMutation]);
 
   // ── Derived data ────────────────────────────────────────────────
   const sortedIterations = useMemo(() => {
@@ -311,7 +371,37 @@ export function ProjectDeliveryTab({ projectId }: { projectId: string }) {
             <RefreshCw className={`mr-2 h-4 w-4 ${syncMutation.isPending || syncing ? "animate-spin" : ""}`} />
             {syncing ? "Syncing..." : "Sync from Azure DevOps"}
           </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            className="text-amber-600 border-amber-200 hover:bg-amber-50 hover:text-amber-700 dark:border-amber-800 dark:hover:bg-amber-950/50"
+            onClick={() => setPurgeConfirmOpen(true)}
+            disabled={purgeMutation.isPending || syncing}
+          >
+            <Eraser className="mr-2 h-4 w-4" />
+            Purge
+          </Button>
         </div>
+
+        <AlertDialog open={purgeConfirmOpen} onOpenChange={setPurgeConfirmOpen}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Purge delivery data</AlertDialogTitle>
+              <AlertDialogDescription>
+                This will permanently delete all delivery data for this project — work items, iterations, teams, sync history, and statistics. You can re-sync from Azure DevOps afterward. This action cannot be undone.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Cancel</AlertDialogCancel>
+              <AlertDialogAction
+                onClick={handlePurgeDelivery}
+                className="bg-amber-600 text-white hover:bg-amber-700"
+              >
+                {purgeMutation.isPending ? "Purging..." : "Purge data"}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
 
         {/* ── Overview Tab ──────────────────────────────────────────── */}
         <TabsContent value="overview" className="space-y-4">
@@ -331,8 +421,22 @@ export function ProjectDeliveryTab({ projectId }: { projectId: string }) {
                 />
               </div>
               <div className="grid gap-4 md:grid-cols-2">
-                <StatCard title="Avg Cycle Time" value={`${stats.avg_cycle_time_hours}h`} subtitle="Activated → Resolved" tooltip="Median hours from active to resolved" onClick={() => setDrillDown({ title: "Avg Cycle Time", metric: "cycle_time" })} />
-                <StatCard title="Avg Lead Time" value={`${stats.avg_lead_time_hours}h`} subtitle="Created → Closed" tooltip="Median hours from creation to closure" onClick={() => setDrillDown({ title: "Avg Lead Time", metric: "lead_time" })} />
+                <StatCard
+                  title="Avg Cycle Time"
+                  value={`${stats.avg_cycle_time_hours}h`}
+                  subtitle="Activated → Resolved"
+                  tooltip="Median hours from active to resolved. Sparkline shows weekly trend."
+                  sparklineData={stats.cycle_time_trend?.map((t) => t.median_hours)}
+                  onClick={() => setDrillDown({ title: "Avg Cycle Time", metric: "cycle_time" })}
+                />
+                <StatCard
+                  title="Avg Lead Time"
+                  value={`${stats.avg_lead_time_hours}h`}
+                  subtitle="Created → Closed"
+                  tooltip="Median hours from creation to closure. Sparkline shows weekly trend."
+                  sparklineData={stats.lead_time_trend?.map((t) => t.median_hours)}
+                  onClick={() => setDrillDown({ title: "Avg Lead Time", metric: "lead_time" })}
+                />
               </div>
 
               {/* Mini charts */}
@@ -396,14 +500,16 @@ export function ProjectDeliveryTab({ projectId }: { projectId: string }) {
                   title="Cycle Time (median)"
                   value={stats ? `${stats.avg_cycle_time_hours}h` : "—"}
                   subtitle="Activated → Resolved"
-                  tooltip="Median cycle time across filtered items"
+                  tooltip="Median cycle time across filtered items. Sparkline shows weekly trend."
+                  sparklineData={stats?.cycle_time_trend?.map((t) => t.median_hours)}
                   onClick={() => setDrillDown({ title: "Cycle Time", metric: "cycle_time" })}
                 />
                 <StatCard
                   title="Lead Time (median)"
                   value={stats ? `${stats.avg_lead_time_hours}h` : "—"}
                   subtitle="Created → Closed"
-                  tooltip="Median lead time across filtered items"
+                  tooltip="Median lead time across filtered items. Sparkline shows weekly trend."
+                  sparklineData={stats?.lead_time_trend?.map((t) => t.median_hours)}
                   onClick={() => setDrillDown({ title: "Lead Time", metric: "lead_time" })}
                 />
               </div>
@@ -655,8 +761,21 @@ export function ProjectDeliveryTab({ projectId }: { projectId: string }) {
 
       {/* Work Items */}
       <div className="space-y-4">
-        <div className="flex items-center justify-between gap-4">
-          <h3 className="text-lg font-semibold shrink-0">Work Items</h3>
+        <div className="flex items-center justify-between gap-4 flex-wrap">
+          <div className="flex items-center gap-3 shrink-0">
+            <h3 className="text-lg font-semibold">Work Items</h3>
+            <Tabs
+              value={workItemsView}
+              onValueChange={(v) => {
+                if (v === "list" || v === "tree") setWorkItemsView(v);
+              }}
+            >
+              <TabsList className="h-9">
+                <TabsTrigger value="list" className="text-sm px-3">List</TabsTrigger>
+                <TabsTrigger value="tree" className="text-sm px-3">Tree</TabsTrigger>
+              </TabsList>
+            </Tabs>
+          </div>
           <div className="flex items-center gap-2">
             <div className="relative">
               <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
@@ -704,12 +823,168 @@ export function ProjectDeliveryTab({ projectId }: { projectId: string }) {
                 <SelectItem value="Closed">Closed</SelectItem>
               </SelectContent>
             </Select>
+            <Select
+              value={sortBy}
+              onValueChange={(v) => {
+                setSortBy(v);
+                setPage(1);
+              }}
+            >
+              <SelectTrigger className="w-40">
+                <SelectValue placeholder="Sort by" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="updated_at">Updated</SelectItem>
+                <SelectItem value="created_at">Created</SelectItem>
+                <SelectItem value="resolved_at">Resolved</SelectItem>
+                <SelectItem value="closed_at">Closed</SelectItem>
+                <SelectItem value="story_points">Story points</SelectItem>
+                <SelectItem value="priority">Priority</SelectItem>
+                <SelectItem value="title">Title</SelectItem>
+                <SelectItem value="platform_work_item_id">ID</SelectItem>
+              </SelectContent>
+            </Select>
+            <Select
+              value={sortOrder}
+              onValueChange={(v) => {
+                setSortOrder(v);
+                setPage(1);
+              }}
+            >
+              <SelectTrigger className="w-28">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="desc">Desc</SelectItem>
+                <SelectItem value="asc">Asc</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
         </div>
 
-        {wiLoading && <LoadingPulse />}
+        <Collapsible open={moreFiltersOpen} onOpenChange={setMoreFiltersOpen} className="space-y-2">
+          <CollapsibleTrigger asChild>
+            <Button variant="ghost" size="sm" className="text-muted-foreground hover:text-foreground">
+              {moreFiltersOpen ? "Hide filters" : "More filters (priority, size, dates)"}
+            </Button>
+          </CollapsibleTrigger>
+          <CollapsibleContent className="space-y-3">
+            <div className="flex flex-wrap items-center gap-3">
+              <div className="flex items-center gap-2">
+                <span className="text-sm text-muted-foreground whitespace-nowrap">Priority</span>
+                <Select
+                  value={priorityFilter || "__all__"}
+                  onValueChange={(v) => {
+                    setPriorityFilter(v === "__all__" ? "" : v);
+                    setPage(1);
+                  }}
+                >
+                  <SelectTrigger className="w-28 h-9">
+                    <SelectValue placeholder="All" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__all__">All</SelectItem>
+                    <SelectItem value="1">P1</SelectItem>
+                    <SelectItem value="2">P2</SelectItem>
+                    <SelectItem value="3">P3</SelectItem>
+                    <SelectItem value="4">P4</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-sm text-muted-foreground whitespace-nowrap">Points min</span>
+                <Input
+                  type="number"
+                  min={0}
+                  step={0.5}
+                  placeholder="—"
+                  value={storyPointsMin}
+                  onChange={(e) => {
+                    setStoryPointsMin(e.target.value);
+                    setPage(1);
+                  }}
+                  className="w-20 h-9"
+                />
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-sm text-muted-foreground whitespace-nowrap">Points max</span>
+                <Input
+                  type="number"
+                  min={0}
+                  step={0.5}
+                  placeholder="—"
+                  value={storyPointsMax}
+                  onChange={(e) => {
+                    setStoryPointsMax(e.target.value);
+                    setPage(1);
+                  }}
+                  className="w-20 h-9"
+                />
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-sm text-muted-foreground whitespace-nowrap">Resolved from</span>
+                <Input
+                  type="date"
+                  value={resolvedFrom}
+                  onChange={(e) => {
+                    setResolvedFrom(e.target.value);
+                    setPage(1);
+                  }}
+                  className="w-36 h-9"
+                />
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-sm text-muted-foreground whitespace-nowrap">Resolved to</span>
+                <Input
+                  type="date"
+                  value={resolvedTo}
+                  onChange={(e) => {
+                    setResolvedTo(e.target.value);
+                    setPage(1);
+                  }}
+                  className="w-36 h-9"
+                />
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-sm text-muted-foreground whitespace-nowrap">Closed from</span>
+                <Input
+                  type="date"
+                  value={closedFrom}
+                  onChange={(e) => {
+                    setClosedFrom(e.target.value);
+                    setPage(1);
+                  }}
+                  className="w-36 h-9"
+                />
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-sm text-muted-foreground whitespace-nowrap">Closed to</span>
+                <Input
+                  type="date"
+                  value={closedTo}
+                  onChange={(e) => {
+                    setClosedTo(e.target.value);
+                    setPage(1);
+                  }}
+                  className="w-36 h-9"
+                />
+              </div>
+            </div>
+          </CollapsibleContent>
+        </Collapsible>
 
-        {workItemsData && (
+        {workItemsView === "tree" ? (
+          <WorkItemsTreeView
+            projectId={projectId}
+            roots={workItemsTreeData?.roots ?? []}
+            totalCount={workItemsTreeData?.total_count ?? 0}
+            isLoading={wiTreeLoading}
+          />
+        ) : (
+          <>
+            {wiLoading && <LoadingPulse />}
+
+            {workItemsData && (
           <>
             <Card>
               <Table>
@@ -798,6 +1073,8 @@ export function ProjectDeliveryTab({ projectId }: { projectId: string }) {
               </div>
             )}
           </>
+        )}
+      </>
         )}
       </div>
 

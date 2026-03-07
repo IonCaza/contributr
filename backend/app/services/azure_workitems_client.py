@@ -473,7 +473,23 @@ async def fetch_ado_work_items(
     return count
 
 
-_COMMIT_SHA_RE = re.compile(r"/commits/([0-9a-f]{40})", re.IGNORECASE)
+# HTTP-style: https://dev.azure.com/.../_git/repo/commit/abc123... or .../commits/abc123...
+_COMMIT_SHA_HTTP_RE = re.compile(r"/commits?/([0-9a-f]{40})(?:\?|$|/)", re.IGNORECASE)
+# vstfs-style: vstfs:///Git/Commit/{repo-id}%2F{project-id}%2F{commit-sha}
+_COMMIT_SHA_VSTFS_RE = re.compile(r"vstfs:///Git/Commit/(?:[^%]+%2F){2}([0-9a-f]{40})", re.IGNORECASE)
+# Fallback: 40-char hex at end of URL (e.g. .../abc123 or ...%2Fabc123)
+_COMMIT_SHA_ANY_RE = re.compile(r"(?:%2F|/)([0-9a-f]{40})(?:\?|$)", re.IGNORECASE)
+
+
+def _extract_commit_sha_from_relation_url(url: str) -> str | None:
+    """Extract 40-char Git commit SHA from an Azure DevOps relation URL (HTTP or vstfs)."""
+    if not url:
+        return None
+    for pattern in (_COMMIT_SHA_HTTP_RE, _COMMIT_SHA_VSTFS_RE, _COMMIT_SHA_ANY_RE):
+        m = pattern.search(url)
+        if m:
+            return m.group(1).lower()
+    return None
 
 
 async def _sync_relations(
@@ -512,15 +528,23 @@ async def _sync_relations(
                 continue
 
             for rel in wi.relations:
-                rel_type_url = getattr(rel, "rel", "")
-                url = getattr(rel, "url", "")
+                rel_type_url = getattr(rel, "rel", "") or ""
+                url = getattr(rel, "url", "") or ""
 
-                if rel_type_url == "ArtifactLink" or "/git/repositories/" in url:
-                    sha_match = _COMMIT_SHA_RE.search(url)
-                    if sha_match:
-                        sha = sha_match.group(1)
+                # Commit artifact links: ArtifactLink relation or URL points to Git commit
+                is_commit_artifact = (
+                    "ArtifactLink" in rel_type_url
+                    or "artifact" in rel_type_url.lower()
+                    or "/git/repositories/" in url
+                    or "vstfs:///Git/Commit/" in url
+                )
+                if is_commit_artifact:
+                    sha = _extract_commit_sha_from_relation_url(url)
+                    if sha:
                         commit_r = await db.execute(
-                            select(Commit).where(Commit.sha == sha).limit(1)
+                            select(Commit).where(
+                                func.lower(Commit.sha) == sha
+                            ).limit(1)
                         )
                         commit_obj = commit_r.scalar_one_or_none()
                         if commit_obj:
@@ -537,6 +561,11 @@ async def _sync_relations(
                                     link_type="artifact_link",
                                 ))
                                 commit_links_created += 1
+                        elif logger.isEnabledFor(logging.DEBUG):
+                            logger.debug(
+                                "Commit SHA %s from relation not found in DB (sync repos first?)",
+                                sha[:8],
+                            )
                     continue
 
                 rel_type = RELATION_MAP.get(rel_type_url)

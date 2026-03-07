@@ -5,6 +5,7 @@ import {
   AlertTriangle, AlertCircle, Info, CheckCircle2, Play, Loader2,
   ChevronDown, ChevronRight, X, Clock, TrendingUp,
   Flame, Code2, GitPullRequest, Sprout, BookOpen,
+  Truck, ShieldCheck,
 } from "lucide-react";
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -37,6 +38,9 @@ const CATEGORIES = [
   { value: "collaboration", label: "Collaboration" },
   { value: "growth", label: "Growth" },
   { value: "knowledge", label: "Knowledge" },
+  { value: "delivery", label: "Delivery" },
+  { value: "pr_quality", label: "PR Quality" },
+  { value: "code_quality", label: "Code Quality" },
 ] as const;
 
 const SEVERITIES = [
@@ -58,6 +62,9 @@ const CATEGORY_CONFIG: Record<string, { icon: typeof Flame; label: string }> = {
   collaboration: { icon: GitPullRequest, label: "Collaboration" },
   growth: { icon: Sprout, label: "Growth" },
   knowledge: { icon: BookOpen, label: "Knowledge" },
+  delivery: { icon: Truck, label: "Delivery" },
+  pr_quality: { icon: ShieldCheck, label: "PR Quality" },
+  code_quality: { icon: Code2, label: "Code Quality" },
 };
 
 function HealthScoreBanner({

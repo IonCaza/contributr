@@ -21,10 +21,32 @@ from app.services.insights.analyzers.contributor_growth import (
     analyze_commit_size_patterns,
     analyze_weekend_work,
 )
+from app.services.insights.analyzers.contributor_delivery import (
+    analyze_throughput_trends,
+    analyze_cycle_time,
+    analyze_estimation_accuracy,
+    analyze_wip_overload,
+    analyze_sprint_commitment,
+    analyze_bug_ratio,
+)
+from app.services.insights.analyzers.contributor_pr_quality import (
+    analyze_review_turnaround,
+    analyze_pr_iteration_count,
+    analyze_pr_abandonment,
+    analyze_review_depth,
+    analyze_review_network_diversity,
+    analyze_time_to_first_review,
+)
+from app.services.insights.analyzers.contributor_code_quality import (
+    analyze_hotspot_ownership,
+    analyze_code_churn_on_own_work,
+    analyze_test_coverage_habits,
+)
 
 logger = logging.getLogger(__name__)
 
 ALL_CONTRIBUTOR_ANALYZERS = [
+    # habits / growth / knowledge (original)
     analyze_commit_consistency,
     analyze_commit_message_habits,
     analyze_pr_authoring,
@@ -33,6 +55,24 @@ ALL_CONTRIBUTOR_ANALYZERS = [
     analyze_growth_trajectory,
     analyze_commit_size_patterns,
     analyze_weekend_work,
+    # delivery
+    analyze_throughput_trends,
+    analyze_cycle_time,
+    analyze_estimation_accuracy,
+    analyze_wip_overload,
+    analyze_sprint_commitment,
+    analyze_bug_ratio,
+    # PR quality
+    analyze_review_turnaround,
+    analyze_pr_iteration_count,
+    analyze_pr_abandonment,
+    analyze_review_depth,
+    analyze_review_network_diversity,
+    analyze_time_to_first_review,
+    # code quality
+    analyze_hotspot_ownership,
+    analyze_code_churn_on_own_work,
+    analyze_test_coverage_habits,
 ]
 
 

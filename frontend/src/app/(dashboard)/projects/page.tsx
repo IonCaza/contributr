@@ -106,6 +106,8 @@ export default function ProjectsPage() {
         title="Delete Project"
         description={<>This will permanently delete <span className="font-semibold">{projectToDelete?.name}</span> and all its repositories, commits, and associated data. This action cannot be undone.</>}
         confirmLabel="Delete Project"
+        expectedName={projectToDelete?.name}
+        expectedNameLabel="Type the project name to confirm"
         onConfirm={() => { if (deleteId) { deleteProject.mutate(deleteId); setDeleteId(null); } }}
       />
     </div>

@@ -6,7 +6,7 @@ from collections import Counter
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 
-from sqlalchemy import select, func, case, and_, extract, literal_column
+from sqlalchemy import Date, select, func, case, and_, extract, literal_column
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models.work_item import WorkItem
@@ -112,6 +112,8 @@ async def get_delivery_stats(
 
     velocity_trend = await get_velocity(db, project_id, filters=filters, limit=10)
     throughput_trend = await get_throughput_trend(db, project_id, filters=filters, days=90)
+    cycle_time_trend = await get_cycle_time_trend(db, project_id, filters=filters, weeks=12)
+    lead_time_trend = await get_lead_time_trend(db, project_id, filters=filters, weeks=12)
 
     return {
         "total_work_items": total,
@@ -123,6 +125,8 @@ async def get_delivery_stats(
         "avg_lead_time_hours": avg_lead,
         "velocity_trend": velocity_trend,
         "throughput_trend": throughput_trend,
+        "cycle_time_trend": cycle_time_trend,
+        "lead_time_trend": lead_time_trend,
         "backlog_by_type": backlog_by_type,
         "backlog_by_state": backlog_by_state,
     }
@@ -205,6 +209,71 @@ async def get_throughput_trend(
         {"date": d, "created": created_rows.get(d, 0), "completed": completed_rows.get(d, 0)}
         for d in all_dates
     ]
+
+
+async def get_cycle_time_trend(
+    db: AsyncSession,
+    project_id: uuid.UUID,
+    *,
+    filters: DeliveryFilters | None = None,
+    weeks: int = 12,
+) -> list[dict]:
+    """Median cycle time (activated -> resolved) per week, for sparkline."""
+    wi = WorkItem.__table__
+    cutoff = date.today() - timedelta(weeks=weeks)
+    cycle_expr = extract("epoch", wi.c.resolved_at - wi.c.activated_at) / 3600
+
+    where = _apply_filters(filters, wi, [
+        wi.c.project_id == project_id,
+        wi.c.activated_at.isnot(None),
+        wi.c.resolved_at.isnot(None),
+        func.date(wi.c.resolved_at) >= cutoff,
+    ])
+
+    week_expr = func.date_trunc("week", wi.c.resolved_at).cast(Date)
+    q = (
+        select(
+            week_expr.label("week"),
+            func.percentile_cont(0.5).within_group(cycle_expr).label("median_hours"),
+        )
+        .where(*where)
+        .group_by(week_expr)
+        .order_by(week_expr)
+    )
+    rows = (await db.execute(q)).all()
+    return [{"week": str(r.week), "median_hours": round(r.median_hours or 0, 1)} for r in rows]
+
+
+async def get_lead_time_trend(
+    db: AsyncSession,
+    project_id: uuid.UUID,
+    *,
+    filters: DeliveryFilters | None = None,
+    weeks: int = 12,
+) -> list[dict]:
+    """Median lead time (created -> closed) per week, for sparkline."""
+    wi = WorkItem.__table__
+    cutoff = date.today() - timedelta(weeks=weeks)
+    lead_expr = extract("epoch", wi.c.closed_at - wi.c.created_at) / 3600
+
+    where = _apply_filters(filters, wi, [
+        wi.c.project_id == project_id,
+        wi.c.closed_at.isnot(None),
+        func.date(wi.c.closed_at) >= cutoff,
+    ])
+
+    week_expr = func.date_trunc("week", wi.c.closed_at).cast(Date)
+    q = (
+        select(
+            week_expr.label("week"),
+            func.percentile_cont(0.5).within_group(lead_expr).label("median_hours"),
+        )
+        .where(*where)
+        .group_by(week_expr)
+        .order_by(week_expr)
+    )
+    rows = (await db.execute(q)).all()
+    return [{"week": str(r.week), "median_hours": round(r.median_hours or 0, 1)} for r in rows]
 
 
 async def get_iteration_detail(

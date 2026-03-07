@@ -22,6 +22,15 @@ export function useWorkItems(
     search?: string;
     from_date?: string;
     to_date?: string;
+    resolved_from?: string;
+    resolved_to?: string;
+    closed_from?: string;
+    closed_to?: string;
+    priority?: number;
+    story_points_min?: number;
+    story_points_max?: number;
+    sort_by?: string;
+    sort_order?: string;
     page?: number;
     page_size?: number;
   },
@@ -30,6 +39,36 @@ export function useWorkItems(
     queryKey: queryKeys.delivery.workItems(projectId, filters),
     queryFn: () => api.listWorkItems(projectId, filters),
     enabled: !!projectId,
+  });
+}
+
+export function useWorkItemsTree(
+  projectId: string,
+  filters?: {
+    work_item_type?: string;
+    state?: string;
+    assignee_id?: string;
+    iteration_ids?: string[];
+    search?: string;
+    from_date?: string;
+    to_date?: string;
+    resolved_from?: string;
+    resolved_to?: string;
+    closed_from?: string;
+    closed_to?: string;
+    priority?: number;
+    story_points_min?: number;
+    story_points_max?: number;
+    sort_by?: string;
+    sort_order?: string;
+    max_items?: number;
+  },
+  options?: { enabled?: boolean },
+) {
+  return useQuery({
+    queryKey: queryKeys.delivery.workItemsTree(projectId, filters),
+    queryFn: () => api.getWorkItemsTree(projectId, filters),
+    enabled: !!projectId && (options?.enabled !== false),
   });
 }
 
@@ -72,6 +111,16 @@ export function useTriggerDeliverySync(projectId: string) {
     mutationFn: () => api.triggerDeliverySync(projectId),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: queryKeys.delivery.syncJobs(projectId) });
+    },
+  });
+}
+
+export function usePurgeDelivery(projectId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.purgeDelivery(projectId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["delivery", projectId] });
     },
   });
 }

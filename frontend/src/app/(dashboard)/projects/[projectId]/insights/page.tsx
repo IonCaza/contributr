@@ -7,6 +7,9 @@ import {
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "@/components/ui/sheet";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   useInsightFindings,
@@ -37,6 +40,10 @@ const SEVERITIES = [
   { value: "info", label: "Info" },
 ] as const;
 
+const CRITICAL_PENALTY = 15;
+const WARNING_PENALTY = 5;
+const INFO_PENALTY = 1;
+
 function HealthScoreBanner({
   summary,
   lastRun,
@@ -48,8 +55,19 @@ function HealthScoreBanner({
   onRunAnalysis: () => void;
   isRunning: boolean;
 }) {
+  const [sheetOpen, setSheetOpen] = useState(false);
+
   const score = summary
-    ? Math.max(0, 100 - (summary.critical * 15) - (summary.warning * 5) - (summary.info * 1))
+    ? Math.max(0, 100 - (summary.critical * CRITICAL_PENALTY) - (summary.warning * WARNING_PENALTY) - (summary.info * INFO_PENALTY))
+    : null;
+
+  const deductions = summary
+    ? {
+        critical: summary.critical * CRITICAL_PENALTY,
+        warning: summary.warning * WARNING_PENALTY,
+        info: summary.info * INFO_PENALTY,
+        total: (summary.critical * CRITICAL_PENALTY) + (summary.warning * WARNING_PENALTY) + (summary.info * INFO_PENALTY),
+      }
     : null;
 
   const scoreColor = score === null
@@ -65,18 +83,31 @@ function HealthScoreBanner({
     : "No analysis runs yet";
 
   return (
-    <Card>
-      <CardContent className="flex items-center justify-between py-4 px-6">
-        <div className="flex items-center gap-4">
-          <div className="flex items-center gap-3">
-            <div className={`h-12 w-12 rounded-full ${scoreColor} flex items-center justify-center`}>
-              <span className="text-white font-bold text-lg">{score ?? "?"}</span>
-            </div>
-            <div>
-              <p className="font-semibold text-lg">Health Score</p>
-              <p className="text-sm text-muted-foreground">{lastRunLabel}</p>
-            </div>
-          </div>
+    <>
+      <Card>
+        <CardContent className="flex items-center justify-between py-4 px-6">
+          <div className="flex items-center gap-4">
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <div
+                    className="flex items-center gap-3 cursor-pointer select-none rounded-lg p-1 -m-1 hover:bg-muted/50 transition-colors"
+                    onDoubleClick={() => setSheetOpen(true)}
+                  >
+                    <div className={`h-12 w-12 rounded-full ${scoreColor} flex items-center justify-center`}>
+                      <span className="text-white font-bold text-lg">{score ?? "?"}</span>
+                    </div>
+                    <div>
+                      <p className="font-semibold text-lg">Health Score</p>
+                      <p className="text-sm text-muted-foreground">{lastRunLabel}</p>
+                    </div>
+                  </div>
+                </TooltipTrigger>
+                <TooltipContent side="bottom" className="max-w-64">
+                  <p>Double-click to see how the Health Score is calculated</p>
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
           {score !== null && (
             <div className="hidden sm:flex items-center gap-1 ml-4">
               <div className="h-2 w-48 rounded-full bg-muted overflow-hidden">
@@ -97,6 +128,81 @@ function HealthScoreBanner({
         </Button>
       </CardContent>
     </Card>
+
+      <Sheet open={sheetOpen} onOpenChange={setSheetOpen}>
+        <SheetContent className="w-full sm:max-w-xl overflow-y-auto">
+          <SheetHeader>
+            <SheetTitle>How Health Score is Calculated</SheetTitle>
+            <SheetDescription>
+              The Health Score starts at 100 and is reduced by active findings based on severity.
+            </SheetDescription>
+          </SheetHeader>
+          <div className="space-y-6 px-4 pb-6">
+            <div className="rounded-lg border bg-muted/30 p-3 font-mono text-sm">
+              <p className="text-muted-foreground mb-1">Formula:</p>
+              <p>100 − (critical × 15) − (warning × 5) − (info × 1)</p>
+              <p className="text-xs text-muted-foreground mt-2">Minimum score is 0</p>
+            </div>
+
+            {summary && deductions && (
+              <div>
+                <p className="text-sm font-medium mb-2">Current breakdown</p>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Severity</TableHead>
+                      <TableHead className="text-right">Count</TableHead>
+                      <TableHead className="text-right">Points each</TableHead>
+                      <TableHead className="text-right">Deduction</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    <TableRow>
+                      <TableCell className="flex items-center gap-1.5">
+                        <AlertTriangle className="h-3.5 w-3.5 text-red-500" />
+                        Critical
+                      </TableCell>
+                      <TableCell className="text-right">{summary.critical}</TableCell>
+                      <TableCell className="text-right">−15</TableCell>
+                      <TableCell className="text-right text-red-600">−{deductions.critical}</TableCell>
+                    </TableRow>
+                    <TableRow>
+                      <TableCell className="flex items-center gap-1.5">
+                        <AlertCircle className="h-3.5 w-3.5 text-amber-500" />
+                        Warning
+                      </TableCell>
+                      <TableCell className="text-right">{summary.warning}</TableCell>
+                      <TableCell className="text-right">−5</TableCell>
+                      <TableCell className="text-right text-amber-600">−{deductions.warning}</TableCell>
+                    </TableRow>
+                    <TableRow>
+                      <TableCell className="flex items-center gap-1.5">
+                        <Info className="h-3.5 w-3.5 text-blue-500" />
+                        Info
+                      </TableCell>
+                      <TableCell className="text-right">{summary.info}</TableCell>
+                      <TableCell className="text-right">−1</TableCell>
+                      <TableCell className="text-right text-blue-600">−{deductions.info}</TableCell>
+                    </TableRow>
+                    <TableRow className="font-medium">
+                      <TableCell colSpan={3}>Total deduction</TableCell>
+                      <TableCell className="text-right">−{deductions.total}</TableCell>
+                    </TableRow>
+                  </TableBody>
+                </Table>
+                <p className="text-sm text-muted-foreground mt-3">
+                  <strong>Score:</strong> 100 − {deductions.total} = <strong>{score}</strong>
+                </p>
+              </div>
+            )}
+
+            {!summary && (
+              <p className="text-sm text-muted-foreground">Run an analysis to see your current breakdown.</p>
+            )}
+          </div>
+        </SheetContent>
+      </Sheet>
+    </>
   );
 }
 

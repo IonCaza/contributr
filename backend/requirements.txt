@@ -21,3 +21,9 @@ langchain>=0.3
 langchain-community>=0.3
 litellm>=1.60
 sse-starlette>=2.0
+
+# Test dependencies
+pytest>=8.0
+pytest-asyncio>=0.24
+pytest-cov>=6.0
+httpx>=0.28

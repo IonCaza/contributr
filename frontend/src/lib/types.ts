@@ -449,6 +449,30 @@ export interface PaginatedWorkItems {
   page_size: number;
 }
 
+export interface WorkItemTreeNode {
+  id: string;
+  platform_work_item_id: number;
+  work_item_type: "epic" | "feature" | "user_story" | "task" | "bug";
+  title: string;
+  state: string;
+  assigned_to: { id: string; name: string | null } | null;
+  iteration_id: string | null;
+  iteration_name: string | null;
+  story_points: number | null;
+  priority: number | null;
+  tags: string[];
+  created_at: string;
+  resolved_at: string | null;
+  closed_at: string | null;
+  platform_url: string | null;
+  children: WorkItemTreeNode[];
+}
+
+export interface WorkItemsTreeResponse {
+  roots: WorkItemTreeNode[];
+  total_count: number;
+}
+
 export interface DeliveryStats {
   total_work_items: number;
   open_items: number;
@@ -459,6 +483,8 @@ export interface DeliveryStats {
   avg_lead_time_hours: number;
   velocity_trend: { iteration: string; points: number }[];
   throughput_trend: { date: string; completed: number; created: number }[];
+  cycle_time_trend?: { week: string; median_hours: number }[];
+  lead_time_trend?: { week: string; median_hours: number }[];
   backlog_by_type: { type: string; count: number }[];
   backlog_by_state: { state: string; count: number }[];
 }
@@ -704,6 +730,49 @@ export interface ContributorInsightFinding {
 }
 
 export interface ContributorInsightsSummary {
+  total_active: number;
+  critical: number;
+  warning: number;
+  info: number;
+  resolved_30d: number;
+  by_category: Record<string, number>;
+}
+
+// ── Team Insights ───────────────────────────────────────────────────
+
+export interface TeamInsightRun {
+  id: string;
+  team_id: string;
+  project_id: string;
+  status: string;
+  started_at: string;
+  finished_at: string | null;
+  findings_count: number;
+  error_message: string | null;
+}
+
+export interface TeamInsightFinding {
+  id: string;
+  run_id: string;
+  team_id: string;
+  project_id: string;
+  category: string;
+  severity: string;
+  slug: string;
+  title: string;
+  description: string;
+  recommendation: string;
+  metric_data: Record<string, unknown> | null;
+  affected_entities: Record<string, unknown> | null;
+  status: string;
+  first_detected_at: string;
+  last_detected_at: string;
+  resolved_at: string | null;
+  dismissed_at: string | null;
+  dismissed_by_id: string | null;
+}
+
+export interface TeamInsightsSummary {
   total_active: number;
   critical: number;
   warning: number;

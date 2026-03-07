@@ -484,7 +484,7 @@ async def _run_contributor_insights(run_id: str, contributor_id: str) -> None:
         run_contributor_analysis, persist_contributor_findings,
     )
     from app.services.sync_logger import SyncLogger
-    from app.services.insights.enhancer import enhance_findings
+    from app.services.insights.contributor_enhancer import enhance_contributor_findings
 
     slog = SyncLogger(f"contributor-insights-{run_id}")
 
@@ -504,14 +504,14 @@ async def _run_contributor_insights(run_id: str, contributor_id: str) -> None:
             raw_findings = await run_contributor_analysis(db, run, slog=slog)
 
             try:
-                slog.info("enhance", "Running AI enhancement on findings...")
-                raw_findings = await enhance_findings(
-                    db, None, raw_findings, slog=slog,
+                slog.info("enhance", "Running agentic root-cause investigation...")
+                raw_findings = await enhance_contributor_findings(
+                    db, uuid.UUID(contributor_id), raw_findings, slog=slog,
                 )
-                slog.info("enhance", "AI enhancement complete")
+                slog.info("enhance", "Agentic enhancement complete")
             except Exception:
-                logger.warning("AI enhancement failed for contributor insights", exc_info=True)
-                slog.warning("enhance", "AI enhancement failed — using raw findings")
+                logger.warning("Agentic enhancement failed for contributor insights", exc_info=True)
+                slog.warning("enhance", "Agentic enhancement failed — using raw findings")
 
             slog.info("persist", f"Persisting {len(raw_findings)} findings...")
             count = await persist_contributor_findings(db, run, raw_findings)
@@ -538,3 +538,61 @@ def run_contributor_insights(run_id: str, contributor_id: str) -> dict:
     logger.info("Celery task run_contributor_insights: run=%s contributor=%s", run_id, contributor_id)
     asyncio.run(_run_contributor_insights(run_id, contributor_id))
     return {"run_id": run_id, "contributor_id": contributor_id}
+
+
+async def _run_team_insights(run_id: str, team_id: str, project_id: str) -> None:
+    from app.db.models.team_insight import TeamInsightRun
+    from app.services.insights.team_engine import run_team_analysis, persist_team_findings
+    from app.services.sync_logger import SyncLogger
+
+    slog = SyncLogger(f"team-insights-{run_id}")
+
+    Session = _get_session()
+    async with Session() as db:
+        run = await db.get(TeamInsightRun, uuid.UUID(run_id))
+        if not run:
+            logger.error("TeamInsightRun %s not found", run_id)
+            slog.error("init", f"TeamInsightRun {run_id} not found")
+            slog.fail("Run not found")
+            slog.close()
+            return
+
+        try:
+            slog.info("init", f"Starting insights analysis for team {team_id}")
+
+            raw_findings = await run_team_analysis(db, run, slog=slog)
+
+            try:
+                from app.services.insights.enhancer import enhance_findings
+                slog.info("enhance", "Running AI enhancement on findings...")
+                raw_findings = await enhance_findings(db, uuid.UUID(project_id), raw_findings, slog=slog)
+                slog.info("enhance", "AI enhancement complete")
+            except Exception:
+                logger.warning("AI enhancement failed for team insights", exc_info=True)
+                slog.warning("enhance", "AI enhancement failed — using raw findings")
+
+            slog.info("persist", f"Persisting {len(raw_findings)} findings...")
+            count = await persist_team_findings(db, run, raw_findings)
+            logger.info("TeamInsightRun %s completed with %d findings", run_id, count)
+            slog.info("persist", f"Persisted {count} findings (deduplicated)")
+            slog.complete()
+
+        except Exception as e:
+            logger.exception("TeamInsightRun %s failed: %s", run_id, e)
+            slog.fail(str(e)[:500])
+            await db.rollback()
+            run = await db.get(TeamInsightRun, uuid.UUID(run_id))
+            if run:
+                run.status = "failed"
+                run.error_message = str(e)[:2000]
+                run.finished_at = datetime.now(timezone.utc)
+                await db.commit()
+        finally:
+            slog.close()
+
+
+@celery.task(name="run_team_insights")
+def run_team_insights(run_id: str, team_id: str, project_id: str) -> dict:
+    logger.info("Celery task run_team_insights: run=%s team=%s", run_id, team_id)
+    asyncio.run(_run_team_insights(run_id, team_id, project_id))
+    return {"run_id": run_id, "team_id": team_id, "project_id": project_id}

@@ -50,6 +50,7 @@ export const queryKeys = {
   delivery: {
     stats: (projectId: string, filters?: Record<string, unknown>) => ["delivery", projectId, "stats", filters] as const,
     workItems: (projectId: string, filters?: Record<string, unknown>) => ["delivery", projectId, "workItems", filters] as const,
+    workItemsTree: (projectId: string, filters?: Record<string, unknown>) => ["delivery", projectId, "workItemsTree", filters] as const,
     iterations: (projectId: string) => ["delivery", projectId, "iterations"] as const,
     velocity: (projectId: string, filters?: Record<string, unknown>) => ["delivery", projectId, "velocity", filters] as const,
     trends: (projectId: string) => ["delivery", projectId, "trends"] as const,
@@ -100,5 +101,10 @@ export const queryKeys = {
     findings: (contributorId: string, filters?: Record<string, unknown>) => ["contributorInsights", contributorId, "findings", filters] as const,
     summary: (contributorId: string) => ["contributorInsights", contributorId, "summary"] as const,
     runs: (contributorId: string) => ["contributorInsights", contributorId, "runs"] as const,
+  },
+  teamInsights: {
+    findings: (projectId: string, teamId: string, filters?: Record<string, unknown>) => ["teamInsights", projectId, teamId, "findings", filters] as const,
+    summary: (projectId: string, teamId: string) => ["teamInsights", projectId, teamId, "summary"] as const,
+    runs: (projectId: string, teamId: string) => ["teamInsights", projectId, teamId, "runs"] as const,
   },
 };

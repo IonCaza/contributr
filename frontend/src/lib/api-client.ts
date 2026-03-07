@@ -7,7 +7,7 @@ import type {
   PlatformCredential, PlatformCredentialTestResult,
   LlmProvider, AgentConfig, ToolDefinition,
   KnowledgeGraphListItem, KnowledgeGraph,
-  Team, TeamMember, DeliveryStats, PaginatedWorkItems, Iteration,
+  Team, TeamMember, DeliveryStats, PaginatedWorkItems, WorkItemsTreeResponse, Iteration,
   DeliveryFilters, FlowMetrics, BacklogHealthMetrics, QualityMetrics,
   IntersectionMetrics, BurndownPoint, SprintDetail, TeamDetail,
   WorkItemDetail, LinkedCommit, WorkItemDetailRow, ContributorDeliverySummary,
@@ -16,6 +16,7 @@ import type {
   DeliverySummary,
   InsightRun, InsightFinding, InsightsSummary,
   ContributorInsightRun, ContributorInsightFinding, ContributorInsightsSummary,
+  TeamInsightRun, TeamInsightFinding, TeamInsightsSummary,
 } from "./types";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
@@ -339,7 +340,27 @@ export const api = {
   // Delivery
   getDeliveryStats: (projectId: string, params?: DeliveryFilters) =>
     request<DeliveryStats>(`/projects/${projectId}/delivery/stats${buildDeliveryQuery(params)}`),
-  listWorkItems: (projectId: string, params?: { work_item_type?: string; state?: string; assignee_id?: string; iteration_ids?: string[]; parent_id?: string; search?: string; from_date?: string; to_date?: string; page?: number; page_size?: number }) =>
+  listWorkItems: (projectId: string, params?: {
+    work_item_type?: string;
+    state?: string;
+    assignee_id?: string;
+    iteration_ids?: string[];
+    parent_id?: string;
+    search?: string;
+    from_date?: string;
+    to_date?: string;
+    resolved_from?: string;
+    resolved_to?: string;
+    closed_from?: string;
+    closed_to?: string;
+    priority?: number;
+    story_points_min?: number;
+    story_points_max?: number;
+    sort_by?: string;
+    sort_order?: string;
+    page?: number;
+    page_size?: number;
+  }) =>
     request<PaginatedWorkItems>(`/projects/${projectId}/delivery/work-items${buildQuery({
       work_item_type: params?.work_item_type,
       state: params?.state,
@@ -349,8 +370,55 @@ export const api = {
       search: params?.search,
       from_date: params?.from_date,
       to_date: params?.to_date,
+      resolved_from: params?.resolved_from,
+      resolved_to: params?.resolved_to,
+      closed_from: params?.closed_from,
+      closed_to: params?.closed_to,
+      priority: params?.priority?.toString(),
+      story_points_min: params?.story_points_min?.toString(),
+      story_points_max: params?.story_points_max?.toString(),
+      sort_by: params?.sort_by,
+      sort_order: params?.sort_order,
       page: params?.page?.toString(),
       page_size: params?.page_size?.toString(),
+    })}`),
+  getWorkItemsTree: (projectId: string, params?: {
+    work_item_type?: string;
+    state?: string;
+    assignee_id?: string;
+    iteration_ids?: string[];
+    search?: string;
+    from_date?: string;
+    to_date?: string;
+    resolved_from?: string;
+    resolved_to?: string;
+    closed_from?: string;
+    closed_to?: string;
+    priority?: number;
+    story_points_min?: number;
+    story_points_max?: number;
+    sort_by?: string;
+    sort_order?: string;
+    max_items?: number;
+  }) =>
+    request<WorkItemsTreeResponse>(`/projects/${projectId}/delivery/work-items/tree${buildQuery({
+      work_item_type: params?.work_item_type,
+      state: params?.state,
+      assignee_id: params?.assignee_id,
+      iteration_ids: params?.iteration_ids,
+      search: params?.search,
+      from_date: params?.from_date,
+      to_date: params?.to_date,
+      resolved_from: params?.resolved_from,
+      resolved_to: params?.resolved_to,
+      closed_from: params?.closed_from,
+      closed_to: params?.closed_to,
+      priority: params?.priority?.toString(),
+      story_points_min: params?.story_points_min?.toString(),
+      story_points_max: params?.story_points_max?.toString(),
+      sort_by: params?.sort_by,
+      sort_order: params?.sort_order,
+      max_items: params?.max_items?.toString(),
     })}`),
   getWorkItem: (projectId: string, workItemId: string) =>
     request<unknown>(`/projects/${projectId}/delivery/work-items/${workItemId}`),
@@ -388,6 +456,8 @@ export const api = {
     request<TeamDetail[]>(`/projects/${projectId}/delivery/teams`),
   triggerDeliverySync: (projectId: string) =>
     request<{ task_id: string; job_id: string; status: string }>(`/projects/${projectId}/delivery/sync`, { method: "POST" }),
+  purgeDelivery: (projectId: string) =>
+    request<{ status: string; project_id: string }>(`/projects/${projectId}/delivery/purge`, { method: "POST" }),
   listDeliverySyncJobs: (projectId: string) =>
     request<{ id: string; status: string; started_at: string | null; finished_at: string | null; error_message: string | null; created_at: string }[]>(`/projects/${projectId}/delivery/sync-jobs`),
   getDeliverySyncLogUrl: (projectId: string) =>
@@ -463,6 +533,22 @@ export const api = {
     request<ContributorInsightRun>(`/contributors/${contributorId}/insights/run`, { method: "POST" }),
   dismissContributorInsightFinding: (contributorId: string, findingId: string) =>
     request<ContributorInsightFinding>(`/contributors/${contributorId}/insights/${findingId}/dismiss`, { method: "PATCH" }),
+
+  // Team Insights
+  listTeamInsightFindings: (projectId: string, teamId: string, params?: { category?: string; severity?: string; status?: string }) =>
+    request<TeamInsightFinding[]>(`/projects/${projectId}/teams/${teamId}/insights${buildQuery({
+      category: params?.category,
+      severity: params?.severity,
+      status: params?.status,
+    })}`),
+  getTeamInsightsSummary: (projectId: string, teamId: string) =>
+    request<TeamInsightsSummary>(`/projects/${projectId}/teams/${teamId}/insights/summary`),
+  listTeamInsightRuns: (projectId: string, teamId: string) =>
+    request<TeamInsightRun[]>(`/projects/${projectId}/teams/${teamId}/insights/runs`),
+  triggerTeamInsightRun: (projectId: string, teamId: string) =>
+    request<TeamInsightRun>(`/projects/${projectId}/teams/${teamId}/insights/run`, { method: "POST" }),
+  dismissTeamInsightFinding: (projectId: string, teamId: string, findingId: string) =>
+    request<TeamInsightFinding>(`/projects/${projectId}/teams/${teamId}/insights/${findingId}/dismiss`, { method: "PATCH" }),
 
   getApiBase: () => API_BASE,
   getAuthToken: () => getToken(),

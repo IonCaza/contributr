@@ -20,6 +20,7 @@ from app.api import (
     custom_fields as custom_fields_api,
     insights as insights_api,
     contributor_insights as contributor_insights_api,
+    team_insights as team_insights_api,
 )
 from app.api.repositories import _parse_platform_fields
 from app.agents.builtin import get_builtin_agents
@@ -138,6 +139,7 @@ app.include_router(team_analytics_api.router)
 app.include_router(custom_fields_api.router)
 app.include_router(insights_api.router)
 app.include_router(contributor_insights_api.router)
+app.include_router(team_insights_api.router)
 
 
 @app.get("/api/health")

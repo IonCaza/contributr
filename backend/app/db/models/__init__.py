@@ -26,6 +26,7 @@ from app.db.models.work_item_commit import WorkItemCommit
 from app.db.models.custom_field_config import CustomFieldConfig
 from app.db.models.insight import InsightRun, InsightFinding
 from app.db.models.contributor_insight import ContributorInsightRun, ContributorInsightFinding
+from app.db.models.team_insight import TeamInsightRun, TeamInsightFinding
 
 __all__ = [
     "User",
@@ -65,4 +66,6 @@ __all__ = [
     "InsightFinding",
     "ContributorInsightRun",
     "ContributorInsightFinding",
+    "TeamInsightRun",
+    "TeamInsightFinding",
 ]

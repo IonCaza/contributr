@@ -2,9 +2,9 @@
 
 import { useParams } from "next/navigation";
 import Link from "next/link";
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect } from "react";
 import {
-  Users2, Trash2, Loader2, Search, CheckCircle2,
+  Users2, Trash2, Loader2, Search,
 } from "lucide-react";
 import {
   ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Cell,
@@ -32,7 +32,7 @@ import { CycleTimeHistogram } from "@/components/charts/cycle-time-histogram";
 import { WIPChart } from "@/components/charts/wip-chart";
 import { BugTrendChart } from "@/components/charts/bug-trend-chart";
 import { ThroughputChart } from "@/components/charts/throughput-chart";
-import { FindingCard } from "@/components/insight-finding-card";
+import { TeamInsightsTab } from "@/components/team-insights-tab";
 
 import { useTeam, useTeamMembers, useRemoveTeamMember } from "@/hooks/use-teams";
 import {
@@ -46,8 +46,8 @@ import {
   useTeamDeliveryQuality,
   useTeamDeliveryIntersection,
   useTeamWorkItems,
-  useTeamInsights,
 } from "@/hooks/use-team-analytics";
+import { useTeamInsightsSummary } from "@/hooks/use-team-insights";
 
 const CHART_COLORS = [
   "var(--chart-1)", "var(--chart-2)", "var(--chart-3)",
@@ -109,17 +109,8 @@ export default function TeamDetailPage() {
     page_size: 25,
   });
 
-  const { data: insights } = useTeamInsights(projectId, teamId);
-
-  const insightsSummary = useMemo(() => {
-    if (!insights) return { critical: 0, warning: 0, info: 0, total: 0 };
-    return {
-      critical: insights.filter((f) => f.severity === "critical").length,
-      warning: insights.filter((f) => f.severity === "warning").length,
-      info: insights.filter((f) => f.severity === "info").length,
-      total: insights.length,
-    };
-  }, [insights]);
+  const { data: teamInsightsSummary } = useTeamInsightsSummary(projectId, teamId);
+  const insightsBadgeCount = teamInsightsSummary?.total_active ?? 0;
 
   const completionRate = deliveryStats
     ? deliveryStats.total_work_items > 0
@@ -174,9 +165,9 @@ export default function TeamDetailPage() {
           <TabsTrigger value="delivery">Delivery</TabsTrigger>
           <TabsTrigger value="insights">
             Insights
-            {insightsSummary.total > 0 && (
+            {insightsBadgeCount > 0 && (
               <Badge variant="secondary" className="ml-1.5 text-[10px] px-1.5 py-0">
-                {insightsSummary.total}
+                {insightsBadgeCount}
               </Badge>
             )}
           </TabsTrigger>
@@ -505,32 +496,7 @@ export default function TeamDetailPage() {
 
         {/* ── Insights Tab ────────────────────────────── */}
         <TabsContent value="insights" className="space-y-6 mt-4">
-          {insightsSummary.total > 0 && (
-            <div className="grid gap-4 grid-cols-2 lg:grid-cols-4">
-              <StatCard title="Critical" value={insightsSummary.critical} />
-              <StatCard title="Warnings" value={insightsSummary.warning} />
-              <StatCard title="Info" value={insightsSummary.info} />
-              <StatCard title="Total Findings" value={insightsSummary.total} />
-            </div>
-          )}
-
-          {insights && insights.length > 0 ? (
-            <div className="space-y-3">
-              {insights.map((f) => (
-                <FindingCard key={f.id} finding={f} />
-              ))}
-            </div>
-          ) : (
-            <Card>
-              <CardContent className="flex flex-col items-center justify-center py-12 text-muted-foreground">
-                <CheckCircle2 className="h-10 w-10 mb-2 text-emerald-500" />
-                <p className="font-medium">No active findings for this team</p>
-                <p className="text-sm mt-1">
-                  Run an analysis from the Insights tab to generate team-relevant findings.
-                </p>
-              </CardContent>
-            </Card>
-          )}
+          <TeamInsightsTab projectId={projectId} teamId={teamId} />
         </TabsContent>
 
         {/* ── Members Tab ─────────────────────────────── */}

@@ -6,7 +6,7 @@ import uuid
 from datetime import date
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
-from sqlalchemy import select, func, case, String
+from sqlalchemy import select, func, case, String, asc, desc, nullslast, delete, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from sse_starlette.sse import EventSourceResponse
@@ -24,6 +24,7 @@ from app.db.models.work_item_commit import WorkItemCommit
 from app.db.models.commit import Commit
 from app.db.models.contributor import Contributor
 from app.db.models.team import Team, TeamMember
+from app.db.models.daily_delivery_stats import DailyDeliveryStats
 from app.services.delivery_metrics import (
     DeliveryFilters,
     get_delivery_stats,
@@ -73,6 +74,18 @@ async def delivery_stats(
 
 # ── Work Items ───────────────────────────────────────────────────────
 
+WORK_ITEM_SORT_COLUMNS = {
+    "updated_at": WorkItem.updated_at,
+    "created_at": WorkItem.created_at,
+    "resolved_at": WorkItem.resolved_at,
+    "closed_at": WorkItem.closed_at,
+    "story_points": WorkItem.story_points,
+    "priority": WorkItem.priority,
+    "title": WorkItem.title,
+    "platform_work_item_id": WorkItem.platform_work_item_id,
+}
+
+
 @router.get("/work-items")
 async def list_work_items(
     project_id: uuid.UUID,
@@ -84,16 +97,27 @@ async def list_work_items(
     search: str | None = None,
     from_date: date | None = None,
     to_date: date | None = None,
+    resolved_from: date | None = None,
+    resolved_to: date | None = None,
+    closed_from: date | None = None,
+    closed_to: date | None = None,
+    priority: int | None = None,
+    story_points_min: float | None = None,
+    story_points_max: float | None = None,
+    sort_by: str = Query("updated_at", description="Sort field"),
+    sort_order: str = Query("desc", description="asc or desc"),
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=200),
     db: AsyncSession = Depends(get_db),
     _user: User = Depends(get_current_user),
 ):
+    sort_col = WORK_ITEM_SORT_COLUMNS.get(sort_by) or WorkItem.updated_at
+    order_fn = desc(sort_col) if sort_order == "desc" else asc(sort_col)
     q = (
         select(WorkItem)
         .options(selectinload(WorkItem.assigned_to), selectinload(WorkItem.iteration))
         .where(WorkItem.project_id == project_id)
-        .order_by(WorkItem.updated_at.desc())
+        .order_by(nullslast(order_fn))
     )
     if search:
         term = f"%{search}%"
@@ -112,6 +136,20 @@ async def list_work_items(
         q = q.where(WorkItem.created_at >= from_date)
     if to_date is not None:
         q = q.where(WorkItem.created_at <= to_date)
+    if resolved_from is not None:
+        q = q.where(WorkItem.resolved_at >= resolved_from)
+    if resolved_to is not None:
+        q = q.where(WorkItem.resolved_at <= resolved_to)
+    if closed_from is not None:
+        q = q.where(WorkItem.closed_at >= closed_from)
+    if closed_to is not None:
+        q = q.where(WorkItem.closed_at <= closed_to)
+    if priority is not None:
+        q = q.where(WorkItem.priority == priority)
+    if story_points_min is not None:
+        q = q.where(WorkItem.story_points >= story_points_min)
+    if story_points_max is not None:
+        q = q.where(WorkItem.story_points <= story_points_max)
     if parent_id:
         child_ids = select(WorkItemRelation.target_work_item_id).where(
             WorkItemRelation.source_work_item_id == parent_id,
@@ -162,6 +200,132 @@ async def list_work_items(
         })
 
     return {"items": items, "total": total, "page": page, "page_size": page_size}
+
+
+def _work_item_to_payload(wi, assigned_to, iteration) -> dict:
+    """Serialize a work item to the same shape as list items (no parent_id/children_count)."""
+    return {
+        "id": str(wi.id),
+        "platform_work_item_id": wi.platform_work_item_id,
+        "work_item_type": wi.work_item_type.value if hasattr(wi.work_item_type, "value") else wi.work_item_type,
+        "title": wi.title,
+        "state": wi.state,
+        "assigned_to": {
+            "id": str(wi.assigned_to_id),
+            "name": assigned_to.canonical_name if assigned_to else None,
+        } if wi.assigned_to_id else None,
+        "iteration_id": str(wi.iteration_id) if wi.iteration_id else None,
+        "iteration_name": iteration.name if iteration else None,
+        "story_points": wi.story_points,
+        "priority": wi.priority,
+        "tags": wi.tags or [],
+        "created_at": wi.created_at.isoformat() if wi.created_at else "",
+        "resolved_at": wi.resolved_at.isoformat() if wi.resolved_at else None,
+        "closed_at": wi.closed_at.isoformat() if wi.closed_at else None,
+        "platform_url": wi.platform_url,
+    }
+
+
+@router.get("/work-items/tree")
+async def list_work_items_tree(
+    project_id: uuid.UUID,
+    work_item_type: str | None = None,
+    state: str | None = None,
+    assignee_id: uuid.UUID | None = None,
+    iteration_ids: list[str] | None = Query(None),
+    search: str | None = None,
+    from_date: date | None = None,
+    to_date: date | None = None,
+    resolved_from: date | None = None,
+    resolved_to: date | None = None,
+    closed_from: date | None = None,
+    closed_to: date | None = None,
+    priority: int | None = None,
+    story_points_min: float | None = None,
+    story_points_max: float | None = None,
+    sort_by: str = Query("updated_at", description="Sort field"),
+    sort_order: str = Query("desc", description="asc or desc"),
+    max_items: int = Query(2000, ge=1, le=5000),
+    db: AsyncSession = Depends(get_db),
+    _user: User = Depends(get_current_user),
+):
+    """Return work items as a tree (roots with nested children) for the same filters as list."""
+    sort_col = WORK_ITEM_SORT_COLUMNS.get(sort_by) or WorkItem.updated_at
+    order_fn = desc(sort_col) if sort_order == "desc" else asc(sort_col)
+    q = (
+        select(WorkItem)
+        .options(selectinload(WorkItem.assigned_to), selectinload(WorkItem.iteration))
+        .where(WorkItem.project_id == project_id)
+        .order_by(nullslast(order_fn))
+    )
+    if search:
+        term = f"%{search}%"
+        q = q.where(
+            WorkItem.title.ilike(term) | WorkItem.platform_work_item_id.cast(String).ilike(term)
+        )
+    if work_item_type:
+        q = q.where(WorkItem.work_item_type == work_item_type)
+    if state:
+        q = q.where(WorkItem.state == state)
+    if assignee_id:
+        q = q.where(WorkItem.assigned_to_id == assignee_id)
+    if iteration_ids:
+        q = q.where(WorkItem.iteration_id.in_([uuid.UUID(i) for i in iteration_ids]))
+    if from_date is not None:
+        q = q.where(WorkItem.created_at >= from_date)
+    if to_date is not None:
+        q = q.where(WorkItem.created_at <= to_date)
+    if resolved_from is not None:
+        q = q.where(WorkItem.resolved_at >= resolved_from)
+    if resolved_to is not None:
+        q = q.where(WorkItem.resolved_at <= resolved_to)
+    if closed_from is not None:
+        q = q.where(WorkItem.closed_at >= closed_from)
+    if closed_to is not None:
+        q = q.where(WorkItem.closed_at <= closed_to)
+    if priority is not None:
+        q = q.where(WorkItem.priority == priority)
+    if story_points_min is not None:
+        q = q.where(WorkItem.story_points >= story_points_min)
+    if story_points_max is not None:
+        q = q.where(WorkItem.story_points <= story_points_max)
+
+    rows = (await db.execute(q.limit(max_items))).scalars().all()
+    id_to_wi = {wi.id: wi for wi in rows}
+
+    # Resolve parent_id for each item (parent in project; may or may not be in id_to_wi)
+    parent_ids: dict[uuid.UUID, uuid.UUID | None] = {}
+    for wi in rows:
+        parent_q = select(WorkItemRelation.source_work_item_id).where(
+            WorkItemRelation.target_work_item_id == wi.id,
+            WorkItemRelation.relation_type == "child",
+        ).limit(1)
+        parent_row = (await db.execute(parent_q)).scalar_one_or_none()
+        parent_ids[wi.id] = parent_row
+
+    # Children map: parent_id -> list of child ids (only children in our set)
+    children_map: dict[uuid.UUID, list[uuid.UUID]] = {}
+    for wi in rows:
+        pid = parent_ids[wi.id]
+        if pid is not None and pid in id_to_wi:
+            if pid not in children_map:
+                children_map[pid] = []
+            children_map[pid].append(wi.id)
+
+    # Roots: items whose parent is None or not in our loaded set
+    root_ids = [
+        wi.id for wi in rows
+        if parent_ids[wi.id] is None or parent_ids[wi.id] not in id_to_wi
+    ]
+
+    def build_node(wi: WorkItem) -> dict:
+        payload = _work_item_to_payload(wi, wi.assigned_to, wi.iteration)
+        child_ids = children_map.get(wi.id, [])
+        payload["children"] = [build_node(id_to_wi[cid]) for cid in child_ids]
+        return payload
+
+    roots = [build_node(id_to_wi[rid]) for rid in root_ids]
+    return {"roots": roots, "total_count": len(rows)}
 
 
 @router.get("/work-items/{work_item_id}")
@@ -677,6 +841,37 @@ async def trigger_delivery_sync(
     await db.commit()
 
     return {"task_id": task.id, "job_id": str(job.id), "status": "queued"}
+
+
+@router.post("/purge", status_code=status.HTTP_200_OK)
+async def purge_delivery_data(
+    project_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    _user: User = Depends(get_current_user),
+):
+    """Permanently delete all delivery data for this project (work items, iterations, teams, sync jobs, stats). Project and repos are unchanged; you can re-sync from Azure DevOps afterward."""
+    from app.db.models.project import Project
+    result = await db.execute(select(Project).where(Project.id == project_id))
+    if result.scalar_one_or_none() is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    # Delete in dependency order: work item links, then work items, then stats, iterations, teams, sync jobs
+    wi_subq = select(WorkItem.id).where(WorkItem.project_id == project_id)
+    await db.execute(delete(WorkItemCommit).where(WorkItemCommit.work_item_id.in_(wi_subq)))
+    await db.execute(delete(WorkItemRelation).where(
+        or_(
+            WorkItemRelation.source_work_item_id.in_(wi_subq),
+            WorkItemRelation.target_work_item_id.in_(wi_subq),
+        )
+    ))
+    await db.execute(delete(WorkItem).where(WorkItem.project_id == project_id))
+    await db.execute(delete(DailyDeliveryStats).where(DailyDeliveryStats.project_id == project_id))
+    await db.execute(delete(Iteration).where(Iteration.project_id == project_id))
+    await db.execute(delete(TeamMember).where(TeamMember.team_id.in_(select(Team.id).where(Team.project_id == project_id))))
+    await db.execute(delete(Team).where(Team.project_id == project_id))
+    await db.execute(delete(DeliverySyncJob).where(DeliverySyncJob.project_id == project_id))
+    await db.commit()
+    return {"status": "purged", "project_id": str(project_id)}
 
 
 @router.get("/sync/logs")
