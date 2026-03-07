@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from datetime import datetime, date as date_type, timezone
 from typing import TYPE_CHECKING
 
@@ -15,7 +16,10 @@ from app.db.models.project import Project
 from app.db.models.team import Team, TeamMember
 from app.db.models.iteration import Iteration
 from app.db.models.work_item import WorkItem, WorkItemType, WorkItemRelation
+from app.db.models.work_item_commit import WorkItemCommit
+from app.db.models.commit import Commit
 from app.db.models.daily_delivery_stats import DailyDeliveryStats
+from app.db.models.custom_field_config import CustomFieldConfig
 from app.services.identity import resolve_contributor
 
 if TYPE_CHECKING:
@@ -43,6 +47,7 @@ WI_FIELDS = [
     "System.WorkItemType",
     "System.Title",
     "System.State",
+    "System.Description",
     "System.AssignedTo",
     "System.CreatedBy",
     "System.CreatedDate",
@@ -52,12 +57,17 @@ WI_FIELDS = [
     "System.Tags",
     "Microsoft.VSTS.Scheduling.StoryPoints",
     "Microsoft.VSTS.Scheduling.Effort",
+    "Microsoft.VSTS.Scheduling.OriginalEstimate",
+    "Microsoft.VSTS.Scheduling.RemainingWork",
+    "Microsoft.VSTS.Scheduling.CompletedWork",
     "Microsoft.VSTS.Common.Priority",
     "Microsoft.VSTS.Common.StateChangeDate",
     "Microsoft.VSTS.Common.ActivatedDate",
     "Microsoft.VSTS.Common.ResolvedDate",
     "Microsoft.VSTS.Common.ClosedDate",
 ]
+
+KNOWN_FIELDS = set(WI_FIELDS)
 
 BATCH_SIZE = 200
 
@@ -84,9 +94,27 @@ def _get_connection(org_url: str, token: str) -> Connection:
 
 
 def _identity_email(identity) -> tuple[str, str]:
-    """Extract (display_name, email) from an ADO identity."""
-    name = getattr(identity, "display_name", None) or "unknown"
-    email = getattr(identity, "unique_name", None) or f"{name}@azure.com"
+    """Extract (display_name, email) from an ADO identity (object or dict)."""
+    if isinstance(identity, dict):
+        name = identity.get("displayName") or identity.get("display_name") or "unknown"
+        email = (
+            identity.get("uniqueName")
+            or identity.get("unique_name")
+            or identity.get("mailAddress")
+            or f"{name}@azure.com"
+        )
+    elif isinstance(identity, str):
+        name = identity
+        email = f"{identity}@azure.com"
+    else:
+        name = getattr(identity, "display_name", None) or "unknown"
+        email = (
+            getattr(identity, "unique_name", None)
+            or getattr(identity, "mail_address", None)
+            or f"{name}@azure.com"
+        )
+    if name == "unknown":
+        logger.warning("Could not extract identity name from %s (type=%s)", identity, type(identity).__name__)
     return name, email
 
 
@@ -265,6 +293,19 @@ async def fetch_ado_work_items(
     connection = _get_connection(org_url, token)
     wit_client = connection.clients.get_work_item_tracking_client()
 
+    custom_cfg_result = await db.execute(
+        select(CustomFieldConfig).where(
+            CustomFieldConfig.project_id == project.id,
+            CustomFieldConfig.enabled.is_(True),
+        )
+    )
+    custom_configs = custom_cfg_result.scalars().all()
+    extra_refs = [cfg.field_reference_name for cfg in custom_configs]
+    effective_fields = WI_FIELDS + [r for r in extra_refs if r not in KNOWN_FIELDS]
+
+    if extra_refs and sync_log:
+        sync_log.info("work_items", f"Including {len(extra_refs)} custom field(s): {', '.join(extra_refs)}")
+
     wiql_query = WIQL_ALL_ITEMS.format(project=ado_project_name)
     try:
         team_context = TeamContext(project=ado_project_name)
@@ -310,7 +351,7 @@ async def fetch_ado_work_items(
         batch_ids = all_ids[batch_start:batch_start + BATCH_SIZE]
         try:
             items = wit_client.get_work_items(
-                batch_ids, fields=WI_FIELDS,
+                batch_ids, fields=effective_fields,
             )
         except Exception as e:
             logger.warning("Batch fetch failed at offset %d: %s", batch_start, e)
@@ -347,6 +388,20 @@ async def fetch_ado_work_items(
             if story_points is None:
                 story_points = fields.get("Microsoft.VSTS.Scheduling.Effort")
 
+            original_est = fields.get("Microsoft.VSTS.Scheduling.OriginalEstimate")
+            remaining = fields.get("Microsoft.VSTS.Scheduling.RemainingWork")
+            completed = fields.get("Microsoft.VSTS.Scheduling.CompletedWork")
+            description = fields.get("System.Description")
+
+            custom = {}
+            for k, v in fields.items():
+                if k not in KNOWN_FIELDS and v is not None:
+                    try:
+                        custom[k] = str(v) if not isinstance(v, (str, int, float, bool)) else v
+                    except Exception:
+                        pass
+            custom_fields = custom or None
+
             platform_url = f"{org_url}/{ado_project_name}/_workitems/edit/{ado_id}"
 
             if ado_id in existing_ids:
@@ -361,8 +416,14 @@ async def fetch_ado_work_items(
                     db_wi.title = (fields.get("System.Title") or "")[:1024]
                     db_wi.state = fields.get("System.State", db_wi.state)
                     db_wi.assigned_to_id = assigned_contributor.id if assigned_contributor else None
+                    db_wi.created_by_id = created_contributor.id if created_contributor else db_wi.created_by_id
                     db_wi.story_points = story_points
                     db_wi.tags = tags
+                    db_wi.description = description
+                    db_wi.custom_fields = custom_fields
+                    db_wi.original_estimate = original_est
+                    db_wi.remaining_work = remaining
+                    db_wi.completed_work = completed
                     db_wi.state_changed_at = _parse_datetime(fields.get("Microsoft.VSTS.Common.StateChangeDate"))
                     db_wi.activated_at = _parse_datetime(fields.get("Microsoft.VSTS.Common.ActivatedDate"))
                     db_wi.resolved_at = _parse_datetime(fields.get("Microsoft.VSTS.Common.ResolvedDate"))
@@ -385,6 +446,11 @@ async def fetch_ado_work_items(
                 story_points=story_points,
                 priority=fields.get("Microsoft.VSTS.Common.Priority"),
                 tags=tags,
+                description=description,
+                custom_fields=custom_fields,
+                original_estimate=original_est,
+                remaining_work=remaining,
+                completed_work=completed,
                 state_changed_at=_parse_datetime(fields.get("Microsoft.VSTS.Common.StateChangeDate")),
                 activated_at=_parse_datetime(fields.get("Microsoft.VSTS.Common.ActivatedDate")),
                 resolved_at=_parse_datetime(fields.get("Microsoft.VSTS.Common.ResolvedDate")),
@@ -407,6 +473,9 @@ async def fetch_ado_work_items(
     return count
 
 
+_COMMIT_SHA_RE = re.compile(r"/commits/([0-9a-f]{40})", re.IGNORECASE)
+
+
 async def _sync_relations(
     db: AsyncSession,
     wit_client,
@@ -415,7 +484,8 @@ async def _sync_relations(
     id_to_uuid: dict[int, WorkItem],
     ado_project_name: str,
 ) -> None:
-    """Create work item relation records from ADO relation data."""
+    """Create work item relation records and commit artifact links from ADO relation data."""
+    commit_links_created = 0
     for batch_start in range(0, len(all_ids), BATCH_SIZE):
         batch_ids = all_ids[batch_start:batch_start + BATCH_SIZE]
         try:
@@ -443,11 +513,36 @@ async def _sync_relations(
 
             for rel in wi.relations:
                 rel_type_url = getattr(rel, "rel", "")
+                url = getattr(rel, "url", "")
+
+                if rel_type_url == "ArtifactLink" or "/git/repositories/" in url:
+                    sha_match = _COMMIT_SHA_RE.search(url)
+                    if sha_match:
+                        sha = sha_match.group(1)
+                        commit_r = await db.execute(
+                            select(Commit).where(Commit.sha == sha).limit(1)
+                        )
+                        commit_obj = commit_r.scalar_one_or_none()
+                        if commit_obj:
+                            existing_link = await db.execute(
+                                select(WorkItemCommit).where(
+                                    WorkItemCommit.work_item_id == source_wi.id,
+                                    WorkItemCommit.commit_id == commit_obj.id,
+                                )
+                            )
+                            if not existing_link.scalar_one_or_none():
+                                db.add(WorkItemCommit(
+                                    work_item_id=source_wi.id,
+                                    commit_id=commit_obj.id,
+                                    link_type="artifact_link",
+                                ))
+                                commit_links_created += 1
+                    continue
+
                 rel_type = RELATION_MAP.get(rel_type_url)
                 if not rel_type:
                     continue
 
-                url = getattr(rel, "url", "")
                 try:
                     target_ado_id = int(url.rsplit("/", 1)[-1])
                 except (ValueError, IndexError):
@@ -482,6 +577,8 @@ async def _sync_relations(
                     ))
 
     await db.flush()
+    if commit_links_created:
+        logger.info("Created %d commit artifact links", commit_links_created)
 
 
 # ── Daily Delivery Stats Rebuild ─────────────────────────────────────

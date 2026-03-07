@@ -13,6 +13,15 @@ from app.db.models import (
     User, Commit, Branch, Contributor, ContributorAlias,
     Repository, PullRequest, Review, SSHCredential, SyncJob,
     DailyContributorStats, CommitFile, FileExclusionPattern,
+    PlatformCredential, AiSettings, LlmProvider,
+    AgentConfig, AgentToolAssignment,
+    KnowledgeGraph, AgentKnowledgeGraphAssignment,
+    ChatSession, ChatMessage,
+    Team, TeamMember, Iteration,
+    WorkItem, WorkItemRelation, WorkItemCommit,
+    DailyDeliveryStats, DeliverySyncJob, CustomFieldConfig,
+    InsightRun, InsightFinding,
+    ContributorInsightRun, ContributorInsightFinding,
 )
 from app.db.models.project import Project, project_contributors
 from app.db.models.branch import commit_branches
@@ -24,20 +33,49 @@ DUMP_VERSION = 1
 CHUNK_SIZE = 500
 
 TABLE_MODELS = [
+    # Roots (no foreign keys)
     ("users", User),
-    ("projects", Project),
-    ("ssh_credentials", SSHCredential),
     ("contributors", Contributor),
+    ("ai_settings", AiSettings),
+    ("file_exclusion_patterns", FileExclusionPattern),
+    ("llm_providers", LlmProvider),
+    ("knowledge_graphs", KnowledgeGraph),
+    # Level 1 (depend on roots)
+    ("platform_credentials", PlatformCredential),
+    ("ssh_credentials", SSHCredential),
     ("contributor_aliases", ContributorAlias),
+    # Level 2 (depend on level 1)
+    ("projects", Project),
+    # Level 3 (depend on level 2)
     ("repositories", Repository),
+    ("teams", Team),
+    ("iterations", Iteration),
+    ("custom_field_configs", CustomFieldConfig),
+    ("delivery_sync_jobs", DeliverySyncJob),
+    ("agents", AgentConfig),
+    ("insight_runs", InsightRun),
+    ("contributor_insight_runs", ContributorInsightRun),
+    # Level 4 (depend on level 3)
     ("branches", Branch),
     ("commits", Commit),
-    ("commit_files", CommitFile),
     ("pull_requests", PullRequest),
-    ("reviews", Review),
     ("sync_jobs", SyncJob),
     ("daily_contributor_stats", DailyContributorStats),
-    ("file_exclusion_patterns", FileExclusionPattern),
+    ("team_members", TeamMember),
+    ("agent_tool_assignments", AgentToolAssignment),
+    ("agent_knowledge_graph_assignments", AgentKnowledgeGraphAssignment),
+    # Level 5 (depend on level 4)
+    ("commit_files", CommitFile),
+    ("reviews", Review),
+    ("work_items", WorkItem),
+    ("chat_sessions", ChatSession),
+    ("insight_findings", InsightFinding),
+    ("contributor_insight_findings", ContributorInsightFinding),
+    # Level 6 (depend on level 5)
+    ("work_item_relations", WorkItemRelation),
+    ("work_item_commits", WorkItemCommit),
+    ("daily_delivery_stats", DailyDeliveryStats),
+    ("chat_messages", ChatMessage),
 ]
 
 ASSOC_TABLES = [

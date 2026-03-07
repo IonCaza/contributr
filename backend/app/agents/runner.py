@@ -10,6 +10,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.agents.base import build_agent_executor, resolve_system_prompt
 from app.agents.context.manager import prepare_history
 from app.agents.llm.manager import build_llm_from_provider
+from sqlalchemy import select
+
 from app.agents.registry import is_ai_enabled, get_agent_by_slug
 from app.agents.tools.chat_history import build_search_chat_history_tool
 from app.db.models.llm_provider import LlmProvider
@@ -52,7 +54,17 @@ async def run_agent_stream(
 
     provider: LlmProvider | None = agent_config.llm_provider
     if not provider:
-        raise RuntimeError(f"Agent '{agent_slug}' has no LLM provider configured")
+        result = await db.execute(
+            select(LlmProvider)
+            .where(LlmProvider.is_default.is_(True))
+            .limit(1)
+        )
+        provider = result.scalar_one_or_none()
+    if not provider:
+        result = await db.execute(select(LlmProvider).limit(1))
+        provider = result.scalar_one_or_none()
+    if not provider:
+        raise RuntimeError("No LLM provider available — configure one in Settings > AI")
 
     system_prompt = resolve_system_prompt(agent_config)
     llm = build_llm_from_provider(provider, streaming=False)

@@ -1,19 +1,27 @@
 "use client";
 
 import Link from "next/link";
-import { FolderGit2, GitCommitHorizontal, Users, Plus } from "lucide-react";
+import { FolderGit2, GitCommitHorizontal, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { StatCard } from "@/components/stat-card";
 import { useProjects } from "@/hooks/use-projects";
-import { useTrends } from "@/hooks/use-daily-stats";
+import { useTrends, useDeliverySummary } from "@/hooks/use-daily-stats";
+
+function formatHours(hours: number): string {
+  if (hours < 1) return `${Math.round(hours * 60)}m`;
+  if (hours < 24) return `${Math.round(hours * 10) / 10}h`;
+  const days = Math.round(hours / 24 * 10) / 10;
+  return `${days}d`;
+}
 
 export default function DashboardPage() {
   const { data: projects = [], isLoading: loadingProjects } = useProjects();
   const { data: trends, isLoading: loadingTrends } = useTrends({});
+  const { data: delivery, isLoading: loadingDelivery } = useDeliverySummary();
 
-  const loading = loadingProjects || loadingTrends;
+  const loading = loadingProjects || loadingTrends || loadingDelivery;
 
   if (loading) {
     return <div className="animate-pulse text-muted-foreground">Loading dashboard...</div>;
@@ -55,12 +63,69 @@ export default function DashboardPage() {
           tooltip="Total lines added plus lines deleted across all projects in the last 7 days"
         />
         <StatCard
-          title="Avg Commits/Day"
-          value={trends?.avg_commits_30d ?? 0}
-          subtitle="30-day average"
-          tooltip="Average number of commits per day over the last 30 days across all projects"
+          title="Active Contributors"
+          value={delivery?.active_contributors_30d ?? 0}
+          subtitle={`of ${delivery?.total_contributors ?? 0} total`}
+          tooltip="Contributors with at least one commit in the last 30 days"
         />
       </div>
+
+      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+        <StatCard
+          title="PRs Merged (7d)"
+          value={delivery?.merged_prs_7d ?? 0}
+          trend={delivery?.merged_prs_wow_delta}
+          subtitle="Week over week"
+          tooltip="Pull requests merged in the last 7 days across all repositories"
+        />
+        <StatCard
+          title="Open PRs"
+          value={delivery?.open_prs ?? 0}
+          subtitle="Awaiting review or merge"
+          tooltip="Total number of pull requests currently in open state across all repositories"
+        />
+        <StatCard
+          title="PR Cycle Time"
+          value={formatHours(delivery?.pr_cycle_time_hours ?? 0)}
+          subtitle="Median open → merge"
+          tooltip="Median time from PR creation to merge over the last 30 days. Lower is better."
+        />
+        <StatCard
+          title="Review Turnaround"
+          value={formatHours(delivery?.review_turnaround_hours ?? 0)}
+          subtitle="Median to first review"
+          tooltip="Median time from PR creation to first review over the last 30 days. Lower is better."
+        />
+      </div>
+
+      {(delivery?.total_work_items ?? 0) > 0 && (
+        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+          <StatCard
+            title="Open Work Items"
+            value={delivery?.open_work_items ?? 0}
+            subtitle={`of ${delivery?.total_work_items ?? 0} total`}
+            tooltip="Work items in active states (New, Active, In Progress, etc.) across all projects"
+          />
+          <StatCard
+            title="Completed (30d)"
+            value={delivery?.completed_work_items_30d ?? 0}
+            subtitle="Work items resolved"
+            tooltip="Work items resolved or closed in the last 30 days across all projects"
+          />
+          <StatCard
+            title="WI Cycle Time"
+            value={formatHours(delivery?.wi_cycle_time_hours ?? 0)}
+            subtitle="Median active → resolved"
+            tooltip="Median time from work item activation to resolution over the last 30 days"
+          />
+          <StatCard
+            title="Avg Commits/Day"
+            value={trends?.avg_commits_30d ?? 0}
+            subtitle="30-day average"
+            tooltip="Average number of commits per day over the last 30 days across all projects"
+          />
+        </div>
+      )}
 
       <div>
         <h2 className="mb-4 text-xl font-semibold">Projects</h2>
@@ -81,7 +146,7 @@ export default function DashboardPage() {
         ) : (
           <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
             {projects.map((p) => (
-              <Link key={p.id} href={`/projects/${p.id}`}>
+              <Link key={p.id} href={`/projects/${p.id}/code`}>
                 <Card className="cursor-pointer transition-colors hover:bg-accent/50">
                   <CardHeader className="flex flex-row items-center gap-3 space-y-0 pb-2">
                     <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10">

@@ -11,6 +11,9 @@ from sqlalchemy.orm import selectinload
 
 from app.db.base import get_db
 from app.db.models import Contributor, ContributorAlias, Commit, User, DailyContributorStats, Repository, Branch, PullRequest, Review
+from app.db.models.work_item import WorkItem
+from app.db.models.team import TeamMember
+from app.db.models.daily_delivery_stats import DailyDeliveryStats
 from app.db.models.branch import commit_branches
 from app.db.models.pull_request import PRState
 from app.db.models.project import Project
@@ -127,6 +130,41 @@ async def merge_contributors(
     from sqlalchemy import update, delete, and_
 
     await db.execute(update(Commit).where(Commit.contributor_id == source.id).values(contributor_id=target.id))
+    await db.execute(update(PullRequest).where(PullRequest.contributor_id == source.id).values(contributor_id=target.id))
+    await db.execute(update(Review).where(Review.reviewer_id == source.id).values(reviewer_id=target.id))
+    await db.execute(update(WorkItem).where(WorkItem.assigned_to_id == source.id).values(assigned_to_id=target.id))
+    await db.execute(update(WorkItem).where(WorkItem.created_by_id == source.id).values(created_by_id=target.id))
+    await db.execute(update(DailyDeliveryStats).where(DailyDeliveryStats.contributor_id == source.id).values(contributor_id=target.id))
+
+    existing_team = await db.execute(
+        select(TeamMember.team_id).where(TeamMember.contributor_id == target.id)
+    )
+    target_team_ids = {row[0] for row in existing_team.all()}
+    await db.execute(
+        delete(TeamMember).where(
+            and_(TeamMember.contributor_id == source.id, TeamMember.team_id.in_(target_team_ids))
+        )
+    )
+    await db.execute(update(TeamMember).where(TeamMember.contributor_id == source.id).values(contributor_id=target.id))
+
+    from app.db.models.project import project_contributors
+    await db.execute(
+        delete(project_contributors).where(
+            and_(
+                project_contributors.c.contributor_id == source.id,
+                project_contributors.c.project_id.in_(
+                    select(project_contributors.c.project_id).where(
+                        project_contributors.c.contributor_id == target.id
+                    )
+                ),
+            )
+        )
+    )
+    await db.execute(
+        update(project_contributors)
+        .where(project_contributors.c.contributor_id == source.id)
+        .values(contributor_id=target.id)
+    )
 
     target_keys = await db.execute(
         select(DailyContributorStats.repository_id, DailyContributorStats.date)

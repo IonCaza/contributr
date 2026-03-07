@@ -188,7 +188,7 @@ export default function ContributorsPage() {
                     {c.projects.length > 0 ? (
                       <div className="flex flex-wrap gap-1">
                         {c.projects.map((p) => (
-                          <Link key={p.id} href={`/projects/${p.id}`}>
+                          <Link key={p.id} href={`/projects/${p.id}/code`}>
                             <Badge variant="secondary" className="text-xs hover:bg-accent cursor-pointer">
                               {p.name}
                             </Badge>
@@ -207,7 +207,7 @@ export default function ContributorsPage() {
       )}
 
       <Dialog open={!!mergeGroup} onOpenChange={(v) => { if (!v) { setMergeGroup(null); setMergeTarget(null); } }}>
-        <DialogContent className="max-w-lg">
+        <DialogContent className="max-w-xl sm:max-w-2xl">
           <DialogHeader>
             <DialogTitle>Merge Contributors</DialogTitle>
             <DialogDescription>
@@ -242,7 +242,7 @@ export default function ContributorsPage() {
                       </div>
                       <div className="min-w-0 flex-1">
                         <p className="font-medium truncate">{c.canonical_name}</p>
-                        <p className="text-xs text-muted-foreground truncate">{c.canonical_email}</p>
+                        <p className="text-xs text-muted-foreground break-all">{c.canonical_email}</p>
                       </div>
                       {isTarget && (
                         <Badge variant="default" className="shrink-0 text-[10px]">Keep</Badge>

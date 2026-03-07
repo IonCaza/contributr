@@ -17,3 +17,11 @@ export function useTrends(params: Record<string, string | string[] | undefined>)
     placeholderData: keepPreviousData,
   });
 }
+
+export function useDeliverySummary() {
+  return useQuery({
+    queryKey: queryKeys.deliverySummary,
+    queryFn: () => api.deliverySummary(),
+    placeholderData: keepPreviousData,
+  });
+}

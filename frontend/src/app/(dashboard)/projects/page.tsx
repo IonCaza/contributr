@@ -77,7 +77,7 @@ export default function ProjectsPage() {
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
           {filtered.map((p) => (
             <Card key={p.id} className="group relative">
-              <Link href={`/projects/${p.id}`} className="absolute inset-0 z-10" />
+              <Link href={`/projects/${p.id}/code`} className="absolute inset-0 z-10" />
               <CardHeader className="flex flex-row items-center gap-3 space-y-0">
                 <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10">
                   <FolderGit2 className="h-5 w-5 text-primary" />

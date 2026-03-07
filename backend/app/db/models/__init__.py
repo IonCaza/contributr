@@ -22,6 +22,10 @@ from app.db.models.iteration import Iteration
 from app.db.models.work_item import WorkItem, WorkItemRelation
 from app.db.models.daily_delivery_stats import DailyDeliveryStats
 from app.db.models.delivery_sync_job import DeliverySyncJob
+from app.db.models.work_item_commit import WorkItemCommit
+from app.db.models.custom_field_config import CustomFieldConfig
+from app.db.models.insight import InsightRun, InsightFinding
+from app.db.models.contributor_insight import ContributorInsightRun, ContributorInsightFinding
 
 __all__ = [
     "User",
@@ -55,4 +59,10 @@ __all__ = [
     "WorkItemRelation",
     "DailyDeliveryStats",
     "DeliverySyncJob",
+    "WorkItemCommit",
+    "CustomFieldConfig",
+    "InsightRun",
+    "InsightFinding",
+    "ContributorInsightRun",
+    "ContributorInsightFinding",
 ]

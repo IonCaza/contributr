@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState, useCallback } from "react";
+import { useRef, useState, useCallback, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth-context";
 import { SidebarNav } from "@/components/sidebar-nav";
@@ -26,9 +26,11 @@ export default function DashboardLayout({
   const { data: aiStatusData } = useAiStatus();
   const aiEnabled = !!(aiStatusData?.enabled && aiStatusData?.configured);
 
-  if (!loading && !user) {
-    router.replace("/login");
-  }
+  useEffect(() => {
+    if (!loading && !user) {
+      router.replace("/login");
+    }
+  }, [loading, user, router]);
 
   const handleChatToggle = useCallback(() => {
     if (chatOpen) {

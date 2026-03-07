@@ -28,6 +28,7 @@ export const queryKeys = {
   },
   daily: (params: Record<string, unknown>) => ["dailyStats", params] as const,
   trends: (params: Record<string, unknown>) => ["trends", params] as const,
+  deliverySummary: ["deliverySummary"] as const,
   sshKeys: ["sshKeys"] as const,
   platformCredentials: ["platformCredentials"] as const,
   users: ["users"] as const,
@@ -50,8 +51,54 @@ export const queryKeys = {
     stats: (projectId: string, filters?: Record<string, unknown>) => ["delivery", projectId, "stats", filters] as const,
     workItems: (projectId: string, filters?: Record<string, unknown>) => ["delivery", projectId, "workItems", filters] as const,
     iterations: (projectId: string) => ["delivery", projectId, "iterations"] as const,
-    velocity: (projectId: string) => ["delivery", projectId, "velocity"] as const,
+    velocity: (projectId: string, filters?: Record<string, unknown>) => ["delivery", projectId, "velocity", filters] as const,
     trends: (projectId: string) => ["delivery", projectId, "trends"] as const,
     syncJobs: (projectId: string) => ["delivery", projectId, "syncJobs"] as const,
+    flow: (projectId: string, filters?: Record<string, unknown>) => ["delivery", projectId, "flow", filters] as const,
+    backlogHealth: (projectId: string, filters?: Record<string, unknown>) => ["delivery", projectId, "backlogHealth", filters] as const,
+    quality: (projectId: string, filters?: Record<string, unknown>) => ["delivery", projectId, "quality", filters] as const,
+    intersection: (projectId: string, filters?: Record<string, unknown>) => ["delivery", projectId, "intersection", filters] as const,
+    workItemDetail: (projectId: string, workItemId: string) => ["delivery", projectId, "workItem", workItemId] as const,
+    workItemCommits: (projectId: string, workItemId: string) => ["delivery", projectId, "workItem", workItemId, "commits"] as const,
+    sprintDetail: (projectId: string, iterationId: string) => ["delivery", projectId, "sprint", iterationId] as const,
+    sprintBurndown: (projectId: string, iterationId: string) => ["delivery", projectId, "sprint", iterationId, "burndown"] as const,
+    teamDetail: (projectId: string, teamId: string) => ["delivery", projectId, "team", teamId] as const,
+    teams: (projectId: string) => ["delivery", projectId, "teams"] as const,
+    itemDetails: (projectId: string, filters?: Record<string, unknown>) => ["delivery", projectId, "itemDetails", filters] as const,
+    contributorSummary: (projectId: string, filters?: Record<string, unknown>) => ["delivery", projectId, "contributorSummary", filters] as const,
+  },
+  insights: {
+    findings: (projectId: string, filters?: Record<string, unknown>) => ["insights", projectId, "findings", filters] as const,
+    summary: (projectId: string) => ["insights", projectId, "summary"] as const,
+    runs: (projectId: string) => ["insights", projectId, "runs"] as const,
+  },
+  teamAnalytics: {
+    codeStats: (projectId: string, teamId: string, range?: DateRange) =>
+      ["teamAnalytics", projectId, teamId, "code", range] as const,
+    codeActivity: (projectId: string, teamId: string, range?: DateRange) =>
+      ["teamAnalytics", projectId, teamId, "codeActivity", range] as const,
+    memberStats: (projectId: string, teamId: string, range?: DateRange) =>
+      ["teamAnalytics", projectId, teamId, "members", range] as const,
+    deliveryStats: (projectId: string, teamId: string, range?: DateRange) =>
+      ["teamAnalytics", projectId, teamId, "delivery", range] as const,
+    deliveryVelocity: (projectId: string, teamId: string, range?: DateRange) =>
+      ["teamAnalytics", projectId, teamId, "velocity", range] as const,
+    deliveryFlow: (projectId: string, teamId: string, range?: DateRange) =>
+      ["teamAnalytics", projectId, teamId, "flow", range] as const,
+    deliveryBacklog: (projectId: string, teamId: string, range?: DateRange) =>
+      ["teamAnalytics", projectId, teamId, "backlog", range] as const,
+    deliveryQuality: (projectId: string, teamId: string, range?: DateRange) =>
+      ["teamAnalytics", projectId, teamId, "quality", range] as const,
+    deliveryIntersection: (projectId: string, teamId: string, range?: DateRange) =>
+      ["teamAnalytics", projectId, teamId, "intersection", range] as const,
+    workItems: (projectId: string, teamId: string, filters?: Record<string, unknown>) =>
+      ["teamAnalytics", projectId, teamId, "workItems", filters] as const,
+    insights: (projectId: string, teamId: string) =>
+      ["teamAnalytics", projectId, teamId, "insights"] as const,
+  },
+  contributorInsights: {
+    findings: (contributorId: string, filters?: Record<string, unknown>) => ["contributorInsights", contributorId, "findings", filters] as const,
+    summary: (contributorId: string) => ["contributorInsights", contributorId, "summary"] as const,
+    runs: (contributorId: string) => ["contributorInsights", contributorId, "runs"] as const,
   },
 };

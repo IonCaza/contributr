@@ -3,10 +3,10 @@ import enum
 from datetime import datetime, timezone
 
 from sqlalchemy import (
-    String, Integer, Float, SmallInteger, DateTime, ForeignKey,
+    String, Integer, Float, SmallInteger, Text, DateTime, ForeignKey,
     Enum as SAEnum, UniqueConstraint,
 )
-from sqlalchemy.dialects.postgresql import ARRAY, UUID
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -31,7 +31,7 @@ class WorkItem(Base):
     project_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True, comment="Project this work item belongs to")
     platform_work_item_id: Mapped[int] = mapped_column(Integer, nullable=False, comment="Numeric work item ID on the source platform (e.g. ADO ID)")
     work_item_type: Mapped[WorkItemType] = mapped_column(
-        SAEnum(WorkItemType, values_callable=lambda e: [x.value for x in e]),
+        SAEnum(WorkItemType, values_callable=lambda e: [x.value for x in e], create_type=False),
         nullable=False, comment="Classification: epic, feature, user_story, task, or bug",
     )
     title: Mapped[str] = mapped_column(String(1024), nullable=False, comment="Work item title/summary")
@@ -49,6 +49,11 @@ class WorkItem(Base):
     closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), comment="Timestamp when the item was formally Closed")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, comment="Timestamp when the work item was created on the platform")
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, comment="Timestamp of the last modification on the platform")
+    description: Mapped[str | None] = mapped_column(Text, comment="Full description or acceptance criteria of the work item. May contain HTML (Azure DevOps) or markdown depending on the source platform.")
+    custom_fields: Mapped[dict | None] = mapped_column(JSONB, comment="Dynamic key-value store for non-standard platform fields. Keys are field reference names (e.g. 'Custom.RiskLevel'), values are raw platform values. Allows schema-less storage of any field added or removed in the source platform without migration.")
+    original_estimate: Mapped[float | None] = mapped_column(Float, comment="Original time estimate in hours (from Microsoft.VSTS.Scheduling.OriginalEstimate)")
+    remaining_work: Mapped[float | None] = mapped_column(Float, comment="Remaining work in hours (from Microsoft.VSTS.Scheduling.RemainingWork)")
+    completed_work: Mapped[float | None] = mapped_column(Float, comment="Completed work in hours (from Microsoft.VSTS.Scheduling.CompletedWork)")
     platform_url: Mapped[str | None] = mapped_column(String(2048), comment="Direct URL to the work item on the source platform")
 
     project = relationship("Project")

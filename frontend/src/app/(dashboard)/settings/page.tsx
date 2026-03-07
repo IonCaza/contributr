@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useRef } from "react";
-import { Key, Users, Plus, Trash2, Copy, Check, Download, Upload, Database, Loader2, CheckCircle2, AlertCircle, Bot, Eye, EyeOff, FileX2, ShieldCheck, Play, Pencil, Cpu, Wrench, Star } from "lucide-react";
+import { Key, Users, Plus, Trash2, Copy, Check, Download, Upload, Database, Loader2, CheckCircle2, AlertCircle, Bot, Eye, EyeOff, FileX2, ShieldCheck, Play, Pencil, Cpu, Wrench, Star, ListFilter, Search, RefreshCw, CalendarRange } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -17,7 +17,9 @@ import { useAuth } from "@/lib/auth-context";
 import { api } from "@/lib/api-client";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { ConfirmDialog } from "@/components/confirm-dialog";
-import type { LlmProvider, AgentConfig, KnowledgeGraph } from "@/lib/types";
+import type { LlmProvider, AgentConfig, KnowledgeGraph, DiscoveredField } from "@/lib/types";
+import { useProjects } from "@/hooks/use-projects";
+import { useCustomFields, useDiscoverCustomFields, useBulkUpsertCustomFields, useDeleteCustomField } from "@/hooks/use-custom-fields";
 import { KnowledgeGraphEditor } from "@/components/knowledge-graph-editor";
 import {
   useSSHKeys, useCreateSSHKey, useDeleteSSHKey,
@@ -169,6 +171,16 @@ export default function SettingsPage() {
   const { data: kgDetail } = useKnowledgeGraph(kgEditId);
   const [deleteKgId, setDeleteKgId] = useState<string | null>(null);
 
+  // Custom Fields state
+  const { data: projects = [] } = useProjects();
+  const [cfProjectId, setCfProjectId] = useState<string>("");
+  const { data: customFields = [] } = useCustomFields(cfProjectId || undefined);
+  const discoverFields = useDiscoverCustomFields(cfProjectId || undefined);
+  const bulkUpsert = useBulkUpsertCustomFields(cfProjectId || undefined);
+  const deleteCustomField = useDeleteCustomField(cfProjectId || undefined);
+  const [discoveredFields, setDiscoveredFields] = useState<DiscoveredField[]>([]);
+  const [pendingToggles, setPendingToggles] = useState<Record<string, boolean>>({});
+
   const [deleteKeyId, setDeleteKeyId] = useState<string | null>(null);
   const [deleteCredId, setDeleteCredId] = useState<string | null>(null);
   const [deleteUserId, setDeleteUserId] = useState<string | null>(null);
@@ -181,6 +193,17 @@ export default function SettingsPage() {
   const [importResult, setImportResult] = useState<Record<string, { submitted: number; imported: number }> | null>(null);
   const [backupError, setBackupError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const [sprintScope, setSprintScope] = useState<string>(() => {
+    if (typeof window !== "undefined") {
+      return localStorage.getItem("contributr:sprint_scope") || "recent";
+    }
+    return "recent";
+  });
+  function handleSprintScopeChange(val: string) {
+    setSprintScope(val);
+    localStorage.setItem("contributr:sprint_scope", val);
+  }
 
   async function handleCreateKey(e: React.FormEvent) {
     e.preventDefault();
@@ -373,6 +396,8 @@ export default function SettingsPage() {
           {user?.is_admin && <TabsTrigger value="users" className="gap-2"><Users className="h-4 w-4" /> Users</TabsTrigger>}
           {user?.is_admin && <TabsTrigger value="ai" className="gap-2"><Bot className="h-4 w-4" /> AI</TabsTrigger>}
           <TabsTrigger value="file-exclusions" className="gap-2"><FileX2 className="h-4 w-4" /> File Exclusions</TabsTrigger>
+          <TabsTrigger value="custom-fields" className="gap-2"><ListFilter className="h-4 w-4" /> Custom Fields</TabsTrigger>
+          <TabsTrigger value="delivery" className="gap-2"><CalendarRange className="h-4 w-4" /> Delivery</TabsTrigger>
           <TabsTrigger value="backup" className="gap-2"><Database className="h-4 w-4" /> Backup</TabsTrigger>
         </TabsList>
 
@@ -993,7 +1018,7 @@ export default function SettingsPage() {
                     </div>
                     <div className="space-y-2">
                       <Label>Max Iterations</Label>
-                      <Input type="number" min="1" max="50" value={agentForm.max_iterations} onChange={(e) => setAgentForm((f) => ({ ...f, max_iterations: e.target.value }))} />
+                      <Input type="number" min="1" max="999" value={agentForm.max_iterations} onChange={(e) => setAgentForm((f) => ({ ...f, max_iterations: e.target.value }))} />
                       <p className="text-xs text-muted-foreground">Max tool-calling loops.</p>
                     </div>
                     <div className="space-y-2">
@@ -1191,6 +1216,216 @@ export default function SettingsPage() {
               </Table>
             </Card>
           )}
+        </TabsContent>
+
+        <TabsContent value="custom-fields" className="space-y-4">
+          <p className="text-sm text-muted-foreground">
+            Configure which custom fields to import from Azure DevOps during work item sync.
+            Discovered fields are stored per-project and included in the <code className="rounded bg-muted px-1 py-0.5 text-xs">custom_fields</code> column on each work item.
+          </p>
+
+          <div className="flex items-center gap-3">
+            <Select value={cfProjectId} onValueChange={(v) => { setCfProjectId(v); setDiscoveredFields([]); setPendingToggles({}); }}>
+              <SelectTrigger className="w-64">
+                <SelectValue placeholder="Select a project" />
+              </SelectTrigger>
+              <SelectContent>
+                {projects.map((p) => (
+                  <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+
+            {cfProjectId && (
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={discoverFields.isPending}
+                onClick={() =>
+                  discoverFields.mutate(undefined, {
+                    onSuccess: (data) => {
+                      setDiscoveredFields(data);
+                      setPendingToggles({});
+                    },
+                  })
+                }
+              >
+                {discoverFields.isPending
+                  ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Discovering...</>
+                  : <><Search className="mr-2 h-4 w-4" /> Discover Fields</>}
+              </Button>
+            )}
+          </div>
+
+          {discoverFields.isError && (
+            <Card className="border-destructive">
+              <CardContent className="flex items-center gap-3 pt-6">
+                <AlertCircle className="h-5 w-5 text-destructive shrink-0" />
+                <p className="text-sm text-destructive">{(discoverFields.error as Error)?.message || "Failed to discover fields"}</p>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Configured fields for selected project */}
+          {cfProjectId && customFields.length > 0 && discoveredFields.length === 0 && (
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">Configured Fields ({customFields.length})</CardTitle>
+                <CardDescription>Fields currently imported during sync. Use &quot;Discover Fields&quot; to add more.</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Field Name</TableHead>
+                      <TableHead>Reference Name</TableHead>
+                      <TableHead>Type</TableHead>
+                      <TableHead className="w-20 text-center">Enabled</TableHead>
+                      <TableHead className="w-16" />
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {customFields.map((cf) => (
+                      <TableRow key={cf.id}>
+                        <TableCell className="font-medium">{cf.display_name}</TableCell>
+                        <TableCell className="text-muted-foreground text-xs font-mono">{cf.field_reference_name}</TableCell>
+                        <TableCell><Badge variant="secondary" className="text-[10px]">{cf.field_type}</Badge></TableCell>
+                        <TableCell className="text-center">
+                          <Switch
+                            checked={cf.enabled}
+                            onCheckedChange={(checked) =>
+                              bulkUpsert.mutate([{ field_reference_name: cf.field_reference_name, display_name: cf.display_name, field_type: cf.field_type, enabled: checked }])
+                            }
+                          />
+                        </TableCell>
+                        <TableCell>
+                          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => deleteCustomField.mutate(cf.id)}>
+                            <Trash2 className="h-3.5 w-3.5 text-destructive" />
+                          </Button>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Discovered fields table */}
+          {discoveredFields.length > 0 && (
+            <Card>
+              <CardHeader>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <CardTitle className="text-base">Available Fields ({discoveredFields.length})</CardTitle>
+                    <CardDescription>Toggle fields on to import them during the next sync.</CardDescription>
+                  </div>
+                  <Button
+                    size="sm"
+                    disabled={bulkUpsert.isPending || Object.keys(pendingToggles).length === 0}
+                    onClick={() => {
+                      const toSave = discoveredFields
+                        .filter((f) => pendingToggles[f.reference_name] !== undefined ? pendingToggles[f.reference_name] : f.is_configured)
+                        .map((f) => ({
+                          field_reference_name: f.reference_name,
+                          display_name: f.name,
+                          field_type: f.field_type,
+                          enabled: true,
+                        }));
+                      const toDisable = discoveredFields
+                        .filter((f) => f.is_configured && pendingToggles[f.reference_name] === false)
+                        .map((f) => ({
+                          field_reference_name: f.reference_name,
+                          display_name: f.name,
+                          field_type: f.field_type,
+                          enabled: false,
+                        }));
+                      bulkUpsert.mutate([...toSave, ...toDisable], {
+                        onSuccess: () => {
+                          setPendingToggles({});
+                          discoverFields.mutate(undefined, { onSuccess: (d) => setDiscoveredFields(d) });
+                        },
+                      });
+                    }}
+                  >
+                    {bulkUpsert.isPending
+                      ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Saving...</>
+                      : <><RefreshCw className="mr-2 h-4 w-4" /> Save Changes</>}
+                  </Button>
+                </div>
+              </CardHeader>
+              <CardContent>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead className="w-16 text-center">Import</TableHead>
+                      <TableHead>Field Name</TableHead>
+                      <TableHead>Reference Name</TableHead>
+                      <TableHead>Type</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {discoveredFields.map((f) => {
+                      const checked = pendingToggles[f.reference_name] !== undefined
+                        ? pendingToggles[f.reference_name]
+                        : f.is_configured;
+                      return (
+                        <TableRow key={f.reference_name}>
+                          <TableCell className="text-center">
+                            <Switch
+                              checked={checked}
+                              onCheckedChange={(v) => setPendingToggles((prev) => ({ ...prev, [f.reference_name]: v }))}
+                            />
+                          </TableCell>
+                          <TableCell className="font-medium">{f.name}</TableCell>
+                          <TableCell className="text-muted-foreground text-xs font-mono">{f.reference_name}</TableCell>
+                          <TableCell><Badge variant="secondary" className="text-[10px]">{f.field_type}</Badge></TableCell>
+                        </TableRow>
+                      );
+                    })}
+                  </TableBody>
+                </Table>
+              </CardContent>
+            </Card>
+          )}
+
+          {cfProjectId && customFields.length === 0 && discoveredFields.length === 0 && !discoverFields.isPending && (
+            <Card>
+              <CardContent className="py-8 text-center text-sm text-muted-foreground">
+                No custom fields configured yet. Click &quot;Discover Fields&quot; to find available fields from Azure DevOps.
+              </CardContent>
+            </Card>
+          )}
+        </TabsContent>
+
+        <TabsContent value="delivery" className="space-y-4">
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Sprint Visibility</CardTitle>
+              <CardDescription>
+                Controls which sprints appear in the &quot;Filter Sprints&quot; and &quot;Align to Sprint&quot;
+                dropdowns on the Delivery page, as well as the Iterations table.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="flex items-center gap-4">
+                <Label className="shrink-0 w-36">Visible Sprints</Label>
+                <Select value={sprintScope} onValueChange={handleSprintScopeChange}>
+                  <SelectTrigger className="w-64">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="recent">Active + 3 past + 3 upcoming</SelectItem>
+                    <SelectItem value="active_and_past">Active and past only</SelectItem>
+                    <SelectItem value="all">All sprints</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                This preference is stored locally in your browser and affects all projects.
+              </p>
+            </CardContent>
+          </Card>
         </TabsContent>
 
         <TabsContent value="backup" className="space-y-4">

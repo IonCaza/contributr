@@ -1,10 +1,11 @@
 import uuid
 from datetime import date, timedelta
+from typing import Sequence
 
 from sqlalchemy import select, func, case, text, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import Commit, DailyContributorStats, PullRequest, Review, Contributor, Branch
+from app.db.models import Commit, DailyContributorStats, PullRequest, Review, Contributor, Branch, Repository
 from app.db.models.branch import commit_branches
 from app.db.models.pull_request import PRState
 from app.db.models.project import project_contributors
@@ -472,3 +473,158 @@ async def get_top_contributors(
 
     result = await db.execute(stmt)
     return [row._asdict() for row in result.all()]
+
+
+# ---------------------------------------------------------------------------
+# Team-scoped code analytics
+# ---------------------------------------------------------------------------
+
+
+async def get_team_code_stats(
+    db: AsyncSession,
+    project_id: uuid.UUID,
+    contributor_ids: Sequence[uuid.UUID],
+    from_date: date | None = None,
+    to_date: date | None = None,
+) -> dict:
+    """Aggregated code stats for a set of contributors within a project."""
+    if not contributor_ids:
+        return {
+            "total_commits": 0, "lines_added": 0, "lines_deleted": 0,
+            "files_changed": 0, "prs_opened": 0, "prs_merged": 0,
+            "reviews_given": 0, "active_repos": 0, "avg_commit_size": 0,
+        }
+
+    dcs = DailyContributorStats
+    filters = [
+        dcs.contributor_id.in_(contributor_ids),
+    ]
+    stmt = (
+        select(
+            func.coalesce(func.sum(dcs.commits), 0).label("total_commits"),
+            func.coalesce(func.sum(dcs.lines_added), 0).label("lines_added"),
+            func.coalesce(func.sum(dcs.lines_deleted), 0).label("lines_deleted"),
+            func.coalesce(func.sum(dcs.files_changed), 0).label("files_changed"),
+            func.coalesce(func.sum(dcs.prs_opened), 0).label("prs_opened"),
+            func.coalesce(func.sum(dcs.prs_merged), 0).label("prs_merged"),
+            func.coalesce(func.sum(dcs.reviews_given), 0).label("reviews_given"),
+            func.count(func.distinct(dcs.repository_id)).label("active_repos"),
+        )
+        .join(Repository, Repository.id == dcs.repository_id)
+        .where(Repository.project_id == project_id, *filters)
+    )
+    if from_date:
+        stmt = stmt.where(dcs.date >= from_date)
+    if to_date:
+        stmt = stmt.where(dcs.date <= to_date)
+
+    row = (await db.execute(stmt)).one()
+    total_commits = int(row.total_commits)
+    lines = int(row.lines_added) + int(row.lines_deleted)
+
+    return {
+        "total_commits": total_commits,
+        "lines_added": int(row.lines_added),
+        "lines_deleted": int(row.lines_deleted),
+        "files_changed": int(row.files_changed),
+        "prs_opened": int(row.prs_opened),
+        "prs_merged": int(row.prs_merged),
+        "reviews_given": int(row.reviews_given),
+        "active_repos": int(row.active_repos),
+        "avg_commit_size": round(lines / total_commits, 1) if total_commits > 0 else 0,
+    }
+
+
+async def get_team_code_activity(
+    db: AsyncSession,
+    project_id: uuid.UUID,
+    contributor_ids: Sequence[uuid.UUID],
+    from_date: date | None = None,
+    to_date: date | None = None,
+) -> list[dict]:
+    """Daily aggregated code activity for a team (time series)."""
+    if not contributor_ids:
+        return []
+
+    dcs = DailyContributorStats
+    filters = [dcs.contributor_id.in_(contributor_ids)]
+    stmt = (
+        select(
+            dcs.date.label("date"),
+            func.sum(dcs.commits).label("commits"),
+            func.sum(dcs.lines_added).label("lines_added"),
+            func.sum(dcs.lines_deleted).label("lines_deleted"),
+        )
+        .join(Repository, Repository.id == dcs.repository_id)
+        .where(Repository.project_id == project_id, *filters)
+        .group_by(dcs.date)
+        .order_by(dcs.date)
+    )
+    if from_date:
+        stmt = stmt.where(dcs.date >= from_date)
+    if to_date:
+        stmt = stmt.where(dcs.date <= to_date)
+
+    rows = (await db.execute(stmt)).all()
+    return [
+        {
+            "date": str(r.date),
+            "commits": int(r.commits or 0),
+            "lines_added": int(r.lines_added or 0),
+            "lines_deleted": int(r.lines_deleted or 0),
+        }
+        for r in rows
+    ]
+
+
+async def get_team_member_stats(
+    db: AsyncSession,
+    project_id: uuid.UUID,
+    contributor_ids: Sequence[uuid.UUID],
+    from_date: date | None = None,
+    to_date: date | None = None,
+) -> list[dict]:
+    """Per-member code stats breakdown for ranking within a team."""
+    if not contributor_ids:
+        return []
+
+    dcs = DailyContributorStats
+    stmt = (
+        select(
+            Contributor.id.label("id"),
+            Contributor.canonical_name.label("name"),
+            func.coalesce(func.sum(dcs.commits), 0).label("commits"),
+            func.coalesce(func.sum(dcs.lines_added), 0).label("lines_added"),
+            func.coalesce(func.sum(dcs.lines_deleted), 0).label("lines_deleted"),
+            func.coalesce(func.sum(dcs.prs_opened), 0).label("prs_opened"),
+            func.coalesce(func.sum(dcs.prs_merged), 0).label("prs_merged"),
+            func.coalesce(func.sum(dcs.reviews_given), 0).label("reviews_given"),
+        )
+        .join(dcs, dcs.contributor_id == Contributor.id)
+        .join(Repository, Repository.id == dcs.repository_id)
+        .where(
+            Contributor.id.in_(contributor_ids),
+            Repository.project_id == project_id,
+        )
+        .group_by(Contributor.id, Contributor.canonical_name)
+        .order_by(func.sum(dcs.commits).desc())
+    )
+    if from_date:
+        stmt = stmt.where(dcs.date >= from_date)
+    if to_date:
+        stmt = stmt.where(dcs.date <= to_date)
+
+    rows = (await db.execute(stmt)).all()
+    return [
+        {
+            "id": str(r.id),
+            "name": r.name,
+            "commits": int(r.commits),
+            "lines_added": int(r.lines_added),
+            "lines_deleted": int(r.lines_deleted),
+            "prs_opened": int(r.prs_opened),
+            "prs_merged": int(r.prs_merged),
+            "reviews_given": int(r.reviews_given),
+        }
+        for r in rows
+    ]

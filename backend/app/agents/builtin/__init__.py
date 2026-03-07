@@ -19,8 +19,16 @@ def get_builtin_agents() -> list[BuiltinAgentSpec]:
     """
     from app.agents.builtin.contribution_analyst import SPEC as contribution_analyst
     from app.agents.builtin.text_to_sql import SPEC as text_to_sql
+    from app.agents.builtin.delivery_analyst import SPEC as delivery_analyst
+    from app.agents.builtin.delivery_code_analyst import SPEC as delivery_code_analyst
+    from app.agents.builtin.insights_analyst import SPEC as insights_analyst
+    from app.agents.builtin.contributor_coach import SPEC as contributor_coach
 
     return [
         contribution_analyst,
         text_to_sql,
+        delivery_analyst,
+        delivery_code_analyst,
+        insights_analyst,
+        contributor_coach,
     ]

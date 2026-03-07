@@ -17,6 +17,7 @@ import type { DateRange } from "@/components/date-range-filter";
 import { BranchMultiSelect } from "@/components/branch-multi-select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ContributorDeliveryTab } from "@/components/contributor-delivery-tab";
+import { ContributorInsightsTab } from "@/components/contributor-insights-tab";
 import { useContributor, useContributorStats, useContributorRepos, useContributorCommits } from "@/hooks/use-contributors";
 import { useRepoBranches } from "@/hooks/use-repos";
 import { useDailyStats } from "@/hooks/use-daily-stats";
@@ -140,6 +141,7 @@ export default function ContributorDetailPage() {
         <TabsList>
           <TabsTrigger value="code">Code</TabsTrigger>
           <TabsTrigger value="delivery">Delivery</TabsTrigger>
+          <TabsTrigger value="insights">Insights</TabsTrigger>
         </TabsList>
 
         <TabsContent value="code" className="space-y-6 mt-4">
@@ -235,6 +237,10 @@ export default function ContributorDetailPage() {
 
         <TabsContent value="delivery" className="mt-4">
           <ContributorDeliveryTab contributorId={contributorId} contributor={contributor} />
+        </TabsContent>
+
+        <TabsContent value="insights" className="mt-4">
+          <ContributorInsightsTab contributorId={contributorId} />
         </TabsContent>
       </Tabs>
     </div>

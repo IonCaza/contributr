@@ -49,7 +49,7 @@ class ChatMessage(Base):
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, comment="Auto-generated unique identifier")
     session_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("chat_sessions.id", ondelete="CASCADE"), nullable=False, index=True, comment="Conversation this message belongs to")
     role: Mapped[MessageRole] = mapped_column(
-        SAEnum(MessageRole, values_callable=lambda e: [x.value for x in e]),
+        SAEnum(MessageRole, values_callable=lambda e: [x.value for x in e], create_type=False),
         nullable=False,
         comment="Message author role: user, assistant, or tool",
     )

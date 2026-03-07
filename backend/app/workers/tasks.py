@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sess
 from app.config import settings
 from app.workers.celery_app import celery
 from app.db.base import Base
-from app.db.models import Repository, SyncJob, PlatformCredential, Project
+from app.db.models import Repository, SyncJob, PlatformCredential, Project, Commit
 from app.db.models.sync_job import SyncStatus
 from app.db.models.repository import Platform
 from app.services.git_analyzer import clone_and_analyze
@@ -167,9 +167,52 @@ async def _run_sync(repo_id: str, job_id: str) -> None:
 
             await _check_cancelled(db, uuid.UUID(job_id))
 
+            slog.info("wi_links", "Scanning commit messages for work item references...")
+            from app.db.models.work_item import WorkItem
+            from app.db.models.work_item_commit import WorkItemCommit
+            import re as _re
+            _WI_REF_RE = _re.compile(r'(?:AB)?#(\d{2,})')
+            _link_commits = (
+                await db.execute(
+                    select(Commit).where(Commit.repository_id == repo.id)
+                )
+            ).scalars().all()
+            _wi_ids_result = await db.execute(
+                select(WorkItem.platform_work_item_id, WorkItem.id)
+                .where(WorkItem.project_id == repo.project_id)
+            )
+            _wi_map = {row[0]: row[1] for row in _wi_ids_result.all()}
+            _wi_link_count = 0
+            for c in _link_commits:
+                if not c.message:
+                    continue
+                refs = _WI_REF_RE.findall(c.message)
+                for ref_str in refs:
+                    ref_id = int(ref_str)
+                    wi_uuid = _wi_map.get(ref_id)
+                    if not wi_uuid:
+                        continue
+                    existing_link = await db.execute(
+                        select(WorkItemCommit).where(
+                            WorkItemCommit.work_item_id == wi_uuid,
+                            WorkItemCommit.commit_id == c.id,
+                        )
+                    )
+                    if not existing_link.scalar_one_or_none():
+                        db.add(WorkItemCommit(
+                            work_item_id=wi_uuid,
+                            commit_id=c.id,
+                            link_type="message_ref",
+                        ))
+                        _wi_link_count += 1
+            if _wi_link_count:
+                await db.flush()
+            slog.info("wi_links", f"Found {_wi_link_count} commit-to-work-item links from messages")
+
+            await _check_cancelled(db, uuid.UUID(job_id))
+
             slog.info("assigning", "Assigning contributors to project...")
             from app.db.models.project import project_contributors
-            from app.db.models import Commit
             contributor_ids = (
                 await db.execute(
                     select(Commit.contributor_id)
@@ -349,3 +392,149 @@ async def _run_delivery_sync(project_id: str, job_id: str | None = None) -> dict
 def sync_delivery(project_id: str, job_id: str | None = None) -> dict:
     logger.info("Celery task sync_delivery called: project=%s job=%s", project_id, job_id)
     return asyncio.run(_run_delivery_sync(project_id, job_id))
+
+
+async def _run_project_insights(run_id: str, project_id: str) -> None:
+    from app.db.models.insight import InsightRun, InsightRunStatus
+    from app.services.insights.engine import run_analysis, persist_findings
+    from app.services.sync_logger import SyncLogger
+
+    slog = SyncLogger(f"insights-{run_id}")
+
+    Session = _get_session()
+    async with Session() as db:
+        run = await db.get(InsightRun, uuid.UUID(run_id))
+        if not run:
+            logger.error("InsightRun %s not found", run_id)
+            slog.error("init", f"InsightRun {run_id} not found in database")
+            slog.fail("Run not found")
+            slog.close()
+            return
+
+        try:
+            slog.info("init", f"Starting insights analysis for project {project_id}")
+
+            raw_findings = await run_analysis(db, run, slog=slog)
+
+            try:
+                from app.services.insights.enhancer import enhance_findings
+                slog.info("enhance", "Running AI enhancement on findings...")
+                raw_findings = await enhance_findings(db, run.project_id, raw_findings, slog=slog)
+                slog.info("enhance", "AI enhancement complete")
+            except Exception:
+                logger.warning("AI enhancement failed, using raw findings", exc_info=True)
+                slog.warning("enhance", "AI enhancement failed — using raw findings")
+
+            slog.info("persist", f"Persisting {len(raw_findings)} findings...")
+            count = await persist_findings(db, run, raw_findings)
+            logger.info("InsightRun %s completed with %d findings", run_id, count)
+            slog.info("persist", f"Persisted {count} findings (deduplicated)")
+            slog.complete()
+
+        except Exception as e:
+            logger.exception("InsightRun %s failed: %s", run_id, e)
+            slog.fail(str(e)[:500])
+            await db.rollback()
+            run = await db.get(InsightRun, uuid.UUID(run_id))
+            if run:
+                run.status = InsightRunStatus.FAILED
+                run.error_message = str(e)[:2000]
+                run.finished_at = datetime.now(timezone.utc)
+                await db.commit()
+        finally:
+            slog.close()
+
+
+@celery.task(name="run_project_insights")
+def run_project_insights(run_id: str, project_id: str) -> dict:
+    logger.info("Celery task run_project_insights: run=%s project=%s", run_id, project_id)
+    asyncio.run(_run_project_insights(run_id, project_id))
+    return {"run_id": run_id, "project_id": project_id}
+
+
+async def _schedule_all_project_insights() -> int:
+    """Create an InsightRun for each project and dispatch tasks."""
+    from app.db.models.insight import InsightRun, InsightRunStatus
+
+    Session = _get_session()
+    async with Session() as db:
+        projects = (await db.execute(select(Project))).scalars().all()
+        count = 0
+        for project in projects:
+            run = InsightRun(project_id=project.id, status=InsightRunStatus.RUNNING)
+            db.add(run)
+            await db.flush()
+            run_project_insights.delay(str(run.id), str(project.id))
+            count += 1
+        await db.commit()
+    return count
+
+
+@celery.task(name="schedule_all_project_insights")
+def schedule_all_project_insights() -> dict:
+    logger.info("Scheduling insights analysis for all projects")
+    count = asyncio.run(_schedule_all_project_insights())
+    logger.info("Dispatched insights for %d projects", count)
+    return {"projects_scheduled": count}
+
+
+async def _run_contributor_insights(run_id: str, contributor_id: str) -> None:
+    from app.db.models.contributor_insight import ContributorInsightRun
+    from app.services.insights.contributor_engine import (
+        run_contributor_analysis, persist_contributor_findings,
+    )
+    from app.services.sync_logger import SyncLogger
+    from app.services.insights.enhancer import enhance_findings
+
+    slog = SyncLogger(f"contributor-insights-{run_id}")
+
+    Session = _get_session()
+    async with Session() as db:
+        run = await db.get(ContributorInsightRun, uuid.UUID(run_id))
+        if not run:
+            logger.error("ContributorInsightRun %s not found", run_id)
+            slog.error("init", f"ContributorInsightRun {run_id} not found")
+            slog.fail("Run not found")
+            slog.close()
+            return
+
+        try:
+            slog.info("init", f"Starting insights analysis for contributor {contributor_id}")
+
+            raw_findings = await run_contributor_analysis(db, run, slog=slog)
+
+            try:
+                slog.info("enhance", "Running AI enhancement on findings...")
+                raw_findings = await enhance_findings(
+                    db, None, raw_findings, slog=slog,
+                )
+                slog.info("enhance", "AI enhancement complete")
+            except Exception:
+                logger.warning("AI enhancement failed for contributor insights", exc_info=True)
+                slog.warning("enhance", "AI enhancement failed — using raw findings")
+
+            slog.info("persist", f"Persisting {len(raw_findings)} findings...")
+            count = await persist_contributor_findings(db, run, raw_findings)
+            logger.info("ContributorInsightRun %s completed with %d findings", run_id, count)
+            slog.info("persist", f"Persisted {count} findings (deduplicated)")
+            slog.complete()
+
+        except Exception as e:
+            logger.exception("ContributorInsightRun %s failed: %s", run_id, e)
+            slog.fail(str(e)[:500])
+            await db.rollback()
+            run = await db.get(ContributorInsightRun, uuid.UUID(run_id))
+            if run:
+                run.status = "failed"
+                run.error_message = str(e)[:2000]
+                run.finished_at = datetime.now(timezone.utc)
+                await db.commit()
+        finally:
+            slog.close()
+
+
+@celery.task(name="run_contributor_insights")
+def run_contributor_insights(run_id: str, contributor_id: str) -> dict:
+    logger.info("Celery task run_contributor_insights: run=%s contributor=%s", run_id, contributor_id)
+    asyncio.run(_run_contributor_insights(run_id, contributor_id))
+    return {"run_id": run_id, "contributor_id": contributor_id}

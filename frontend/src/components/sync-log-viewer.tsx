@@ -27,6 +27,10 @@ const PHASE_COLORS: Record<string, string> = {
   teams: "bg-indigo-500",
   iterations: "bg-sky-500",
   work_items: "bg-orange-500",
+  analyzer: "bg-violet-500",
+  enhance: "bg-indigo-500",
+  persist: "bg-teal-500",
+  summary: "bg-cyan-500",
 };
 
 const LEVEL_CLASSES: Record<string, string> = {
@@ -45,10 +49,11 @@ interface SyncLogViewerProps {
   jobId?: string;
   logUrl?: string;
   compact?: boolean;
+  title?: string;
   onDone?: () => void;
 }
 
-export function SyncLogViewer({ repoId, jobId, logUrl, compact = false, onDone }: SyncLogViewerProps) {
+export function SyncLogViewer({ repoId, jobId, logUrl, compact = false, title = "Sync Logs", onDone }: SyncLogViewerProps) {
   const [entries, setEntries] = useState<LogEntry[]>([]);
   const [live, setLive] = useState(true);
   const [expanded, setExpanded] = useState(!compact);
@@ -127,7 +132,7 @@ export function SyncLogViewer({ repoId, jobId, logUrl, compact = false, onDone }
       <div className="flex items-center justify-between px-3 py-1.5 bg-zinc-900 border-b border-zinc-800">
         <div className="flex items-center gap-2 text-xs text-zinc-400">
           <Terminal className="h-3.5 w-3.5" />
-          <span className="font-medium">Sync Logs</span>
+          <span className="font-medium">{title}</span>
           {live && (
             <span className="flex items-center gap-1 text-green-400">
               <Circle className="h-1.5 w-1.5 fill-current animate-pulse" />

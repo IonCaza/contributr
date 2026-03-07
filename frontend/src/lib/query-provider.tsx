@@ -11,9 +11,6 @@ export function QueryProvider({ children }: { children: React.ReactNode }) {
       <ReactQueryDevtools
         initialIsOpen={false}
         buttonPosition="bottom-right"
-        toggleButtonProps={{
-          style: { transform: "scale(0.5)", transformOrigin: "bottom right" },
-        }}
       />
     </QueryClientProvider>
   );

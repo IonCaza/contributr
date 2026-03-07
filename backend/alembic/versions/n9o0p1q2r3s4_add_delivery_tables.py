@@ -56,7 +56,13 @@ def upgrade() -> None:
     )
 
     # -- work_items --
-    workitem_type = sa.Enum("epic", "feature", "user_story", "task", "bug", name="workitemtype")
+    op.execute(sa.text("""
+        DO $$ BEGIN
+            CREATE TYPE workitemtype AS ENUM ('epic', 'feature', 'user_story', 'task', 'bug');
+        EXCEPTION WHEN duplicate_object THEN null;
+        END $$;
+    """))
+    workitem_type = sa.Enum("epic", "feature", "user_story", "task", "bug", name="workitemtype", create_type=False)
     op.create_table(
         "work_items",
         sa.Column("id", UUID(as_uuid=True), primary_key=True),

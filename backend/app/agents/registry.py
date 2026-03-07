@@ -10,6 +10,7 @@ from app.db.models.knowledge_graph import AgentKnowledgeGraphAssignment, Knowled
 
 import app.agents.tools.contribution_analytics  # noqa: F401 — registers tools
 import app.agents.tools.sql_query  # noqa: F401 — registers tools
+import app.agents.tools.delivery_analytics  # noqa: F401 — registers tools
 
 
 async def is_ai_enabled(db: AsyncSession) -> bool:

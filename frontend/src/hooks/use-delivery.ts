@@ -1,10 +1,11 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api-client";
 import { queryKeys } from "@/lib/query-keys";
+import type { DeliveryFilters } from "@/lib/types";
 
-export function useDeliveryStats(projectId: string, filters?: { team_id?: string; contributor_id?: string }) {
+export function useDeliveryStats(projectId: string, filters?: DeliveryFilters) {
   return useQuery({
-    queryKey: queryKeys.delivery.stats(projectId, filters),
+    queryKey: queryKeys.delivery.stats(projectId, filters as Record<string, unknown> | undefined),
     queryFn: () => api.getDeliveryStats(projectId, filters),
     enabled: !!projectId,
   });
@@ -16,8 +17,11 @@ export function useWorkItems(
     work_item_type?: string;
     state?: string;
     assignee_id?: string;
-    iteration_id?: string;
+    iteration_ids?: string[];
     parent_id?: string;
+    search?: string;
+    from_date?: string;
+    to_date?: string;
     page?: number;
     page_size?: number;
   },
@@ -37,10 +41,10 @@ export function useIterations(projectId: string) {
   });
 }
 
-export function useVelocity(projectId: string) {
+export function useVelocity(projectId: string, filters?: { limit?: number; iteration_ids?: string[] }) {
   return useQuery({
-    queryKey: queryKeys.delivery.velocity(projectId),
-    queryFn: () => api.getVelocity(projectId),
+    queryKey: queryKeys.delivery.velocity(projectId, filters),
+    queryFn: () => api.getVelocity(projectId, filters),
     enabled: !!projectId,
   });
 }
@@ -69,5 +73,101 @@ export function useTriggerDeliverySync(projectId: string) {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: queryKeys.delivery.syncJobs(projectId) });
     },
+  });
+}
+
+export function useFlowMetrics(projectId: string, filters?: DeliveryFilters) {
+  return useQuery({
+    queryKey: queryKeys.delivery.flow(projectId, filters as Record<string, unknown> | undefined),
+    queryFn: () => api.getFlowMetrics(projectId, filters),
+    enabled: !!projectId,
+  });
+}
+
+export function useBacklogHealth(projectId: string, filters?: DeliveryFilters) {
+  return useQuery({
+    queryKey: queryKeys.delivery.backlogHealth(projectId, filters as Record<string, unknown> | undefined),
+    queryFn: () => api.getBacklogHealth(projectId, filters),
+    enabled: !!projectId,
+  });
+}
+
+export function useQualityMetrics(projectId: string, filters?: DeliveryFilters) {
+  return useQuery({
+    queryKey: queryKeys.delivery.quality(projectId, filters as Record<string, unknown> | undefined),
+    queryFn: () => api.getQualityMetrics(projectId, filters),
+    enabled: !!projectId,
+  });
+}
+
+export function useIntersectionMetrics(projectId: string, filters?: DeliveryFilters) {
+  return useQuery({
+    queryKey: queryKeys.delivery.intersection(projectId, filters as Record<string, unknown> | undefined),
+    queryFn: () => api.getIntersectionMetrics(projectId, filters),
+    enabled: !!projectId,
+  });
+}
+
+export function useWorkItemDetail(projectId: string, workItemId: string) {
+  return useQuery({
+    queryKey: queryKeys.delivery.workItemDetail(projectId, workItemId),
+    queryFn: () => api.getWorkItemDetail(projectId, workItemId),
+    enabled: !!projectId && !!workItemId,
+  });
+}
+
+export function useWorkItemCommits(projectId: string, workItemId: string) {
+  return useQuery({
+    queryKey: queryKeys.delivery.workItemCommits(projectId, workItemId),
+    queryFn: () => api.getWorkItemCommits(projectId, workItemId),
+    enabled: !!projectId && !!workItemId,
+  });
+}
+
+export function useSprintDetail(projectId: string, iterationId: string) {
+  return useQuery({
+    queryKey: queryKeys.delivery.sprintDetail(projectId, iterationId),
+    queryFn: () => api.getSprintDetail(projectId, iterationId),
+    enabled: !!projectId && !!iterationId,
+  });
+}
+
+export function useSprintBurndown(projectId: string, iterationId: string) {
+  return useQuery({
+    queryKey: queryKeys.delivery.sprintBurndown(projectId, iterationId),
+    queryFn: () => api.getSprintBurndown(projectId, iterationId),
+    enabled: !!projectId && !!iterationId,
+  });
+}
+
+export function useTeamDetail(projectId: string, teamId: string) {
+  return useQuery({
+    queryKey: queryKeys.delivery.teamDetail(projectId, teamId),
+    queryFn: () => api.getTeamDetail(projectId, teamId),
+    enabled: !!projectId && !!teamId,
+  });
+}
+
+export function useTeams(projectId: string) {
+  return useQuery({
+    queryKey: queryKeys.delivery.teams(projectId),
+    queryFn: () => api.listDeliveryTeams(projectId),
+    enabled: !!projectId,
+  });
+}
+
+export function useItemDetails(projectId: string, filters?: DeliveryFilters, enabled = true) {
+  return useQuery({
+    queryKey: queryKeys.delivery.itemDetails(projectId, filters as Record<string, unknown> | undefined),
+    queryFn: () => api.getItemDetails(projectId, filters),
+    enabled: !!projectId && enabled,
+  });
+}
+
+export function useContributorDeliverySummary(projectId: string, filters?: DeliveryFilters, enabled = true) {
+  return useQuery({
+    queryKey: queryKeys.delivery.contributorSummary(projectId, filters as Record<string, unknown> | undefined),
+    queryFn: () => api.getContributorSummary(projectId, filters),
+    enabled: !!projectId && enabled,
   });
 }

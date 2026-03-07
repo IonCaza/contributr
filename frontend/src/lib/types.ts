@@ -110,6 +110,20 @@ export interface TrendData {
   previous_week: { commits: number; lines_added: number; lines_deleted: number };
 }
 
+export interface DeliverySummary {
+  active_contributors_30d: number;
+  total_contributors: number;
+  open_prs: number;
+  merged_prs_7d: number;
+  merged_prs_wow_delta: number;
+  pr_cycle_time_hours: number;
+  review_turnaround_hours: number;
+  total_work_items: number;
+  open_work_items: number;
+  completed_work_items_30d: number;
+  wi_cycle_time_hours: number;
+}
+
 export interface DailyStat {
   date: string;
   contributor_id: string;
@@ -413,8 +427,10 @@ export interface WorkItem {
   work_item_type: "epic" | "feature" | "user_story" | "task" | "bug";
   title: string;
   state: string;
+  description?: string | null;
   assigned_to: { id: string; name: string | null } | null;
   iteration_id: string | null;
+  iteration_name: string | null;
   story_points: number | null;
   priority: number | null;
   tags: string[];
@@ -445,4 +461,253 @@ export interface DeliveryStats {
   throughput_trend: { date: string; completed: number; created: number }[];
   backlog_by_type: { type: string; count: number }[];
   backlog_by_state: { state: string; count: number }[];
+}
+
+export interface DeliveryFilters {
+  iteration_ids?: string[];
+  from_date?: string;
+  to_date?: string;
+  team_id?: string;
+  contributor_id?: string;
+}
+
+export interface FlowMetrics {
+  cycle_time_distribution: { range: string; count: number }[];
+  wip_by_state: { state: string; count: number }[];
+  cumulative_flow: {
+    states: string[];
+    data: Record<string, string | number>[];
+  };
+}
+
+export interface BacklogHealthMetrics {
+  stale_items: { type: string; count: number }[];
+  age_distribution: { range: string; count: number }[];
+  growth: { date: string; created: number; completed: number; net: number }[];
+}
+
+export interface QualityMetrics {
+  bug_trend: { date: string; created: number; resolved: number }[];
+  resolution_time: { median_hours: number; p90_hours: number; sample_size: number };
+  defect_density: { bugs: number; total: number; ratio: number };
+}
+
+export interface IntersectionMetrics {
+  total_linked_items: number;
+  total_items: number;
+  link_coverage_pct: number;
+  commits_per_story_point: number;
+  avg_first_commit_to_resolution_hours: number;
+}
+
+export interface BurndownPoint {
+  date: string;
+  remaining: number;
+  ideal: number;
+}
+
+export interface SprintDetail extends Iteration {
+  burndown: BurndownPoint[];
+  work_items: WorkItem[];
+  contributors: { id: string; name: string | null; total: number; completed: number }[];
+}
+
+export interface TeamDetail {
+  id: string;
+  name: string;
+  description: string | null;
+  platform: string | null;
+  members: { id: string; name: string | null; email: string | null; role: string }[];
+  work_item_summary: { state: string; count: number }[];
+}
+
+// ── Team Analytics ──────────────────────────────────────────────────
+
+export interface TeamCodeStats {
+  total_commits: number;
+  lines_added: number;
+  lines_deleted: number;
+  files_changed: number;
+  prs_opened: number;
+  prs_merged: number;
+  reviews_given: number;
+  active_repos: number;
+  avg_commit_size: number;
+}
+
+export interface TeamCodeActivity {
+  date: string;
+  commits: number;
+  lines_added: number;
+  lines_deleted: number;
+}
+
+export interface TeamMemberCodeStats {
+  id: string;
+  name: string;
+  commits: number;
+  lines_added: number;
+  lines_deleted: number;
+  prs_opened: number;
+  prs_merged: number;
+  reviews_given: number;
+}
+
+export interface WorkItemDetail extends WorkItem {
+  description: string | null;
+  custom_fields: Record<string, unknown> | null;
+  original_estimate: number | null;
+  remaining_work: number | null;
+  completed_work: number | null;
+  created_by: { id: string; name: string | null } | null;
+  iteration: { id: string; name: string | null } | null;
+  area_path: string | null;
+  state_changed_at: string | null;
+  activated_at: string | null;
+  updated_at: string;
+  parent: { id: string; title: string; work_item_type: string } | null;
+  children: { id: string; title: string; work_item_type: string; state: string; story_points: number | null }[];
+  linked_commits: LinkedCommit[];
+}
+
+export interface WorkItemDetailRow {
+  id: string;
+  platform_work_item_id: number;
+  title: string;
+  work_item_type: string;
+  state: string;
+  story_points: number | null;
+  priority: number | null;
+  assigned_to_id: string | null;
+  assigned_to_name: string | null;
+  iteration_name: string | null;
+  created_at: string | null;
+  activated_at: string | null;
+  resolved_at: string | null;
+  closed_at: string | null;
+  updated_at: string | null;
+  platform_url: string | null;
+  cycle_time_hours: number | null;
+  lead_time_hours: number | null;
+  linked_commit_count: number;
+  first_commit_to_resolution_hours: number | null;
+}
+
+export interface ContributorDeliverySummary {
+  contributor_id: string;
+  contributor_name: string | null;
+  total_items: number;
+  completed_items: number;
+  open_items: number;
+  total_sp: number;
+  completed_sp: number;
+  avg_cycle_time_hours: number | null;
+}
+
+export interface LinkedCommit {
+  id: string;
+  sha: string;
+  message: string | null;
+  authored_at: string;
+  link_type: string;
+  contributor: { id: string; name: string | null } | null;
+}
+
+// Custom field import configuration
+export interface CustomFieldConfig {
+  id: string;
+  project_id: string;
+  field_reference_name: string;
+  display_name: string;
+  field_type: string;
+  enabled: boolean;
+}
+
+export interface DiscoveredField {
+  reference_name: string;
+  name: string;
+  field_type: string;
+  is_configured: boolean;
+}
+
+// ── Insights ────────────────────────────────────────────────────────
+
+export interface InsightRun {
+  id: string;
+  project_id: string;
+  status: string;
+  started_at: string;
+  finished_at: string | null;
+  findings_count: number;
+  error_message: string | null;
+}
+
+export interface InsightFinding {
+  id: string;
+  run_id: string;
+  project_id: string;
+  category: string;
+  severity: string;
+  slug: string;
+  title: string;
+  description: string;
+  recommendation: string;
+  metric_data: Record<string, unknown> | null;
+  affected_entities: Record<string, unknown> | null;
+  status: string;
+  first_detected_at: string;
+  last_detected_at: string;
+  resolved_at: string | null;
+  dismissed_at: string | null;
+  dismissed_by_id: string | null;
+}
+
+export interface InsightsSummary {
+  total_active: number;
+  critical: number;
+  warning: number;
+  info: number;
+  resolved_30d: number;
+  by_category: Record<string, number>;
+}
+
+// ── Contributor Insights ────────────────────────────────────────────
+
+export interface ContributorInsightRun {
+  id: string;
+  contributor_id: string;
+  status: string;
+  started_at: string;
+  finished_at: string | null;
+  findings_count: number;
+  error_message: string | null;
+}
+
+export interface ContributorInsightFinding {
+  id: string;
+  run_id: string;
+  contributor_id: string;
+  category: string;
+  severity: string;
+  slug: string;
+  title: string;
+  description: string;
+  recommendation: string;
+  metric_data: Record<string, unknown> | null;
+  affected_entities: Record<string, unknown> | null;
+  status: string;
+  first_detected_at: string;
+  last_detected_at: string;
+  resolved_at: string | null;
+  dismissed_at: string | null;
+  dismissed_by_id: string | null;
+}
+
+export interface ContributorInsightsSummary {
+  total_active: number;
+  critical: number;
+  warning: number;
+  info: number;
+  resolved_30d: number;
+  by_category: Record<string, number>;
 }

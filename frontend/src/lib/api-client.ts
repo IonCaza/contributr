@@ -8,6 +8,14 @@ import type {
   LlmProvider, AgentConfig, ToolDefinition,
   KnowledgeGraphListItem, KnowledgeGraph,
   Team, TeamMember, DeliveryStats, PaginatedWorkItems, Iteration,
+  DeliveryFilters, FlowMetrics, BacklogHealthMetrics, QualityMetrics,
+  IntersectionMetrics, BurndownPoint, SprintDetail, TeamDetail,
+  WorkItemDetail, LinkedCommit, WorkItemDetailRow, ContributorDeliverySummary,
+  TeamCodeStats, TeamCodeActivity, TeamMemberCodeStats,
+  CustomFieldConfig, DiscoveredField,
+  DeliverySummary,
+  InsightRun, InsightFinding, InsightsSummary,
+  ContributorInsightRun, ContributorInsightFinding, ContributorInsightsSummary,
 } from "./types";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
@@ -24,6 +32,17 @@ function buildQuery(params: Record<string, string | string[] | undefined>): stri
   }
   const s = sp.toString();
   return s ? `?${s}` : "";
+}
+
+function buildDeliveryQuery(params?: DeliveryFilters): string {
+  if (!params) return "";
+  return buildQuery({
+    iteration_ids: params.iteration_ids,
+    from_date: params.from_date,
+    to_date: params.to_date,
+    team_id: params.team_id,
+    contributor_id: params.contributor_id,
+  });
 }
 
 class ApiError extends Error {
@@ -191,6 +210,7 @@ export const api = {
     request<DailyStat[]>(`/stats/monthly${buildQuery(params)}`),
   trends: (params: Record<string, string | string[] | undefined>) =>
     request<TrendData>(`/stats/trends${buildQuery(params)}`),
+  deliverySummary: () => request<DeliverySummary>("/stats/delivery-summary"),
 
   getCommitDetail: (id: string) => request<CommitDetail>(`/commits/${id}`),
 
@@ -317,15 +337,18 @@ export const api = {
     request<void>(`/teams/${teamId}/members/${contributorId}`, { method: "DELETE" }),
 
   // Delivery
-  getDeliveryStats: (projectId: string, params?: { team_id?: string; contributor_id?: string }) =>
-    request<DeliveryStats>(`/projects/${projectId}/delivery/stats${buildQuery({ team_id: params?.team_id, contributor_id: params?.contributor_id })}`),
-  listWorkItems: (projectId: string, params?: { work_item_type?: string; state?: string; assignee_id?: string; iteration_id?: string; parent_id?: string; page?: number; page_size?: number }) =>
+  getDeliveryStats: (projectId: string, params?: DeliveryFilters) =>
+    request<DeliveryStats>(`/projects/${projectId}/delivery/stats${buildDeliveryQuery(params)}`),
+  listWorkItems: (projectId: string, params?: { work_item_type?: string; state?: string; assignee_id?: string; iteration_ids?: string[]; parent_id?: string; search?: string; from_date?: string; to_date?: string; page?: number; page_size?: number }) =>
     request<PaginatedWorkItems>(`/projects/${projectId}/delivery/work-items${buildQuery({
       work_item_type: params?.work_item_type,
       state: params?.state,
       assignee_id: params?.assignee_id,
-      iteration_id: params?.iteration_id,
+      iteration_ids: params?.iteration_ids,
       parent_id: params?.parent_id,
+      search: params?.search,
+      from_date: params?.from_date,
+      to_date: params?.to_date,
       page: params?.page?.toString(),
       page_size: params?.page_size?.toString(),
     })}`),
@@ -335,16 +358,111 @@ export const api = {
     request<Iteration[]>(`/projects/${projectId}/delivery/iterations`),
   getIteration: (projectId: string, iterationId: string) =>
     request<Iteration>(`/projects/${projectId}/delivery/iterations/${iterationId}`),
-  getVelocity: (projectId: string, limit?: number) =>
-    request<{ iteration: string; points: number }[]>(`/projects/${projectId}/delivery/velocity${buildQuery({ limit: limit?.toString() })}`),
+  getVelocity: (projectId: string, params?: { limit?: number; iteration_ids?: string[] }) =>
+    request<{ iteration: string; points: number }[]>(`/projects/${projectId}/delivery/velocity${buildQuery({ limit: params?.limit?.toString(), iteration_id: params?.iteration_ids })}`),
   getDeliveryTrends: (projectId: string, days?: number) =>
     request<{ date: string; created: number; completed: number }[]>(`/projects/${projectId}/delivery/trends${buildQuery({ days: days?.toString() })}`),
+  getFlowMetrics: (projectId: string, params?: DeliveryFilters) =>
+    request<FlowMetrics>(`/projects/${projectId}/delivery/metrics/flow${buildDeliveryQuery(params)}`),
+  getBacklogHealth: (projectId: string, params?: DeliveryFilters) =>
+    request<BacklogHealthMetrics>(`/projects/${projectId}/delivery/metrics/backlog-health${buildDeliveryQuery(params)}`),
+  getQualityMetrics: (projectId: string, params?: DeliveryFilters) =>
+    request<QualityMetrics>(`/projects/${projectId}/delivery/metrics/quality${buildDeliveryQuery(params)}`),
+  getIntersectionMetrics: (projectId: string, params?: DeliveryFilters) =>
+    request<IntersectionMetrics>(`/projects/${projectId}/delivery/intersection${buildDeliveryQuery(params)}`),
+  getItemDetails: (projectId: string, params?: DeliveryFilters) =>
+    request<WorkItemDetailRow[]>(`/projects/${projectId}/delivery/metrics/item-details${buildDeliveryQuery(params)}`),
+  getContributorSummary: (projectId: string, params?: DeliveryFilters) =>
+    request<ContributorDeliverySummary[]>(`/projects/${projectId}/delivery/metrics/contributor-summary${buildDeliveryQuery(params)}`),
+  getWorkItemDetail: (projectId: string, workItemId: string) =>
+    request<WorkItemDetail>(`/projects/${projectId}/delivery/work-items/${workItemId}`),
+  getWorkItemCommits: (projectId: string, workItemId: string) =>
+    request<LinkedCommit[]>(`/projects/${projectId}/delivery/work-items/${workItemId}/commits`),
+  getSprintDetail: (projectId: string, iterationId: string) =>
+    request<SprintDetail>(`/projects/${projectId}/delivery/iterations/${iterationId}`),
+  getSprintBurndown: (projectId: string, iterationId: string) =>
+    request<BurndownPoint[]>(`/projects/${projectId}/delivery/iterations/${iterationId}/burndown`),
+  getTeamDetail: (projectId: string, teamId: string) =>
+    request<TeamDetail>(`/projects/${projectId}/delivery/teams/${teamId}`),
+  listDeliveryTeams: (projectId: string) =>
+    request<TeamDetail[]>(`/projects/${projectId}/delivery/teams`),
   triggerDeliverySync: (projectId: string) =>
     request<{ task_id: string; job_id: string; status: string }>(`/projects/${projectId}/delivery/sync`, { method: "POST" }),
   listDeliverySyncJobs: (projectId: string) =>
     request<{ id: string; status: string; started_at: string | null; finished_at: string | null; error_message: string | null; created_at: string }[]>(`/projects/${projectId}/delivery/sync-jobs`),
   getDeliverySyncLogUrl: (projectId: string) =>
     `${API_BASE}/projects/${projectId}/delivery/sync/logs`,
+
+  // Custom Fields
+  discoverCustomFields: (projectId: string) =>
+    request<DiscoveredField[]>(`/projects/${projectId}/custom-fields/discover`),
+  listCustomFields: (projectId: string) =>
+    request<CustomFieldConfig[]>(`/projects/${projectId}/custom-fields`),
+  bulkUpsertCustomFields: (projectId: string, fields: { field_reference_name: string; display_name: string; field_type: string; enabled: boolean }[]) =>
+    request<CustomFieldConfig[]>(`/projects/${projectId}/custom-fields`, { method: "PUT", body: JSON.stringify({ fields }) }),
+  deleteCustomField: (projectId: string, configId: string) =>
+    request<void>(`/projects/${projectId}/custom-fields/${configId}`, { method: "DELETE" }),
+
+  // Insights
+  listInsightFindings: (projectId: string, params?: { category?: string; severity?: string; status?: string }) =>
+    request<InsightFinding[]>(`/projects/${projectId}/insights${buildQuery({
+      category: params?.category,
+      severity: params?.severity,
+      status: params?.status,
+    })}`),
+  getInsightsSummary: (projectId: string) =>
+    request<InsightsSummary>(`/projects/${projectId}/insights/summary`),
+  listInsightRuns: (projectId: string) =>
+    request<InsightRun[]>(`/projects/${projectId}/insights/runs`),
+  triggerInsightRun: (projectId: string) =>
+    request<InsightRun>(`/projects/${projectId}/insights/run`, { method: "POST" }),
+  dismissInsightFinding: (projectId: string, findingId: string) =>
+    request<InsightFinding>(`/projects/${projectId}/insights/${findingId}/dismiss`, { method: "PATCH" }),
+
+  // Team Analytics
+  getTeamCodeStats: (projectId: string, teamId: string, params?: { from_date?: string; to_date?: string }) =>
+    request<TeamCodeStats>(`/projects/${projectId}/teams/${teamId}/analytics/code${buildQuery({ from_date: params?.from_date, to_date: params?.to_date })}`),
+  getTeamCodeActivity: (projectId: string, teamId: string, params?: { from_date?: string; to_date?: string }) =>
+    request<TeamCodeActivity[]>(`/projects/${projectId}/teams/${teamId}/analytics/code/activity${buildQuery({ from_date: params?.from_date, to_date: params?.to_date })}`),
+  getTeamMemberStats: (projectId: string, teamId: string, params?: { from_date?: string; to_date?: string }) =>
+    request<TeamMemberCodeStats[]>(`/projects/${projectId}/teams/${teamId}/analytics/code/members${buildQuery({ from_date: params?.from_date, to_date: params?.to_date })}`),
+  getTeamDeliveryStats: (projectId: string, teamId: string, params?: { from_date?: string; to_date?: string }) =>
+    request<DeliveryStats>(`/projects/${projectId}/teams/${teamId}/analytics/delivery${buildQuery({ from_date: params?.from_date, to_date: params?.to_date })}`),
+  getTeamDeliveryVelocity: (projectId: string, teamId: string, params?: { from_date?: string; to_date?: string }) =>
+    request<{ iteration: string; points: number }[]>(`/projects/${projectId}/teams/${teamId}/analytics/delivery/velocity${buildQuery({ from_date: params?.from_date, to_date: params?.to_date })}`),
+  getTeamDeliveryFlow: (projectId: string, teamId: string, params?: { from_date?: string; to_date?: string }) =>
+    request<FlowMetrics>(`/projects/${projectId}/teams/${teamId}/analytics/delivery/flow${buildQuery({ from_date: params?.from_date, to_date: params?.to_date })}`),
+  getTeamDeliveryBacklog: (projectId: string, teamId: string, params?: { from_date?: string; to_date?: string }) =>
+    request<BacklogHealthMetrics>(`/projects/${projectId}/teams/${teamId}/analytics/delivery/backlog${buildQuery({ from_date: params?.from_date, to_date: params?.to_date })}`),
+  getTeamDeliveryQuality: (projectId: string, teamId: string, params?: { from_date?: string; to_date?: string }) =>
+    request<QualityMetrics>(`/projects/${projectId}/teams/${teamId}/analytics/delivery/quality${buildQuery({ from_date: params?.from_date, to_date: params?.to_date })}`),
+  getTeamDeliveryIntersection: (projectId: string, teamId: string, params?: { from_date?: string; to_date?: string }) =>
+    request<IntersectionMetrics>(`/projects/${projectId}/teams/${teamId}/analytics/delivery/intersection${buildQuery({ from_date: params?.from_date, to_date: params?.to_date })}`),
+  getTeamWorkItems: (projectId: string, teamId: string, params?: { state?: string; search?: string; page?: number; page_size?: number }) =>
+    request<PaginatedWorkItems>(`/projects/${projectId}/teams/${teamId}/analytics/delivery/work-items${buildQuery({
+      state: params?.state,
+      search: params?.search,
+      page: params?.page?.toString(),
+      page_size: params?.page_size?.toString(),
+    })}`),
+  getTeamInsights: (projectId: string, teamId: string) =>
+    request<InsightFinding[]>(`/projects/${projectId}/teams/${teamId}/analytics/insights`),
+
+  // Contributor Insights
+  listContributorInsightFindings: (contributorId: string, params?: { category?: string; severity?: string; status?: string }) =>
+    request<ContributorInsightFinding[]>(`/contributors/${contributorId}/insights${buildQuery({
+      category: params?.category,
+      severity: params?.severity,
+      status: params?.status,
+    })}`),
+  getContributorInsightsSummary: (contributorId: string) =>
+    request<ContributorInsightsSummary>(`/contributors/${contributorId}/insights/summary`),
+  listContributorInsightRuns: (contributorId: string) =>
+    request<ContributorInsightRun[]>(`/contributors/${contributorId}/insights/runs`),
+  triggerContributorInsightRun: (contributorId: string) =>
+    request<ContributorInsightRun>(`/contributors/${contributorId}/insights/run`, { method: "POST" }),
+  dismissContributorInsightFinding: (contributorId: string, findingId: string) =>
+    request<ContributorInsightFinding>(`/contributors/${contributorId}/insights/${findingId}/dismiss`, { method: "PATCH" }),
 
   getApiBase: () => API_BASE,
   getAuthToken: () => getToken(),

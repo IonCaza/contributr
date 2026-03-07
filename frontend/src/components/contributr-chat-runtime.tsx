@@ -13,10 +13,13 @@ import { ExportedMessageRepository } from "@assistant-ui/react";
 import type { ThreadHistoryAdapter } from "@assistant-ui/core";
 import { api } from "@/lib/api-client";
 
-function makeChatModelAdapter(agentSlugRef: React.RefObject<string>): ChatModelAdapter {
+function makeChatModelAdapter(
+  agentSlugRef: React.RefObject<string>,
+  sessionIdRef: React.RefObject<string | undefined>,
+): ChatModelAdapter {
   return {
-    async *run({ messages, abortSignal, unstable_threadId }) {
-      const sessionId = unstable_threadId;
+    async *run({ messages, abortSignal }) {
+      const sessionId = sessionIdRef.current;
       const lastUserMsg = messages.findLast((m) => m.role === "user");
       const text =
         lastUserMsg?.content.find((c) => c.type === "text")?.text ?? "";
@@ -165,8 +168,14 @@ function RuntimeHook({ agentSlugRef }: { agentSlugRef: React.RefObject<string> }
     (s: { threadListItem: { remoteId?: string } }) =>
       s.threadListItem.remoteId,
   );
+  const sessionIdRef = useRef<string | undefined>(remoteId);
+  sessionIdRef.current = remoteId;
+
   const history = useHistoryAdapter(remoteId);
-  const adapter = useMemo(() => makeChatModelAdapter(agentSlugRef), [agentSlugRef]);
+  const adapter = useMemo(
+    () => makeChatModelAdapter(agentSlugRef, sessionIdRef),
+    [agentSlugRef, sessionIdRef],
+  );
   return useLocalRuntime(adapter, { adapters: { history } });
 }
 

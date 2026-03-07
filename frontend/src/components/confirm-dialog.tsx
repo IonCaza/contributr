@@ -19,7 +19,7 @@ interface ConfirmDialogProps {
   description: ReactNode;
   confirmLabel?: string;
   cancelLabel?: string;
-  variant?: "destructive" | "warning";
+  variant?: "default" | "destructive" | "warning";
   onConfirm: () => void;
 }
 
@@ -49,7 +49,9 @@ export function ConfirmDialog({
             className={
               variant === "destructive"
                 ? "bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                : "bg-amber-600 text-white hover:bg-amber-700"
+                : variant === "warning"
+                  ? "bg-amber-600 text-white hover:bg-amber-700"
+                  : undefined
             }
           >
             {confirmLabel}

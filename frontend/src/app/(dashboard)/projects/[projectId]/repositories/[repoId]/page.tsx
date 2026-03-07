@@ -28,6 +28,7 @@ import { SyncLogViewer, ViewLogsButton } from "@/components/sync-log-viewer";
 import { queryKeys } from "@/lib/query-keys";
 import { useRepo, useRepoStats, useSyncJobs, useRepoBranches, useRepoContributors, useFileTree, useRepoCommits, useSyncRepo, useCancelSync } from "@/hooks/use-repos";
 import { useDailyStats } from "@/hooks/use-daily-stats";
+import { useIterations } from "@/hooks/use-delivery";
 import type { ContributorSummary } from "@/lib/types";
 
 const STATUS_ICON: Record<string, React.ReactNode> = {
@@ -44,6 +45,7 @@ export default function RepoDetailPage() {
 
   const [selectedBranches, setSelectedBranches] = useState<string[]>([]);
   const [dateRange, setDateRange] = useState<DateRange>(defaultRange);
+  const [sprintAlign, setSprintAlign] = useState<string>("");
   const [contribSearch, setContribSearch] = useState("");
   const [contribSort, setContribSort] = useState<{ key: "name" | "email" | "lines"; dir: "asc" | "desc" }>({ key: "name", dir: "asc" });
   const [showInactive, setShowInactive] = useState(false);
@@ -62,6 +64,17 @@ export default function RepoDetailPage() {
     const timer = setTimeout(() => setDebouncedSearch(commitSearch), 300);
     return () => clearTimeout(timer);
   }, [commitSearch]);
+
+  const { data: iterations = [] } = useIterations(projectId);
+
+  const handleSprintAlign = (iterationId: string) => {
+    setSprintAlign(iterationId);
+    if (iterationId === "__none__") return;
+    const iter = iterations.find(i => i.id === iterationId);
+    if (iter?.start_date && iter?.end_date) {
+      setDateRange({ from: iter.start_date, to: iter.end_date });
+    }
+  };
 
   const branchParam = selectedBranches.length > 0 ? selectedBranches : undefined;
 
@@ -235,6 +248,21 @@ export default function RepoDetailPage() {
           <BranchMultiSelect branches={branches} selected={selectedBranches} onChange={setSelectedBranches} />
         )}
         <div className="h-6 w-px bg-border" />
+        {iterations.length > 0 && (
+          <Select value={sprintAlign} onValueChange={handleSprintAlign}>
+            <SelectTrigger className="w-40">
+              <SelectValue placeholder="Align to Sprint" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="__none__">No Sprint</SelectItem>
+              {iterations.map(it => (
+                <SelectItem key={it.id} value={it.id}>
+                  {it.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        )}
         <DateRangeFilter value={dateRange} onChange={setDateRange} />
       </div>
 
