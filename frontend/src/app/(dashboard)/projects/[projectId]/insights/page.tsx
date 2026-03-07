@@ -7,6 +7,7 @@ import {
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   useInsightFindings,
   useInsightsSummary,
@@ -14,6 +15,7 @@ import {
   useTriggerInsightRun,
   useDismissInsightFinding,
 } from "@/hooks/use-insights";
+import { queryKeys } from "@/lib/query-keys";
 import { SyncLogViewer } from "@/components/sync-log-viewer";
 import { FindingCard, formatRelativeTime } from "@/components/insight-finding-card";
 import { FindingsOverTimeChart } from "@/components/charts/findings-over-time-chart";
@@ -198,6 +200,7 @@ export default function InsightsPage({
   params: Promise<{ projectId: string }>;
 }) {
   const { projectId } = use(params);
+  const qc = useQueryClient();
   const [categoryFilter, setCategoryFilter] = useState("");
   const [severityFilter, setSeverityFilter] = useState("");
   const [activeRunId, setActiveRunId] = useState<string | null>(null);
@@ -237,7 +240,9 @@ export default function InsightsPage({
   const handleLogsDone = useCallback(() => {
     setActiveRunId(null);
     refetchRuns();
-  }, [refetchRuns]);
+    qc.invalidateQueries({ queryKey: ["insights", projectId, "findings"] });
+    qc.invalidateQueries({ queryKey: queryKeys.insights.summary(projectId) });
+  }, [projectId, qc, refetchRuns]);
 
   return (
     <div className="space-y-6">

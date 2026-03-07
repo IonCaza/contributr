@@ -15,6 +15,7 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   useContributorInsightFindings,
   useContributorInsightsSummary,
@@ -22,6 +23,7 @@ import {
   useTriggerContributorInsightRun,
   useDismissContributorInsightFinding,
 } from "@/hooks/use-contributor-insights";
+import { queryKeys } from "@/lib/query-keys";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { SyncLogViewer } from "@/components/sync-log-viewer";
 import { FindingsOverTimeChart } from "@/components/charts/findings-over-time-chart";
@@ -374,6 +376,7 @@ function formatRelativeTime(iso: string): string {
 }
 
 export function ContributorInsightsTab({ contributorId }: { contributorId: string }) {
+  const qc = useQueryClient();
   const [categoryFilter, setCategoryFilter] = useState("");
   const [severityFilter, setSeverityFilter] = useState("");
   const [activeRunId, setActiveRunId] = useState<string | null>(null);
@@ -413,7 +416,9 @@ export function ContributorInsightsTab({ contributorId }: { contributorId: strin
   const handleLogsDone = useCallback(() => {
     setActiveRunId(null);
     refetchRuns();
-  }, [refetchRuns]);
+    qc.invalidateQueries({ queryKey: ["contributorInsights", contributorId, "findings"] });
+    qc.invalidateQueries({ queryKey: queryKeys.contributorInsights.summary(contributorId) });
+  }, [contributorId, qc, refetchRuns]);
 
   return (
     <div className="space-y-6">
