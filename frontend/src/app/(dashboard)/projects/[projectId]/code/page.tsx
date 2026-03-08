@@ -1,6 +1,6 @@
 "use client";
 
-import React, { use, useState, useMemo } from "react";
+import React, { use, useState, useMemo, useCallback } from "react";
 import Link from "next/link";
 import { useQueryClient } from "@tanstack/react-query";
 import { GitBranch, Plus, RefreshCw, Loader2, XCircle, ArrowUpDown, Search, ChevronDown, ChevronRight, Pencil, Trash2, Eraser } from "lucide-react";
@@ -23,6 +23,7 @@ import type { DateRange } from "@/components/date-range-filter";
 import { SyncLogViewer } from "@/components/sync-log-viewer";
 import { api } from "@/lib/api-client";
 import { queryKeys } from "@/lib/query-keys";
+import { cn } from "@/lib/utils";
 import type { ContributorSummary } from "@/lib/types";
 import { useProject, useProjectStats } from "@/hooks/use-projects";
 import { useSSHKeys } from "@/hooks/use-settings";
@@ -46,14 +47,40 @@ export default function ProjectCodePage({
   const { data: iterations = [] } = useIterations(projectId);
   const { data: stats } = useProjectStats(projectId, { from: dateRange.from, to: dateRange.to });
 
-  const handleSprintAlign = (iterationId: string) => {
-    setSprintAlign(iterationId);
-    if (iterationId === "__none__") return;
-    const iter = iterations.find(i => i.id === iterationId);
-    if (iter?.start_date && iter?.end_date) {
-      setDateRange({ from: iter.start_date, to: iter.end_date });
-    }
-  };
+  const sortedIterations = useMemo(() => {
+    const now = new Date();
+    return (iterations || [])
+      .map((it) => {
+        const start = it.start_date ? new Date(it.start_date) : null;
+        const end = it.end_date ? new Date(it.end_date) : null;
+        let status: "active" | "upcoming" | "past" = "past";
+        if (start && end) {
+          if (start <= now && end >= now) status = "active";
+          else if (start > now) status = "upcoming";
+        }
+        return { ...it, _status: status };
+      })
+      .sort((a, b) => {
+        const aStart = a.start_date ? new Date(a.start_date).getTime() : 0;
+        const bStart = b.start_date ? new Date(b.start_date).getTime() : 0;
+        return aStart - bStart;
+      });
+  }, [iterations]);
+
+  const handleSprintAlign = useCallback(
+    (val: string) => {
+      setSprintAlign(val);
+      if (val === "__none__") {
+        setDateRange(defaultRange());
+        return;
+      }
+      const it = (iterations || []).find((i) => i.id === val);
+      if (it?.start_date && it?.end_date) {
+        setDateRange({ from: it.start_date, to: it.end_date });
+      }
+    },
+    [iterations],
+  );
 
   const dailyParams = useMemo(() => ({
     project_id: projectId,
@@ -223,22 +250,64 @@ export default function ProjectCodePage({
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-center gap-3 rounded-lg border border-border bg-muted/30 px-4 py-3">
-        {iterations.length > 0 && (
+        {sortedIterations.length > 0 && (
           <Select value={sprintAlign} onValueChange={handleSprintAlign}>
-            <SelectTrigger className="w-40">
+            <SelectTrigger className="w-72">
               <SelectValue placeholder="Align to Sprint" />
             </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="__none__">No Sprint</SelectItem>
-              {iterations.map(it => (
-                <SelectItem key={it.id} value={it.id}>
-                  {it.name}
-                </SelectItem>
-              ))}
+            <SelectContent className="max-h-80">
+              <SelectItem value="__none__">
+                <span className="text-muted-foreground">No Sprint Alignment</span>
+              </SelectItem>
+              {sortedIterations.map((it) => {
+                const s = it.stats;
+                const pct = s && s.total_items > 0 ? Math.round((s.completed_items / s.total_items) * 100) : null;
+                return (
+                  <SelectItem key={it.id} value={it.id}>
+                    <span className="flex items-center gap-2">
+                      <Badge
+                        variant="secondary"
+                        className={cn(
+                          "text-[9px] px-1.5 py-0 leading-4 shrink-0",
+                          it._status === "active" && "bg-green-500/15 text-green-700 dark:text-green-400",
+                          it._status === "upcoming" && "bg-blue-500/15 text-blue-700 dark:text-blue-400",
+                          it._status === "past" && "bg-muted text-muted-foreground",
+                        )}
+                      >
+                        {it._status === "active" ? "Active" : it._status === "upcoming" ? "Future" : "Past"}
+                      </Badge>
+                      <span className="truncate">{it.name}</span>
+                      <span className="ml-auto shrink-0 text-[11px] text-muted-foreground tabular-nums">
+                        {it.start_date && it.end_date
+                          ? `${it.start_date} → ${it.end_date}`
+                          : "No dates"}
+                        {pct !== null && ` · ${pct}%`}
+                      </span>
+                    </span>
+                  </SelectItem>
+                );
+              })}
             </SelectContent>
           </Select>
         )}
+
+        {sortedIterations.length > 0 && <div className="h-5 w-px bg-border" />}
+
         <DateRangeFilter value={dateRange} onChange={setDateRange} />
+
+        {sprintAlign && sprintAlign !== "__none__" && (
+          <Button
+            variant="ghost"
+            size="sm"
+            className="text-xs h-7"
+            onClick={() => {
+              setSprintAlign("");
+              setDateRange(defaultRange());
+            }}
+          >
+            Reset
+          </Button>
+        )}
       </div>
 
       {stats && (
