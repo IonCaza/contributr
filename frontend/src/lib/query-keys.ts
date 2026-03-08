@@ -107,4 +107,12 @@ export const queryKeys = {
     summary: (projectId: string, teamId: string) => ["teamInsights", projectId, teamId, "summary"] as const,
     runs: (projectId: string, teamId: string) => ["teamInsights", projectId, teamId, "runs"] as const,
   },
+  sast: {
+    findings: (id: string, scope: "repo" | "project", filters?: Record<string, unknown>) => ["sast", scope, id, "findings", filters] as const,
+    summary: (id: string, scope: "repo" | "project") => ["sast", scope, id, "summary"] as const,
+    runs: (id: string, scope: "repo" | "project") => ["sast", scope, id, "runs"] as const,
+    profiles: ["sast", "profiles"] as const,
+    settings: ["sast", "settings"] as const,
+    ignoredRules: (scope: "global" | string) => ["sast", "ignoredRules", scope] as const,
+  },
 };

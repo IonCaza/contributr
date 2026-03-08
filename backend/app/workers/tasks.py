@@ -244,6 +244,23 @@ async def _run_sync(repo_id: str, job_id: str) -> None:
             job.status = SyncStatus.COMPLETED
             job.finished_at = datetime.now(timezone.utc)
             await db.commit()
+
+            if settings.auto_sast_on_sync:
+                try:
+                    from app.db.models.sast import SastScanRun, SastScanStatus
+                    sast_run = SastScanRun(
+                        repository_id=repo.id,
+                        project_id=repo.project_id,
+                        status=SastScanStatus.QUEUED,
+                    )
+                    db.add(sast_run)
+                    await db.commit()
+                    await db.refresh(sast_run)
+                    run_sast_scan.delay(str(sast_run.id), str(repo.id))
+                    slog.info("sast", "SAST scan queued automatically")
+                except Exception:
+                    logger.warning("Auto SAST scan trigger failed", exc_info=True)
+
             slog.complete()
 
         except SyncCancelled:
@@ -596,3 +613,77 @@ def run_team_insights(run_id: str, team_id: str, project_id: str) -> dict:
     logger.info("Celery task run_team_insights: run=%s team=%s", run_id, team_id)
     asyncio.run(_run_team_insights(run_id, team_id, project_id))
     return {"run_id": run_id, "team_id": team_id, "project_id": project_id}
+
+
+async def _run_sast_scan(scan_id: str, repository_id: str) -> None:
+    from app.db.models.sast import SastScanRun, SastScanStatus, SastRuleProfile
+    from app.services.sast_scanner import run_sast_scan as execute_scan
+    from app.services.sync_logger import SyncLogger
+
+    slog = SyncLogger(f"sast-{scan_id}")
+
+    Session = _get_session()
+    async with Session() as db:
+        scan_run = await db.get(SastScanRun, uuid.UUID(scan_id))
+        if not scan_run:
+            logger.error("SastScanRun %s not found", scan_id)
+            slog.error("init", f"SastScanRun {scan_id} not found")
+            slog.fail("Scan run not found")
+            slog.close()
+            return
+
+        try:
+            scan_run.status = SastScanStatus.RUNNING
+            scan_run.started_at = datetime.now(timezone.utc)
+            await db.commit()
+
+            slog.info("init", f"Starting SAST scan for repository {repository_id}")
+
+            profile = None
+            if scan_run.config_profile_id:
+                profile = await db.get(SastRuleProfile, scan_run.config_profile_id)
+            if not profile:
+                result = await db.execute(
+                    select(SastRuleProfile).where(SastRuleProfile.is_default.is_(True)).limit(1)
+                )
+                profile = result.scalar_one_or_none()
+
+            if profile:
+                slog.info("config", f"Using rule profile: {profile.name} ({', '.join(profile.rulesets)})")
+            else:
+                slog.info("config", "No rule profile configured, using Semgrep auto-detect")
+
+            count = await execute_scan(
+                db, scan_run,
+                branch=scan_run.branch,
+                profile=profile,
+                slog=slog,
+            )
+
+            scan_run.status = SastScanStatus.COMPLETED
+            scan_run.finished_at = datetime.now(timezone.utc)
+            scan_run.findings_count = count
+            await db.commit()
+
+            slog.info("done", f"SAST scan complete: {count} findings")
+            slog.complete()
+
+        except Exception as e:
+            logger.exception("SastScanRun %s failed: %s", scan_id, e)
+            slog.fail(str(e)[:500])
+            await db.rollback()
+            scan_run = await db.get(SastScanRun, uuid.UUID(scan_id))
+            if scan_run:
+                scan_run.status = SastScanStatus.FAILED
+                scan_run.error_message = str(e)[:2000]
+                scan_run.finished_at = datetime.now(timezone.utc)
+                await db.commit()
+        finally:
+            slog.close()
+
+
+@celery.task(name="run_sast_scan")
+def run_sast_scan(scan_id: str, repository_id: str) -> dict:
+    logger.info("Celery task run_sast_scan: scan=%s repo=%s", scan_id, repository_id)
+    asyncio.run(_run_sast_scan(scan_id, repository_id))
+    return {"scan_id": scan_id, "repository_id": repository_id}

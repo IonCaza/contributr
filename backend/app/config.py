@@ -11,6 +11,7 @@ class Settings(BaseSettings):
     jwt_refresh_token_expire_days: int = 7
     backend_cors_origins: list[str] = ["http://localhost:3000"]
     repos_cache_dir: str = "/tmp/contributr_repos"
+    auto_sast_on_sync: bool = False
 
     model_config = {"env_file": ".env", "extra": "ignore"}
 

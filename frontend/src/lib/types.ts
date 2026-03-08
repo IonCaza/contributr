@@ -780,3 +780,84 @@ export interface TeamInsightsSummary {
   resolved_30d: number;
   by_category: Record<string, number>;
 }
+
+// ── SAST (Static Application Security Testing) ─────────────────────
+
+export interface SastScanRun {
+  id: string;
+  repository_id: string;
+  project_id: string;
+  status: string;
+  branch: string | null;
+  commit_sha: string | null;
+  tool: string;
+  config_profile_id: string | null;
+  started_at: string | null;
+  finished_at: string | null;
+  findings_count: number;
+  error_message: string | null;
+  created_at: string;
+}
+
+export interface SastFinding {
+  id: string;
+  scan_run_id: string;
+  repository_id: string;
+  project_id: string;
+  rule_id: string;
+  severity: string;
+  confidence: string;
+  file_path: string;
+  start_line: number;
+  end_line: number;
+  start_col: number | null;
+  end_col: number | null;
+  message: string;
+  code_snippet: string | null;
+  fix_suggestion: string | null;
+  cwe_ids: string[] | null;
+  owasp_ids: string[] | null;
+  metadata: Record<string, unknown> | null;
+  status: string;
+  first_detected_at: string;
+  last_detected_at: string;
+  dismissed_at: string | null;
+  dismissed_by_id: string | null;
+}
+
+export interface SastSummary {
+  total_open: number;
+  critical: number;
+  high: number;
+  medium: number;
+  low: number;
+  info: number;
+  fixed_30d: number;
+  by_rule: Record<string, number>;
+  by_file: Record<string, number>;
+}
+
+export interface SastRuleProfile {
+  id: string;
+  name: string;
+  description: string;
+  rulesets: string[];
+  custom_rules_yaml: string | null;
+  scan_branches: string[];
+  is_default: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SastIgnoredRule {
+  id: string;
+  rule_id: string;
+  repository_id: string | null;
+  reason: string;
+  created_by_id: string | null;
+  created_at: string;
+}
+
+export interface SastSettings {
+  auto_sast_on_sync: boolean;
+}

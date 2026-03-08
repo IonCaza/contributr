@@ -21,6 +21,9 @@ langchain>=0.3
 langchain-community>=0.3
 litellm>=1.60
 sse-starlette>=2.0
+setuptools>=75.0,<82
+semgrep>=1.60
+fpdf2>=2.8
 
 # Test dependencies
 pytest>=8.0

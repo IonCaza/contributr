@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useRef } from "react";
-import { Key, Users, Plus, Trash2, Copy, Check, Download, Upload, Database, Loader2, CheckCircle2, AlertCircle, Bot, Eye, EyeOff, FileX2, ShieldCheck, Play, Pencil, Cpu, Wrench, Star, ListFilter, Search, RefreshCw, CalendarRange } from "lucide-react";
+import { Key, Users, Plus, Trash2, Copy, Check, Download, Upload, Database, Loader2, CheckCircle2, AlertCircle, Bot, Eye, EyeOff, FileX2, ShieldCheck, ShieldAlert, Play, Pencil, Cpu, Wrench, Star, ListFilter, Search, RefreshCw, CalendarRange } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -17,7 +17,7 @@ import { useAuth } from "@/lib/auth-context";
 import { api } from "@/lib/api-client";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { ConfirmDialog } from "@/components/confirm-dialog";
-import type { LlmProvider, AgentConfig, KnowledgeGraph, DiscoveredField } from "@/lib/types";
+import type { LlmProvider, AgentConfig, KnowledgeGraph, DiscoveredField, SastRuleProfile } from "@/lib/types";
 import { useProjects } from "@/hooks/use-projects";
 import { useCustomFields, useDiscoverCustomFields, useBulkUpsertCustomFields, useDeleteCustomField } from "@/hooks/use-custom-fields";
 import { KnowledgeGraphEditor } from "@/components/knowledge-graph-editor";
@@ -32,6 +32,11 @@ import {
   useAiTools,
   useKnowledgeGraphs, useKnowledgeGraph, useCreateKnowledgeGraph, useUpdateKnowledgeGraph, useDeleteKnowledgeGraph, useRegenerateKnowledgeGraph,
 } from "@/hooks/use-settings";
+import {
+  useSastProfiles, useCreateSastProfile, useUpdateSastProfile, useDeleteSastProfile,
+  useSastSettings, useUpdateSastSettings,
+  useGlobalIgnoredRules, useAddGlobalIgnoredRule, useRemoveGlobalIgnoredRule,
+} from "@/hooks/use-sast";
 
 function CreateKnowledgeGraphDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
   const [form, setForm] = useState({ name: "", description: "", generation_mode: "schema_and_entities" });
@@ -94,6 +99,310 @@ function CopyButton({ text }: { text: string }) {
     >
       {copied ? <Check className="h-3 w-3 text-emerald-500" /> : <Copy className="h-3 w-3" />}
     </Button>
+  );
+}
+
+const WELL_KNOWN_RULESETS = [
+  { id: "auto", label: "Auto-detect", desc: "Detect languages and apply matching rules" },
+  { id: "p/security-audit", label: "Security Audit", desc: "Comprehensive security audit rules" },
+  { id: "p/owasp-top-ten", label: "OWASP Top 10", desc: "Rules mapped to OWASP Top 10 categories" },
+  { id: "p/secrets", label: "Secrets", desc: "Hardcoded credentials, API keys, tokens" },
+  { id: "p/python", label: "Python", desc: "Python-specific security and quality rules" },
+  { id: "p/javascript", label: "JavaScript", desc: "JavaScript security rules" },
+  { id: "p/typescript", label: "TypeScript", desc: "TypeScript security rules" },
+  { id: "p/java", label: "Java", desc: "Java security rules" },
+  { id: "p/go", label: "Go", desc: "Go security rules" },
+  { id: "p/docker", label: "Docker", desc: "Dockerfile misconfigurations" },
+];
+
+function SastSettingsSection() {
+  const { data: profiles = [] } = useSastProfiles();
+  const { data: sastSettings } = useSastSettings();
+  const createProfile = useCreateSastProfile();
+  const updateProfile = useUpdateSastProfile();
+  const deleteProfile = useDeleteSastProfile();
+  const updateSettings = useUpdateSastSettings();
+  const { data: ignoredRules = [] } = useGlobalIgnoredRules();
+  const addIgnoredRule = useAddGlobalIgnoredRule();
+  const removeIgnoredRule = useRemoveGlobalIgnoredRule();
+
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [editingProfile, setEditingProfile] = useState<SastRuleProfile | null>(null);
+  const [form, setForm] = useState({ name: "", description: "", rulesets: ["auto"] as string[], custom_rules_yaml: "", scan_branches: "" as string, is_default: false });
+  const [deleteId, setDeleteId] = useState<string | null>(null);
+  const [newIgnoreRule, setNewIgnoreRule] = useState("");
+  const [newIgnoreReason, setNewIgnoreReason] = useState("");
+
+  function openCreate() {
+    setEditingProfile(null);
+    setForm({ name: "", description: "", rulesets: ["auto"], custom_rules_yaml: "", scan_branches: "", is_default: false });
+    setDialogOpen(true);
+  }
+
+  function openEdit(p: SastRuleProfile) {
+    setEditingProfile(p);
+    setForm({ name: p.name, description: p.description, rulesets: p.rulesets, custom_rules_yaml: p.custom_rules_yaml || "", scan_branches: p.scan_branches.join(", "), is_default: p.is_default });
+    setDialogOpen(true);
+  }
+
+  async function handleSave() {
+    const branchList = form.scan_branches.split(",").map((b) => b.trim()).filter(Boolean);
+    const data = { ...form, custom_rules_yaml: form.custom_rules_yaml || undefined, scan_branches: branchList };
+    if (editingProfile) {
+      await updateProfile.mutateAsync({ id: editingProfile.id, ...data });
+    } else {
+      await createProfile.mutateAsync(data);
+    }
+    setDialogOpen(false);
+  }
+
+  function toggleRuleset(id: string) {
+    setForm((f) => ({
+      ...f,
+      rulesets: f.rulesets.includes(id)
+        ? f.rulesets.filter((r) => r !== id)
+        : [...f.rulesets, id],
+    }));
+  }
+
+  return (
+    <>
+      <Card>
+        <CardHeader>
+          <CardTitle>Auto-Scan on Sync</CardTitle>
+          <CardDescription>
+            Automatically trigger a SAST scan every time a repository is synced.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="flex items-center gap-3">
+            <Switch
+              checked={sastSettings?.auto_sast_on_sync ?? false}
+              onCheckedChange={(checked) => updateSettings.mutate({ auto_sast_on_sync: checked })}
+            />
+            <Label>Run SAST scan after every repository sync</Label>
+          </div>
+        </CardContent>
+      </Card>
+
+      <div className="flex items-center justify-between">
+        <div>
+          <h3 className="text-lg font-semibold">Rule Profiles</h3>
+          <p className="text-sm text-muted-foreground">
+            Configure which Semgrep rulesets to apply during scans. Add custom YAML rules for project-specific checks.
+          </p>
+        </div>
+        <Button size="sm" onClick={openCreate}>
+          <Plus className="mr-2 h-4 w-4" /> New Profile
+        </Button>
+      </div>
+
+      {profiles.length === 0 ? (
+        <Card>
+          <CardContent className="flex flex-col items-center justify-center py-12 text-muted-foreground">
+            <ShieldAlert className="h-10 w-10 mb-2" />
+            <p className="font-medium">No rule profiles yet</p>
+            <p className="text-sm mt-1">Create a profile to configure which rules are applied during scans.</p>
+            <p className="text-sm">Without a profile, scans will use Semgrep&apos;s auto-detect mode.</p>
+          </CardContent>
+        </Card>
+      ) : (
+        <div className="space-y-3">
+          {profiles.map((p) => (
+            <Card key={p.id}>
+              <CardContent className="flex items-center justify-between py-3 px-4">
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="font-medium">{p.name}</span>
+                    {p.is_default && <Badge variant="secondary" className="text-xs">Default</Badge>}
+                  </div>
+                  {p.description && <p className="text-xs text-muted-foreground mt-0.5">{p.description}</p>}
+                  <div className="flex gap-1 mt-1 flex-wrap">
+                    {p.rulesets.map((r) => (
+                      <Badge key={r} variant="outline" className="text-xs font-mono">{r}</Badge>
+                    ))}
+                    {p.custom_rules_yaml && <Badge variant="outline" className="text-xs">+ custom rules</Badge>}
+                    {p.scan_branches.length > 0 && (
+                      <Badge variant="secondary" className="text-xs">branches: {p.scan_branches.join(", ")}</Badge>
+                    )}
+                  </div>
+                </div>
+                <div className="flex items-center gap-1 shrink-0 ml-4">
+                  <Button variant="ghost" size="sm" onClick={() => openEdit(p)}>
+                    <Pencil className="h-3.5 w-3.5" />
+                  </Button>
+                  <Button variant="ghost" size="sm" className="text-destructive" onClick={() => setDeleteId(p.id)}>
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+      )}
+
+      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+        <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>{editingProfile ? "Edit Rule Profile" : "Create Rule Profile"}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="grid gap-2">
+              <Label htmlFor="sast-name">Name</Label>
+              <Input id="sast-name" value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} placeholder="e.g. Strict Security" />
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="sast-desc">Description</Label>
+              <Input id="sast-desc" value={form.description} onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))} placeholder="Optional description" />
+            </div>
+            <div className="grid gap-2">
+              <Label>Community Rulesets</Label>
+              <p className="text-xs text-muted-foreground">Select which Semgrep community rulesets to include. Rules are fetched live from the Semgrep Registry at scan time.</p>
+              <div className="grid gap-1.5 grid-cols-1 sm:grid-cols-2">
+                {WELL_KNOWN_RULESETS.map((rs) => (
+                  <button
+                    key={rs.id}
+                    type="button"
+                    onClick={() => toggleRuleset(rs.id)}
+                    className={`text-left rounded-md border p-2.5 text-sm transition-colors ${
+                      form.rulesets.includes(rs.id)
+                        ? "border-primary bg-primary/5"
+                        : "border-muted hover:border-primary/50"
+                    }`}
+                  >
+                    <div className="flex items-center gap-2">
+                      <div className={`h-4 w-4 rounded border flex items-center justify-center ${
+                        form.rulesets.includes(rs.id) ? "bg-primary border-primary" : "border-muted-foreground/30"
+                      }`}>
+                        {form.rulesets.includes(rs.id) && <Check className="h-3 w-3 text-primary-foreground" />}
+                      </div>
+                      <span className="font-medium">{rs.label}</span>
+                    </div>
+                    <p className="text-xs text-muted-foreground mt-0.5 ml-6">{rs.desc}</p>
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="sast-custom">Custom Rules (YAML)</Label>
+              <p className="text-xs text-muted-foreground">
+                Add custom Semgrep rules in YAML format. These are applied alongside the community rulesets above.
+              </p>
+              <Textarea
+                id="sast-custom"
+                value={form.custom_rules_yaml}
+                onChange={(e) => setForm((f) => ({ ...f, custom_rules_yaml: e.target.value }))}
+                placeholder={`rules:\n  - id: custom.no-eval\n    pattern: eval(...)\n    message: "Avoid eval()"\n    severity: ERROR\n    languages: [python]`}
+                className="font-mono text-xs min-h-[160px]"
+              />
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="sast-branches">Scan Branches</Label>
+              <p className="text-xs text-muted-foreground">
+                Comma-separated list of branch names to scan automatically (e.g. main, develop, release/*). Leave empty to scan the default branch.
+              </p>
+              <Input
+                id="sast-branches"
+                value={form.scan_branches}
+                onChange={(e) => setForm((f) => ({ ...f, scan_branches: e.target.value }))}
+                placeholder="main, develop"
+              />
+            </div>
+            <div className="flex items-center gap-3">
+              <Switch
+                checked={form.is_default}
+                onCheckedChange={(checked) => setForm((f) => ({ ...f, is_default: checked }))}
+              />
+              <Label>Set as default profile (used when no profile is explicitly selected)</Label>
+            </div>
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" onClick={() => setDialogOpen(false)}>Cancel</Button>
+              <Button onClick={handleSave} disabled={!form.name || form.rulesets.length === 0 || createProfile.isPending || updateProfile.isPending}>
+                {(createProfile.isPending || updateProfile.isPending) && <Loader2 className="h-4 w-4 animate-spin mr-1" />}
+                {editingProfile ? "Save Changes" : "Create Profile"}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <ConfirmDialog
+        open={!!deleteId}
+        onOpenChange={(v) => !v && setDeleteId(null)}
+        title="Delete Rule Profile"
+        description={<>This will permanently remove the profile <span className="font-semibold">{profiles.find((p) => p.id === deleteId)?.name}</span>. Future scans will fall back to auto-detect mode.</>}
+        confirmLabel="Delete Profile"
+        onConfirm={() => { if (deleteId) { deleteProfile.mutate(deleteId); setDeleteId(null); } }}
+      />
+
+      {/* Ignored Rules Section */}
+      <div className="flex items-center justify-between mt-6">
+        <div>
+          <h3 className="text-lg font-semibold">Globally Ignored Rules</h3>
+          <p className="text-sm text-muted-foreground">
+            Rules listed here will be excluded from all SAST scans across every repository.
+          </p>
+        </div>
+      </div>
+
+      <Card>
+        <CardContent className="py-4 px-4 space-y-3">
+          <div className="flex gap-2">
+            <Input
+              value={newIgnoreRule}
+              onChange={(e) => setNewIgnoreRule(e.target.value)}
+              placeholder="Rule ID (e.g. python.lang.security.audit.dangerous-subprocess-use)"
+              className="flex-1 font-mono text-xs"
+            />
+            <Input
+              value={newIgnoreReason}
+              onChange={(e) => setNewIgnoreReason(e.target.value)}
+              placeholder="Reason (optional)"
+              className="w-48"
+            />
+            <Button
+              size="sm"
+              disabled={!newIgnoreRule || addIgnoredRule.isPending}
+              onClick={async () => {
+                await addIgnoredRule.mutateAsync({ rule_id: newIgnoreRule, reason: newIgnoreReason });
+                setNewIgnoreRule("");
+                setNewIgnoreReason("");
+              }}
+            >
+              {addIgnoredRule.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4 mr-1" />}
+              Ignore
+            </Button>
+          </div>
+
+          {ignoredRules.length === 0 ? (
+            <p className="text-sm text-muted-foreground text-center py-4">No globally ignored rules.</p>
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Rule ID</TableHead>
+                  <TableHead>Reason</TableHead>
+                  <TableHead className="w-10"></TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {ignoredRules.map((r) => (
+                  <TableRow key={r.id}>
+                    <TableCell className="font-mono text-xs">{r.rule_id}</TableCell>
+                    <TableCell className="text-xs text-muted-foreground">{r.reason || "-"}</TableCell>
+                    <TableCell>
+                      <Button variant="ghost" size="sm" className="text-destructive" onClick={() => removeIgnoredRule.mutate(r.id)}>
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          )}
+        </CardContent>
+      </Card>
+    </>
   );
 }
 
@@ -398,6 +707,7 @@ export default function SettingsPage() {
           <TabsTrigger value="file-exclusions" className="gap-2"><FileX2 className="h-4 w-4" /> File Exclusions</TabsTrigger>
           <TabsTrigger value="custom-fields" className="gap-2"><ListFilter className="h-4 w-4" /> Custom Fields</TabsTrigger>
           <TabsTrigger value="delivery" className="gap-2"><CalendarRange className="h-4 w-4" /> Delivery</TabsTrigger>
+          <TabsTrigger value="sast" className="gap-2"><ShieldAlert className="h-4 w-4" /> SAST</TabsTrigger>
           <TabsTrigger value="backup" className="gap-2"><Database className="h-4 w-4" /> Backup</TabsTrigger>
         </TabsList>
 
@@ -1426,6 +1736,10 @@ export default function SettingsPage() {
               </p>
             </CardContent>
           </Card>
+        </TabsContent>
+
+        <TabsContent value="sast" className="space-y-4">
+          <SastSettingsSection />
         </TabsContent>
 
         <TabsContent value="backup" className="space-y-4">

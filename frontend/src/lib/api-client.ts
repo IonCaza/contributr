@@ -17,6 +17,7 @@ import type {
   InsightRun, InsightFinding, InsightsSummary,
   ContributorInsightRun, ContributorInsightFinding, ContributorInsightsSummary,
   TeamInsightRun, TeamInsightFinding, TeamInsightsSummary,
+  SastScanRun, SastFinding, SastSummary, SastRuleProfile, SastIgnoredRule, SastSettings,
 } from "./types";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
@@ -549,6 +550,65 @@ export const api = {
     request<TeamInsightRun>(`/projects/${projectId}/teams/${teamId}/insights/run`, { method: "POST" }),
   dismissTeamInsightFinding: (projectId: string, teamId: string, findingId: string) =>
     request<TeamInsightFinding>(`/projects/${projectId}/teams/${teamId}/insights/${findingId}/dismiss`, { method: "PATCH" }),
+
+  // SAST
+  triggerSastScan: (repoId: string, data?: { branch?: string; profile_id?: string }) =>
+    request<SastScanRun>(`/repositories/${repoId}/sast/scan`, { method: "POST", body: JSON.stringify(data || {}) }),
+  listSastFindings: (repoId: string, params?: { severity?: string; status?: string; file_path?: string; rule_id?: string }) =>
+    request<SastFinding[]>(`/repositories/${repoId}/sast/findings${buildQuery({
+      severity: params?.severity,
+      status: params?.status,
+      file_path: params?.file_path,
+      rule_id: params?.rule_id,
+    })}`),
+  getSastSummary: (repoId: string) =>
+    request<SastSummary>(`/repositories/${repoId}/sast/summary`),
+  listSastRuns: (repoId: string) =>
+    request<SastScanRun[]>(`/repositories/${repoId}/sast/runs`),
+  dismissSastFinding: (repoId: string, findingId: string) =>
+    request<SastFinding>(`/repositories/${repoId}/sast/findings/${findingId}/dismiss`, { method: "PATCH" }),
+  markSastFalsePositive: (repoId: string, findingId: string) =>
+    request<SastFinding>(`/repositories/${repoId}/sast/findings/${findingId}/false-positive`, { method: "PATCH" }),
+
+  listProjectSastFindings: (projectId: string, params?: { severity?: string; status?: string; file_path?: string; rule_id?: string }) =>
+    request<SastFinding[]>(`/projects/${projectId}/sast/findings${buildQuery({
+      severity: params?.severity,
+      status: params?.status,
+      file_path: params?.file_path,
+      rule_id: params?.rule_id,
+    })}`),
+  getProjectSastSummary: (projectId: string) =>
+    request<SastSummary>(`/projects/${projectId}/sast/summary`),
+  listProjectSastRuns: (projectId: string) =>
+    request<SastScanRun[]>(`/projects/${projectId}/sast/runs`),
+
+  listSastProfiles: () => request<SastRuleProfile[]>("/sast/profiles"),
+  createSastProfile: (data: { name: string; description?: string; rulesets?: string[]; custom_rules_yaml?: string; is_default?: boolean }) =>
+    request<SastRuleProfile>("/sast/profiles", { method: "POST", body: JSON.stringify(data) }),
+  updateSastProfile: (id: string, data: { name?: string; description?: string; rulesets?: string[]; custom_rules_yaml?: string; is_default?: boolean }) =>
+    request<SastRuleProfile>(`/sast/profiles/${id}`, { method: "PUT", body: JSON.stringify(data) }),
+  deleteSastProfile: (id: string) => request<void>(`/sast/profiles/${id}`, { method: "DELETE" }),
+
+  getSastSettings: () => request<SastSettings>("/sast/settings"),
+  updateSastSettings: (data: { auto_sast_on_sync: boolean }) =>
+    request<SastSettings>("/sast/settings", { method: "PUT", body: JSON.stringify(data) }),
+
+  // SAST Ignored Rules
+  listGlobalIgnoredRules: () => request<SastIgnoredRule[]>("/sast/ignored-rules"),
+  addGlobalIgnoredRule: (data: { rule_id: string; reason?: string }) =>
+    request<SastIgnoredRule>("/sast/ignored-rules", { method: "POST", body: JSON.stringify(data) }),
+  removeGlobalIgnoredRule: (id: string) => request<void>(`/sast/ignored-rules/${id}`, { method: "DELETE" }),
+  listRepoIgnoredRules: (repoId: string) => request<SastIgnoredRule[]>(`/repositories/${repoId}/sast/ignored-rules`),
+  addRepoIgnoredRule: (repoId: string, data: { rule_id: string; reason?: string }) =>
+    request<SastIgnoredRule>(`/repositories/${repoId}/sast/ignored-rules`, { method: "POST", body: JSON.stringify(data) }),
+  removeRepoIgnoredRule: (repoId: string, id: string) =>
+    request<void>(`/repositories/${repoId}/sast/ignored-rules/${id}`, { method: "DELETE" }),
+
+  // SAST Reports
+  getSastReportUrl: (repoId: string, format: string) =>
+    `${API_BASE}/repositories/${repoId}/sast/report?format=${format}`,
+  getProjectSastReportUrl: (projectId: string, format: string) =>
+    `${API_BASE}/projects/${projectId}/sast/report?format=${format}`,
 
   getApiBase: () => API_BASE,
   getAuthToken: () => getToken(),

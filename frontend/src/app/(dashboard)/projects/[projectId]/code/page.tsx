@@ -3,7 +3,7 @@
 import React, { use, useState, useMemo, useCallback } from "react";
 import Link from "next/link";
 import { useQueryClient } from "@tanstack/react-query";
-import { GitBranch, Plus, RefreshCw, Loader2, XCircle, ArrowUpDown, Search, ChevronDown, ChevronRight, Pencil, Trash2, Eraser } from "lucide-react";
+import { GitBranch, Plus, RefreshCw, Loader2, XCircle, ArrowUpDown, Search, ChevronDown, ChevronRight, Pencil, Trash2, Eraser, ShieldAlert } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -96,6 +96,7 @@ export default function ProjectCodePage({
 
   const [open, setOpen] = useState(false);
   const [syncingRepos, setSyncingRepos] = useState<Map<string, string>>(new Map());
+  const [scanningRepos, setScanningRepos] = useState<Map<string, { runId: string; repoId: string }>>(new Map());
   const [contribSearch, setContribSearch] = useState("");
   const [contribSort, setContribSort] = useState<{ key: "name" | "email" | "lines"; dir: "asc" | "desc" }>({ key: "name", dir: "asc" });
   const [repoSort, setRepoSort] = useState<{ key: "name" | "platform" | "last_synced"; dir: "asc" | "desc" }>({ key: "name", dir: "asc" });
@@ -149,6 +150,22 @@ export default function ProjectCodePage({
         setSyncingRepos((prev) => new Map(prev).set(r.id, job.id));
       } catch { /* ignore individual failures */ }
     }
+  }
+
+  async function handleScan(repoId: string) {
+    if (scanningRepos.has(repoId)) return;
+    try {
+      const run = await api.triggerSastScan(repoId);
+      setScanningRepos((prev) => new Map(prev).set(repoId, { runId: run.id, repoId }));
+    } catch { /* ignore */ }
+  }
+
+  function stopScanPolling(repoId: string) {
+    setScanningRepos((prev) => {
+      const next = new Map(prev);
+      next.delete(repoId);
+      return next;
+    });
   }
 
   async function handleAddRepo(e: React.FormEvent) {
@@ -441,6 +458,8 @@ export default function ProjectCodePage({
             {sortedRepos.map((r) => {
               const isSyncing = syncingRepos.has(r.id);
               const syncJobId = syncingRepos.get(r.id);
+              const isScanning = scanningRepos.has(r.id);
+              const scanInfo = scanningRepos.get(r.id);
               return (
                 <React.Fragment key={r.id}>
                   <TableRow>
@@ -465,6 +484,18 @@ export default function ProjectCodePage({
                             <RefreshCw className="mr-1 h-3 w-3" /> Sync
                           </Button>
                         )}
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => handleScan(r.id)}
+                          disabled={isScanning || isSyncing}
+                        >
+                          {isScanning ? (
+                            <><Loader2 className="mr-1 h-3 w-3 animate-spin" /> Scanning</>
+                          ) : (
+                            <><ShieldAlert className="mr-1 h-3 w-3" /> Scan</>
+                          )}
+                        </Button>
                         <Button variant="ghost" size="sm" className="text-amber-600 hover:text-amber-700" disabled={purging.has(r.id) || isSyncing} onClick={() => setPurgeRepoId(r.id)}>
                           <Eraser className={`h-3.5 w-3.5 ${purging.has(r.id) ? "animate-pulse" : ""}`} />
                         </Button>
@@ -485,6 +516,18 @@ export default function ProjectCodePage({
                           jobId={syncJobId}
                           compact
                           onDone={() => { stopPolling(r.id); invalidateAll(); }}
+                        />
+                      </TableCell>
+                    </TableRow>
+                  )}
+                  {isScanning && scanInfo && (
+                    <TableRow>
+                      <TableCell colSpan={5} className="p-2">
+                        <SyncLogViewer
+                          logUrl={`${api.getApiBase()}/repositories/${r.id}/sast/runs/${scanInfo.runId}/logs`}
+                          compact
+                          title="SAST Scan"
+                          onDone={() => { stopScanPolling(r.id); invalidateAll(); }}
                         />
                       </TableCell>
                     </TableRow>

@@ -3,12 +3,14 @@
 import { use } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { ChevronRight } from "lucide-react";
 import { useProject } from "@/hooks/use-projects";
 import { cn } from "@/lib/utils";
 
 const TABS = [
   { label: "Code", href: "code" },
   { label: "Delivery", href: "delivery" },
+  { label: "Security", href: "security" },
   { label: "Insights", href: "insights" },
 ] as const;
 
@@ -22,6 +24,25 @@ export default function ProjectLayout({
   const { projectId } = use(params);
   const pathname = usePathname();
   const { data: project } = useProject(projectId);
+
+  const isSubRoute = pathname.includes("/repositories/");
+
+  if (isSubRoute) {
+    return (
+      <div className="space-y-6">
+        {project && (
+          <nav className="flex items-center gap-1.5 text-sm text-muted-foreground">
+            <Link href={`/projects/${projectId}/code`} className="hover:text-foreground transition-colors">
+              {project.name}
+            </Link>
+            <ChevronRight className="h-3.5 w-3.5" />
+            <span className="text-foreground font-medium">Repository</span>
+          </nav>
+        )}
+        <div>{children}</div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">

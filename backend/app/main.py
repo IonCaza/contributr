@@ -21,6 +21,7 @@ from app.api import (
     insights as insights_api,
     contributor_insights as contributor_insights_api,
     team_insights as team_insights_api,
+    sast as sast_api,
 )
 from app.api.repositories import _parse_platform_fields
 from app.agents.builtin import get_builtin_agents
@@ -140,6 +141,11 @@ app.include_router(custom_fields_api.router)
 app.include_router(insights_api.router)
 app.include_router(contributor_insights_api.router)
 app.include_router(team_insights_api.router)
+app.include_router(sast_api.repo_router)
+app.include_router(sast_api.project_router)
+app.include_router(sast_api.profile_router)
+app.include_router(sast_api.settings_router)
+app.include_router(sast_api.ignored_router)
 
 
 @app.get("/api/health")

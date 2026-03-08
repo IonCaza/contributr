@@ -27,6 +27,7 @@ from app.db.models.custom_field_config import CustomFieldConfig
 from app.db.models.insight import InsightRun, InsightFinding
 from app.db.models.contributor_insight import ContributorInsightRun, ContributorInsightFinding
 from app.db.models.team_insight import TeamInsightRun, TeamInsightFinding
+from app.db.models.sast import SastScanRun, SastFinding, SastRuleProfile, SastIgnoredRule
 
 __all__ = [
     "User",
@@ -68,4 +69,8 @@ __all__ = [
     "ContributorInsightFinding",
     "TeamInsightRun",
     "TeamInsightFinding",
+    "SastScanRun",
+    "SastFinding",
+    "SastRuleProfile",
+    "SastIgnoredRule",
 ]
