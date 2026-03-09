@@ -1,0 +1,600 @@
+"""Agent tools for source-code exploration and PR diff analysis.
+
+Group A (local git): uses GitPython on the bare mirrors already cloned at
+``settings.repos_cache_dir``.
+
+Group B (platform API): uses PyGitHub / python-gitlab with encrypted
+platform credentials for PR-specific data.
+"""
+
+from __future__ import annotations
+
+import logging
+import os
+
+from langchain_core.tools import tool
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.config import settings
+from app.db.models import Repository
+from app.db.models.platform_credential import PlatformCredential
+from app.db.models.repository import Platform
+from app.agents.tools.base import ToolDefinition
+from app.agents.tools.registry import register_tool_category
+
+logger = logging.getLogger(__name__)
+
+CATEGORY = "code_access"
+
+MAX_FILE_BYTES = 50_000
+MAX_DIFF_BYTES = 100_000
+MAX_SEARCH_RESULTS = 50
+MAX_BLAME_LINES = 500
+MAX_HISTORY_ENTRIES = 30
+GIT_TIMEOUT = 30
+
+DEFINITIONS = [
+    ToolDefinition("list_directory", "List Directory", "Browse files and directories in a repository at a given ref", CATEGORY),
+    ToolDefinition("read_file", "Read File", "Read the full contents of a file in a repository at a given ref", CATEGORY),
+    ToolDefinition("search_code", "Search Code", "Grep for a pattern in a repository's codebase", CATEGORY),
+    ToolDefinition("get_commit_diff", "Commit Diff", "Get the full diff for a specific commit", CATEGORY),
+    ToolDefinition("get_file_blame", "File Blame", "Show blame annotations for a file", CATEGORY),
+    ToolDefinition("get_file_history", "File History", "Commit history for a specific file", CATEGORY),
+    ToolDefinition("get_pr_changed_files", "PR Changed Files", "List files changed in a pull request with status and line counts", CATEGORY),
+    ToolDefinition("get_pr_file_diff", "PR File Diff", "Get the patch/diff for a single file in a pull request", CATEGORY),
+    ToolDefinition("get_pr_review_comments", "PR Review Comments", "Get review discussion comments on a pull request", CATEGORY),
+]
+
+
+# ── Helpers ────────────────────────────────────────────────────────────
+
+
+async def _safe(db: AsyncSession, coro):
+    try:
+        async with db.begin_nested():
+            return await coro
+    except Exception as e:
+        logger.warning("Tool query failed: %s", e)
+        return f"Error: {e}"
+
+
+def _truncate(text: str, limit: int, label: str = "output") -> str:
+    if len(text) <= limit:
+        return text
+    return text[:limit] + f"\n\n... [{label} truncated at {limit:,} characters] ..."
+
+
+async def _resolve_repo(db: AsyncSession, name: str) -> tuple[Repository, str] | str:
+    """Fuzzy-match a repository name and return (repo, bare_mirror_path) or an error string."""
+    result = await db.execute(
+        select(Repository).where(Repository.name.ilike(f"%{name}%")).order_by(Repository.name).limit(1)
+    )
+    repo = result.scalar_one_or_none()
+    if not repo:
+        return f"No repository found matching '{name}'."
+    bare_path = os.path.join(settings.repos_cache_dir, str(repo.id))
+    if not os.path.isdir(bare_path):
+        return f"Repository '{repo.name}' has not been synced yet (no local clone)."
+    return repo, bare_path
+
+
+def _open_git_repo(bare_path: str):
+    from git import Repo as GitRepo
+    return GitRepo(bare_path)
+
+
+def _default_ref(bare_path: str) -> str:
+    """Resolve HEAD for a bare repo, falling back to 'main'."""
+    try:
+        repo = _open_git_repo(bare_path)
+        return repo.git.rev_parse("HEAD", kill_after_timeout=GIT_TIMEOUT)
+    except Exception:
+        return "HEAD"
+
+
+async def _resolve_platform_token(
+    db: AsyncSession, platform: Platform,
+) -> tuple[str | None, str | None]:
+    from app.api.platform_credentials import decrypt_token
+
+    result = await db.execute(
+        select(PlatformCredential)
+        .where(PlatformCredential.platform == platform)
+        .order_by(PlatformCredential.created_at.desc())
+        .limit(1)
+    )
+    cred = result.scalar_one_or_none()
+    if not cred:
+        return None, None
+    try:
+        token = decrypt_token(cred.token_encrypted)
+    except Exception:
+        return None, None
+    return token, cred.base_url
+
+
+def _github_pr_files(repo: Repository, pr_number: int, token: str | None):
+    """Return list of PullRequest File objects from GitHub."""
+    from github import Github, GithubException
+    gh = Github(token) if token else Github()
+    try:
+        gh_repo = gh.get_repo(f"{repo.platform_owner}/{repo.platform_repo}")
+        pr = gh_repo.get_pull(pr_number)
+        files = list(pr.get_files())
+        return files, pr
+    except GithubException as e:
+        raise RuntimeError(f"GitHub API error: {e}") from e
+    finally:
+        gh.close()
+
+
+def _gitlab_mr_changes(repo: Repository, mr_iid: int, token: str | None, base_url: str | None):
+    """Return list of change dicts from GitLab."""
+    import gitlab
+    url = base_url or "https://gitlab.com"
+    gl = gitlab.Gitlab(url, private_token=token)
+    try:
+        project = gl.projects.get(f"{repo.platform_owner}/{repo.platform_repo}")
+        mr = project.mergerequests.get(mr_iid)
+        changes = mr.changes()
+        return changes.get("changes", []), mr
+    except gitlab.exceptions.GitlabError as e:
+        raise RuntimeError(f"GitLab API error: {e}") from e
+
+
+# ── Tool factory ───────────────────────────────────────────────────────
+
+
+def _build_code_access_tools(db: AsyncSession) -> list:
+
+    # ── Group A: local git tools ───────────────────────────────────────
+
+    @tool
+    async def list_directory(repo_name: str, path: str = "", ref: str = "") -> str:
+        """Browse files and directories in a repository.
+
+        Args:
+            repo_name: Repository name (fuzzy match).
+            path: Directory path relative to repo root. Empty string for root.
+            ref: Git ref (branch, tag, SHA). Defaults to HEAD.
+        """
+        async def _impl():
+            resolved = await _resolve_repo(db, repo_name)
+            if isinstance(resolved, str):
+                return resolved
+            repo, bare_path = resolved
+            git_repo = _open_git_repo(bare_path)
+
+            target_ref = ref or _default_ref(bare_path)
+            tree_ref = f"{target_ref}:{path}" if path else target_ref
+
+            try:
+                output = git_repo.git.ls_tree(
+                    "--name-only", tree_ref,
+                    kill_after_timeout=GIT_TIMEOUT,
+                )
+            except Exception as e:
+                return f"Error listing directory: {e}"
+
+            if not output.strip():
+                return f"No files found at '{path}' on ref '{target_ref}'."
+
+            entries = output.strip().split("\n")
+            full_output = git_repo.git.ls_tree(tree_ref, kill_after_timeout=GIT_TIMEOUT)
+            classified = []
+            for line in full_output.strip().split("\n"):
+                parts = line.split(None, 3)
+                if len(parts) >= 4:
+                    kind = "dir/" if parts[1] == "tree" else ""
+                    classified.append(f"{kind}{parts[3]}")
+
+            header = f"**{repo.name}** `{path or '/'}` @ `{target_ref[:12]}`\n\n"
+            return header + "\n".join(f"- `{e}`" for e in classified)
+
+        return await _safe(db, _impl())
+
+    @tool
+    async def read_file(repo_name: str, file_path: str, ref: str = "") -> str:
+        """Read the full contents of a file in a repository.
+
+        Args:
+            repo_name: Repository name (fuzzy match).
+            file_path: Path relative to repo root (e.g. 'src/main.py').
+            ref: Git ref (branch, tag, SHA). Defaults to HEAD.
+        """
+        async def _impl():
+            resolved = await _resolve_repo(db, repo_name)
+            if isinstance(resolved, str):
+                return resolved
+            repo, bare_path = resolved
+            git_repo = _open_git_repo(bare_path)
+
+            target_ref = ref or _default_ref(bare_path)
+            try:
+                content = git_repo.git.show(
+                    f"{target_ref}:{file_path}",
+                    kill_after_timeout=GIT_TIMEOUT,
+                )
+            except Exception as e:
+                return f"Error reading '{file_path}': {e}"
+
+            content = _truncate(content, MAX_FILE_BYTES, "file")
+            lines = content.split("\n")
+            numbered = "\n".join(f"{i + 1:>5} | {line}" for i, line in enumerate(lines))
+            header = f"**{repo.name}** `{file_path}` @ `{target_ref[:12]}` ({len(lines)} lines)\n\n"
+            return header + f"```\n{numbered}\n```"
+
+        return await _safe(db, _impl())
+
+    @tool
+    async def search_code(repo_name: str, pattern: str, path: str = "", ref: str = "") -> str:
+        """Grep for a pattern in a repository's codebase.
+
+        Args:
+            repo_name: Repository name (fuzzy match).
+            pattern: Search pattern (regex supported).
+            path: Limit search to this directory path. Empty for whole repo.
+            ref: Git ref. Defaults to HEAD.
+        """
+        async def _impl():
+            resolved = await _resolve_repo(db, repo_name)
+            if isinstance(resolved, str):
+                return resolved
+            repo, bare_path = resolved
+            git_repo = _open_git_repo(bare_path)
+
+            target_ref = ref or _default_ref(bare_path)
+            args = ["-n", "-I", "--max-count", str(MAX_SEARCH_RESULTS), pattern, target_ref]
+            if path:
+                args.extend(["--", path])
+
+            try:
+                output = git_repo.git.grep(*args, kill_after_timeout=GIT_TIMEOUT)
+            except Exception as e:
+                err_str = str(e)
+                if "exit code(1)" in err_str:
+                    return f"No matches found for '{pattern}' in {repo.name}."
+                return f"Error searching: {e}"
+
+            lines = output.strip().split("\n")
+            header = f"**{repo.name}** search for `{pattern}` — {len(lines)} result(s)\n\n"
+            return header + _truncate(output, MAX_FILE_BYTES, "search results")
+
+        return await _safe(db, _impl())
+
+    @tool
+    async def get_commit_diff(repo_name: str, commit_sha: str) -> str:
+        """Get the full diff for a specific commit.
+
+        Args:
+            repo_name: Repository name (fuzzy match).
+            commit_sha: Full or abbreviated commit SHA.
+        """
+        async def _impl():
+            resolved = await _resolve_repo(db, repo_name)
+            if isinstance(resolved, str):
+                return resolved
+            repo, bare_path = resolved
+            git_repo = _open_git_repo(bare_path)
+
+            try:
+                header_info = git_repo.git.show(
+                    "--no-patch", "--format=%H%n%an%n%ae%n%ai%n%s", commit_sha,
+                    kill_after_timeout=GIT_TIMEOUT,
+                )
+                parts = header_info.strip().split("\n", 4)
+                sha, author, email, date_str, subject = (parts + [""] * 5)[:5]
+
+                diff = git_repo.git.show(
+                    "--stat", "--patch", "--format=", commit_sha,
+                    kill_after_timeout=GIT_TIMEOUT,
+                )
+            except Exception as e:
+                return f"Error getting diff for '{commit_sha}': {e}"
+
+            diff = _truncate(diff, MAX_DIFF_BYTES, "diff")
+            meta = (
+                f"**Commit** `{sha[:12]}`\n"
+                f"**Author:** {author} <{email}>\n"
+                f"**Date:** {date_str}\n"
+                f"**Subject:** {subject}\n\n"
+            )
+            return meta + f"```diff\n{diff}\n```"
+
+        return await _safe(db, _impl())
+
+    @tool
+    async def get_file_blame(repo_name: str, file_path: str, ref: str = "") -> str:
+        """Show blame annotations for a file (who wrote each line).
+
+        Args:
+            repo_name: Repository name (fuzzy match).
+            file_path: Path relative to repo root.
+            ref: Git ref. Defaults to HEAD.
+        """
+        async def _impl():
+            resolved = await _resolve_repo(db, repo_name)
+            if isinstance(resolved, str):
+                return resolved
+            repo, bare_path = resolved
+            git_repo = _open_git_repo(bare_path)
+
+            target_ref = ref or _default_ref(bare_path)
+            try:
+                output = git_repo.git.blame(
+                    "--line-porcelain", target_ref, "--", file_path,
+                    kill_after_timeout=GIT_TIMEOUT,
+                )
+            except Exception as e:
+                return f"Error getting blame for '{file_path}': {e}"
+
+            entries = []
+            current: dict = {}
+            for line in output.split("\n"):
+                if line.startswith("author "):
+                    current["author"] = line[7:]
+                elif line.startswith("summary "):
+                    current["summary"] = line[8:]
+                elif line.startswith("\t"):
+                    current["code"] = line[1:]
+                    entries.append(current)
+                    current = {}
+
+            if len(entries) > MAX_BLAME_LINES:
+                entries = entries[:MAX_BLAME_LINES]
+                truncated = True
+            else:
+                truncated = False
+
+            lines = []
+            for i, e in enumerate(entries, 1):
+                author = e.get("author", "?")[:20]
+                code = e.get("code", "")
+                lines.append(f"{i:>5} | {author:<20} | {code}")
+
+            header = f"**{repo.name}** blame for `{file_path}` @ `{target_ref[:12]}` ({len(entries)} lines)\n\n"
+            if truncated:
+                header += f"_Showing first {MAX_BLAME_LINES} lines._\n\n"
+            return header + "```\n" + "\n".join(lines) + "\n```"
+
+        return await _safe(db, _impl())
+
+    @tool
+    async def get_file_history(repo_name: str, file_path: str, ref: str = "", limit: int = 20) -> str:
+        """Show commit history for a specific file.
+
+        Args:
+            repo_name: Repository name (fuzzy match).
+            file_path: Path relative to repo root.
+            ref: Git ref. Defaults to HEAD.
+            limit: Max number of commits to return (default 20, max 30).
+        """
+        async def _impl():
+            resolved = await _resolve_repo(db, repo_name)
+            if isinstance(resolved, str):
+                return resolved
+            repo, bare_path = resolved
+            git_repo = _open_git_repo(bare_path)
+
+            target_ref = ref or _default_ref(bare_path)
+            n = min(int(limit), MAX_HISTORY_ENTRIES)
+            try:
+                output = git_repo.git.log(
+                    f"--max-count={n}", "--follow",
+                    "--format=%H|%an|%ai|%s",
+                    target_ref, "--", file_path,
+                    kill_after_timeout=GIT_TIMEOUT,
+                )
+            except Exception as e:
+                return f"Error getting history for '{file_path}': {e}"
+
+            if not output.strip():
+                return f"No commit history found for '{file_path}'."
+
+            rows = []
+            for line in output.strip().split("\n"):
+                parts = line.split("|", 3)
+                if len(parts) >= 4:
+                    sha, author, date_str, subject = parts
+                    rows.append(f"- `{sha[:10]}` {date_str[:10]} **{author}** — {subject}")
+
+            header = f"**{repo.name}** history for `{file_path}` ({len(rows)} commits)\n\n"
+            return header + "\n".join(rows)
+
+        return await _safe(db, _impl())
+
+    # ── Group B: platform API tools ────────────────────────────────────
+
+    @tool
+    async def get_pr_changed_files(repo_name: str, pr_number: int) -> str:
+        """List files changed in a pull request with status and line counts.
+
+        Args:
+            repo_name: Repository name (fuzzy match).
+            pr_number: Pull request / merge request number on the platform.
+        """
+        async def _impl():
+            resolved = await _resolve_repo(db, repo_name)
+            if isinstance(resolved, str):
+                return resolved
+            repo, _ = resolved
+
+            token, base_url = await _resolve_platform_token(db, repo.platform)
+
+            if repo.platform == Platform.GITHUB:
+                files, pr = _github_pr_files(repo, pr_number, token)
+                header = f"**PR #{pr_number}** {pr.title} — {len(files)} file(s) changed\n\n"
+                header += f"State: {pr.state} | +{pr.additions} -{pr.deletions}\n\n"
+                rows = []
+                for f in files:
+                    status = getattr(f, "status", "modified")
+                    rows.append(f"- `{f.filename}` [{status}] +{f.additions} -{f.deletions}")
+                return header + "\n".join(rows)
+
+            elif repo.platform == Platform.GITLAB:
+                changes, mr = _gitlab_mr_changes(repo, pr_number, token, base_url)
+                header = f"**MR !{pr_number}** {mr.title} — {len(changes)} file(s) changed\n\n"
+                rows = []
+                for c in changes:
+                    new_path = c.get("new_path", "?")
+                    status = "added" if c.get("new_file") else "deleted" if c.get("deleted_file") else "renamed" if c.get("renamed_file") else "modified"
+                    rows.append(f"- `{new_path}` [{status}]")
+                return header + "\n".join(rows)
+
+            elif repo.platform == Platform.AZURE:
+                return "Azure DevOps PR file listing is not yet supported. Use the commit diff tool with specific commit SHAs instead."
+
+            return f"Unsupported platform: {repo.platform}"
+
+        return await _safe(db, _impl())
+
+    @tool
+    async def get_pr_file_diff(repo_name: str, pr_number: int, file_path: str) -> str:
+        """Get the patch/diff for a single file in a pull request.
+
+        Args:
+            repo_name: Repository name (fuzzy match).
+            pr_number: Pull request / merge request number.
+            file_path: Exact file path to get the diff for.
+        """
+        async def _impl():
+            resolved = await _resolve_repo(db, repo_name)
+            if isinstance(resolved, str):
+                return resolved
+            repo, _ = resolved
+
+            token, base_url = await _resolve_platform_token(db, repo.platform)
+
+            if repo.platform == Platform.GITHUB:
+                files, pr = _github_pr_files(repo, pr_number, token)
+                target = None
+                for f in files:
+                    if f.filename == file_path:
+                        target = f
+                        break
+                if not target:
+                    available = [f.filename for f in files[:20]]
+                    return f"File '{file_path}' not found in PR #{pr_number}.\n\nFiles in this PR:\n" + "\n".join(f"- `{f}`" for f in available)
+
+                patch = getattr(target, "patch", None) or "(no patch — binary file or too large)"
+                patch = _truncate(patch, MAX_DIFF_BYTES, "patch")
+                header = (
+                    f"**PR #{pr_number}** `{file_path}` [{target.status}] "
+                    f"+{target.additions} -{target.deletions}\n\n"
+                )
+                return header + f"```diff\n{patch}\n```"
+
+            elif repo.platform == Platform.GITLAB:
+                changes, mr = _gitlab_mr_changes(repo, pr_number, token, base_url)
+                target = None
+                for c in changes:
+                    if c.get("new_path") == file_path or c.get("old_path") == file_path:
+                        target = c
+                        break
+                if not target:
+                    available = [c.get("new_path", "?") for c in changes[:20]]
+                    return f"File '{file_path}' not found in MR !{pr_number}.\n\nFiles in this MR:\n" + "\n".join(f"- `{f}`" for f in available)
+
+                diff_text = target.get("diff", "(no diff available)")
+                diff_text = _truncate(diff_text, MAX_DIFF_BYTES, "diff")
+                status = "added" if target.get("new_file") else "deleted" if target.get("deleted_file") else "modified"
+                header = f"**MR !{pr_number}** `{file_path}` [{status}]\n\n"
+                return header + f"```diff\n{diff_text}\n```"
+
+            elif repo.platform == Platform.AZURE:
+                return "Azure DevOps PR file diff is not yet supported. Use the commit diff tool with specific commit SHAs instead."
+
+            return f"Unsupported platform: {repo.platform}"
+
+        return await _safe(db, _impl())
+
+    @tool
+    async def get_pr_review_comments(repo_name: str, pr_number: int) -> str:
+        """Get review discussion comments on a pull request.
+
+        Args:
+            repo_name: Repository name (fuzzy match).
+            pr_number: Pull request / merge request number.
+        """
+        async def _impl():
+            resolved = await _resolve_repo(db, repo_name)
+            if isinstance(resolved, str):
+                return resolved
+            repo, _ = resolved
+
+            token, base_url = await _resolve_platform_token(db, repo.platform)
+
+            if repo.platform == Platform.GITHUB:
+                from github import Github, GithubException
+                gh = Github(token) if token else Github()
+                try:
+                    gh_repo = gh.get_repo(f"{repo.platform_owner}/{repo.platform_repo}")
+                    pr = gh_repo.get_pull(pr_number)
+                    comments = list(pr.get_review_comments())
+
+                    if not comments:
+                        return f"No review comments on PR #{pr_number} ({pr.title})."
+
+                    header = f"**PR #{pr_number}** {pr.title} — {len(comments)} review comment(s)\n\n"
+                    items = []
+                    for c in comments[:50]:
+                        user = c.user.login if c.user else "unknown"
+                        path = c.path or ""
+                        line = c.original_line or c.line or ""
+                        body = (c.body or "")[:500]
+                        items.append(
+                            f"**{user}** on `{path}`"
+                            + (f" line {line}" if line else "")
+                            + f"\n> {body}\n"
+                        )
+                    return header + "\n".join(items)
+                except GithubException as e:
+                    return f"GitHub API error: {e}"
+                finally:
+                    gh.close()
+
+            elif repo.platform == Platform.GITLAB:
+                import gitlab as gl_lib
+                url = base_url or "https://gitlab.com"
+                gl = gl_lib.Gitlab(url, private_token=token)
+                try:
+                    project = gl.projects.get(f"{repo.platform_owner}/{repo.platform_repo}")
+                    mr = project.mergerequests.get(pr_number)
+                    notes = mr.notes.list(sort="asc", iterator=True)
+                    discussion_notes = [n for n in notes if not getattr(n, "system", False)]
+
+                    if not discussion_notes:
+                        return f"No discussion notes on MR !{pr_number} ({mr.title})."
+
+                    header = f"**MR !{pr_number}** {mr.title} — {len(discussion_notes)} note(s)\n\n"
+                    items = []
+                    for n in discussion_notes[:50]:
+                        author = n.author.get("name", "unknown") if isinstance(n.author, dict) else "unknown"
+                        body = (n.body or "")[:500]
+                        items.append(f"**{author}**\n> {body}\n")
+                    return header + "\n".join(items)
+                except gl_lib.exceptions.GitlabError as e:
+                    return f"GitLab API error: {e}"
+
+            elif repo.platform == Platform.AZURE:
+                return "Azure DevOps PR review comments are not yet supported via this tool."
+
+            return f"Unsupported platform: {repo.platform}"
+
+        return await _safe(db, _impl())
+
+    return [
+        list_directory,
+        read_file,
+        search_code,
+        get_commit_diff,
+        get_file_blame,
+        get_file_history,
+        get_pr_changed_files,
+        get_pr_file_diff,
+        get_pr_review_comments,
+    ]
+
+
+register_tool_category(CATEGORY, DEFINITIONS, _build_code_access_tools)

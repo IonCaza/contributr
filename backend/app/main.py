@@ -8,7 +8,7 @@ from sqlalchemy import select
 from app.config import settings
 from app.db.base import engine, async_session
 from app.db.models import Repository
-from app.db.models.agent_config import AgentConfig, AgentToolAssignment
+from app.db.models.agent_config import AgentConfig, AgentToolAssignment, SupervisorMember
 from app.db.models.ai_settings import AiSettings, SINGLETON_ID
 from app.api import (
     auth, projects, repositories, contributors, stats,
@@ -22,6 +22,7 @@ from app.api import (
     contributor_insights as contributor_insights_api,
     team_insights as team_insights_api,
     sast as sast_api,
+    feedback as feedback_api,
 )
 from app.api.repositories import _parse_platform_fields
 from app.agents.builtin import get_builtin_agents
@@ -64,10 +65,18 @@ async def _seed_builtin_agents():
     Fresh DB: creates agents with full spec (prompt, tools, description).
     Existing DB: respects user customizations -- only fills in a blank system
     prompt and adds new tool assignments.
+
+    Supervisor agents are processed last so their member references resolve.
     """
     async with async_session() as db:
         changed = False
+        supervisor_specs: list = []
+
         for spec in get_builtin_agents():
+            if getattr(spec, "agent_type", "standard") == "supervisor":
+                supervisor_specs.append(spec)
+                continue
+
             result = await db.execute(
                 select(AgentConfig).where(AgentConfig.slug == spec.slug)
             )
@@ -95,6 +104,64 @@ async def _seed_builtin_agents():
                 for slug in set(spec.tool_slugs) - existing_slugs:
                     db.add(AgentToolAssignment(agent_id=agent.id, tool_slug=slug))
                     changed = True
+
+        if changed:
+            await db.flush()
+
+        for spec in supervisor_specs:
+            result = await db.execute(
+                select(AgentConfig).where(AgentConfig.slug == spec.slug)
+            )
+            agent = result.scalar_one_or_none()
+            if agent is None:
+                agent = AgentConfig(
+                    slug=spec.slug,
+                    name=spec.name,
+                    description=spec.description,
+                    system_prompt=spec.system_prompt,
+                    agent_type="supervisor",
+                    is_builtin=True,
+                    enabled=True,
+                )
+                db.add(agent)
+                await db.flush()
+                for tool_slug in spec.tool_slugs:
+                    db.add(AgentToolAssignment(agent_id=agent.id, tool_slug=tool_slug))
+                for member_slug in getattr(spec, "member_slugs", []):
+                    member_row = (await db.execute(
+                        select(AgentConfig).where(AgentConfig.slug == member_slug)
+                    )).scalar_one_or_none()
+                    if member_row:
+                        db.add(SupervisorMember(
+                            supervisor_id=agent.id,
+                            member_agent_id=member_row.id,
+                        ))
+                changed = True
+                logger.info("Seeded builtin supervisor: %s", spec.slug)
+            else:
+                if agent.agent_type != "supervisor":
+                    agent.agent_type = "supervisor"
+                    changed = True
+                if not agent.system_prompt or agent.system_prompt == "":
+                    agent.system_prompt = spec.system_prompt
+                    changed = True
+                existing_member_ids = {
+                    r.member_agent_id for r in (await db.execute(
+                        select(SupervisorMember)
+                        .where(SupervisorMember.supervisor_id == agent.id)
+                    )).scalars().all()
+                }
+                for member_slug in getattr(spec, "member_slugs", []):
+                    member_row = (await db.execute(
+                        select(AgentConfig).where(AgentConfig.slug == member_slug)
+                    )).scalar_one_or_none()
+                    if member_row and member_row.id not in existing_member_ids:
+                        db.add(SupervisorMember(
+                            supervisor_id=agent.id,
+                            member_agent_id=member_row.id,
+                        ))
+                        changed = True
+
         if changed:
             await db.commit()
 
@@ -146,6 +213,7 @@ app.include_router(sast_api.project_router)
 app.include_router(sast_api.profile_router)
 app.include_router(sast_api.settings_router)
 app.include_router(sast_api.ignored_router)
+app.include_router(feedback_api.router)
 
 
 @app.get("/api/health")

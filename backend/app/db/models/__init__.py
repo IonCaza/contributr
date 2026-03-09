@@ -15,7 +15,7 @@ from app.db.models.ai_settings import AiSettings
 from app.db.models.file_exclusion import FileExclusionPattern
 from app.db.models.platform_credential import PlatformCredential
 from app.db.models.llm_provider import LlmProvider
-from app.db.models.agent_config import AgentConfig, AgentToolAssignment
+from app.db.models.agent_config import AgentConfig, AgentToolAssignment, SupervisorMember
 from app.db.models.knowledge_graph import KnowledgeGraph, AgentKnowledgeGraphAssignment
 from app.db.models.team import Team, TeamMember
 from app.db.models.iteration import Iteration
@@ -28,6 +28,7 @@ from app.db.models.insight import InsightRun, InsightFinding
 from app.db.models.contributor_insight import ContributorInsightRun, ContributorInsightFinding
 from app.db.models.team_insight import TeamInsightRun, TeamInsightFinding
 from app.db.models.sast import SastScanRun, SastFinding, SastRuleProfile, SastIgnoredRule
+from app.db.models.feedback import Feedback, FeedbackSource, FeedbackStatus
 
 __all__ = [
     "User",
@@ -52,6 +53,7 @@ __all__ = [
     "LlmProvider",
     "AgentConfig",
     "AgentToolAssignment",
+    "SupervisorMember",
     "KnowledgeGraph",
     "AgentKnowledgeGraphAssignment",
     "Team",
@@ -73,4 +75,7 @@ __all__ = [
     "SastFinding",
     "SastRuleProfile",
     "SastIgnoredRule",
+    "Feedback",
+    "FeedbackSource",
+    "FeedbackStatus",
 ]

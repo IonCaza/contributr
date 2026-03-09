@@ -7,7 +7,14 @@ import { MarkdownText } from "@/components/assistant-ui/markdown-text";
 import { ToolFallback } from "@/components/assistant-ui/tool-fallback";
 import { TooltipIconButton } from "@/components/assistant-ui/tooltip-icon-button";
 import { Button } from "@/components/ui/button";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
+import { api } from "@/lib/api-client";
 import {
   ActionBarMorePrimitive,
   ActionBarPrimitive,
@@ -31,8 +38,9 @@ import {
   PencilIcon,
   RefreshCwIcon,
   SquareIcon,
+  ThumbsDownIcon,
 } from "lucide-react";
-import type { FC } from "react";
+import { type FC, useState } from "react";
 
 export const Thread: FC = () => {
   return (
@@ -219,6 +227,61 @@ const AssistantMessage: FC = () => {
   );
 };
 
+const ThumbsDownButton: FC = () => {
+  const [open, setOpen] = useState(false);
+  const [comment, setComment] = useState("");
+  const [submitted, setSubmitted] = useState(false);
+
+  const handleSubmit = async () => {
+    try {
+      await api.createFeedback({
+        source: "human",
+        category: "other",
+        content: comment || "Negative feedback on assistant response",
+      });
+      setSubmitted(true);
+      setComment("");
+      setTimeout(() => {
+        setOpen(false);
+        setSubmitted(false);
+      }, 1200);
+    } catch {
+      // silently fail — feedback is best-effort
+    }
+  };
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <TooltipIconButton tooltip="Report issue">
+          <ThumbsDownIcon />
+        </TooltipIconButton>
+      </PopoverTrigger>
+      <PopoverContent side="bottom" align="start" className="w-72 p-3">
+        {submitted ? (
+          <p className="text-sm text-muted-foreground text-center py-2">
+            Thanks for your feedback!
+          </p>
+        ) : (
+          <div className="flex flex-col gap-2">
+            <p className="text-sm font-medium">What went wrong?</p>
+            <Textarea
+              placeholder="Optional — describe the issue..."
+              value={comment}
+              onChange={(e) => setComment(e.target.value)}
+              rows={3}
+              className="text-sm"
+            />
+            <Button size="sm" onClick={handleSubmit}>
+              Submit feedback
+            </Button>
+          </div>
+        )}
+      </PopoverContent>
+    </Popover>
+  );
+};
+
 const AssistantActionBar: FC = () => {
   return (
     <ActionBarPrimitive.Root
@@ -241,6 +304,7 @@ const AssistantActionBar: FC = () => {
           <RefreshCwIcon />
         </TooltipIconButton>
       </ActionBarPrimitive.Reload>
+      <ThumbsDownButton />
       <ActionBarMorePrimitive.Root>
         <ActionBarMorePrimitive.Trigger asChild>
           <TooltipIconButton

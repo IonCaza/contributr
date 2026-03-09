@@ -23,6 +23,24 @@ class AgentToolAssignment(Base):
     tool_slug: Mapped[str] = mapped_column(String(100), primary_key=True, comment="Unique identifier of the assigned tool")
 
 
+class SupervisorMember(Base):
+    __tablename__ = "supervisor_members"
+    __table_args__ = {
+        "comment": "Join table linking supervisor agents to their member (child) agents.",
+    }
+
+    supervisor_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("agents.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    member_agent_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("agents.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+
+
 class AgentConfig(Base):
     __tablename__ = "agents"
     __table_args__ = {
@@ -33,6 +51,10 @@ class AgentConfig(Base):
     slug: Mapped[str] = mapped_column(String(100), unique=True, nullable=False, comment="URL-safe unique identifier (e.g. contribution-analyst)")
     name: Mapped[str] = mapped_column(String(255), nullable=False, comment="Display name shown in the UI")
     description: Mapped[str | None] = mapped_column(Text, comment="Explains the agent's purpose and capabilities")
+    agent_type: Mapped[str] = mapped_column(
+        String(20), default="standard", server_default="standard", nullable=False,
+        comment="Agent type: standard (has tools) or supervisor (orchestrates other agents)",
+    )
     llm_provider_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("llm_providers.id", ondelete="SET NULL"),
         comment="LLM provider used for inference",
@@ -59,4 +81,11 @@ class AgentConfig(Base):
     )
     knowledge_graph_assignments = relationship(
         "AgentKnowledgeGraphAssignment", cascade="all, delete-orphan", lazy="selectin"
+    )
+    member_agents = relationship(
+        "AgentConfig",
+        secondary="supervisor_members",
+        primaryjoin="AgentConfig.id == SupervisorMember.supervisor_id",
+        secondaryjoin="AgentConfig.id == SupervisorMember.member_agent_id",
+        lazy="selectin",
     )

@@ -29,7 +29,7 @@ export function ChatPanel({ open, onClose }: ChatPanelProps) {
             <Bot className="h-4 w-4 text-primary" />
             {enabledAgents.length > 1 ? (
               <Select value={agentSlug} onValueChange={setAgentSlug}>
-                <SelectTrigger className="h-7 w-auto border-0 bg-transparent p-0 text-sm font-semibold shadow-none focus:ring-0">
+                <SelectTrigger className="h-7 w-auto border-0 bg-transparent py-0 px-1.5 text-sm font-semibold shadow-none focus:ring-0">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>

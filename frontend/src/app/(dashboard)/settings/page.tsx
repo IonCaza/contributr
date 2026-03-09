@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useRef } from "react";
-import { Key, Users, Plus, Trash2, Copy, Check, Download, Upload, Database, Loader2, CheckCircle2, AlertCircle, Bot, Eye, EyeOff, FileX2, ShieldCheck, ShieldAlert, Play, Pencil, Cpu, Wrench, Star, ListFilter, Search, RefreshCw, CalendarRange } from "lucide-react";
+import { Key, Users, Plus, Trash2, Copy, Check, Download, Upload, Database, Loader2, CheckCircle2, AlertCircle, Bot, Eye, EyeOff, FileX2, ShieldCheck, ShieldAlert, Play, Pencil, Cpu, Wrench, Star, ListFilter, Search, RefreshCw, CalendarRange, MessageSquareWarning } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -37,6 +37,8 @@ import {
   useSastSettings, useUpdateSastSettings,
   useGlobalIgnoredRules, useAddGlobalIgnoredRule, useRemoveGlobalIgnoredRule,
 } from "@/hooks/use-sast";
+import { useFeedback, useUpdateFeedback, useDeleteFeedback } from "@/hooks/use-feedback";
+import type { FeedbackItem } from "@/lib/types";
 
 function CreateKnowledgeGraphDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
   const [form, setForm] = useState({ name: "", description: "", generation_mode: "schema_and_entities" });
@@ -472,7 +474,7 @@ export default function SettingsPage() {
   // Agent form
   const [agentOpen, setAgentOpen] = useState(false);
   const [editAgentSlug, setEditAgentSlug] = useState<string | null>(null);
-  const [agentForm, setAgentForm] = useState({ slug: "", name: "", description: "", llm_provider_id: "", system_prompt: "", max_iterations: "10", summary_token_limit: "", enabled: true, tool_slugs: [] as string[], knowledge_graph_ids: [] as string[] });
+  const [agentForm, setAgentForm] = useState({ slug: "", name: "", description: "", agent_type: "standard" as "standard" | "supervisor", llm_provider_id: "", system_prompt: "", max_iterations: "10", summary_token_limit: "", enabled: true, tool_slugs: [] as string[], knowledge_graph_ids: [] as string[], member_agent_ids: [] as string[] });
 
   // Knowledge Graph state
   const [kgCreateOpen, setKgCreateOpen] = useState(false);
@@ -502,6 +504,23 @@ export default function SettingsPage() {
   const [importResult, setImportResult] = useState<Record<string, { submitted: number; imported: number }> | null>(null);
   const [backupError, setBackupError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Feedback state
+  const [fbSourceFilter, setFbSourceFilter] = useState<string>("all");
+  const [fbStatusFilter, setFbStatusFilter] = useState<string>("all");
+  const [fbAgentFilter, setFbAgentFilter] = useState<string>("all");
+  const { data: feedbackData } = useFeedback({
+    source: fbSourceFilter !== "all" ? fbSourceFilter : undefined,
+    status: fbStatusFilter !== "all" ? fbStatusFilter : undefined,
+    agent_slug: fbAgentFilter !== "all" ? fbAgentFilter : undefined,
+    limit: 100,
+  });
+  const updateFeedback = useUpdateFeedback();
+  const deleteFeedback = useDeleteFeedback();
+  const [fbDetailItem, setFbDetailItem] = useState<FeedbackItem | null>(null);
+  const [fbAdminNotes, setFbAdminNotes] = useState("");
+  const [fbDetailStatus, setFbDetailStatus] = useState<string>("new");
+  const [deleteFeedbackId, setDeleteFeedbackId] = useState<string | null>(null);
 
   const [sprintScope, setSprintScope] = useState<string>(() => {
     if (typeof window !== "undefined") {
@@ -611,6 +630,7 @@ export default function SettingsPage() {
         slug: agent.slug,
         name: agent.name,
         description: agent.description || "",
+        agent_type: agent.agent_type || "standard",
         llm_provider_id: agent.llm_provider_id || "",
         system_prompt: agent.system_prompt,
         max_iterations: String(agent.max_iterations),
@@ -618,10 +638,11 @@ export default function SettingsPage() {
         enabled: agent.enabled,
         tool_slugs: [...agent.tool_slugs],
         knowledge_graph_ids: [...(agent.knowledge_graph_ids || [])],
+        member_agent_ids: [...(agent.member_agent_ids || [])],
       });
     } else {
       setEditAgentSlug(null);
-      setAgentForm({ slug: "", name: "", description: "", llm_provider_id: "", system_prompt: "", max_iterations: "10", summary_token_limit: "", enabled: true, tool_slugs: [], knowledge_graph_ids: [] });
+      setAgentForm({ slug: "", name: "", description: "", agent_type: "standard", llm_provider_id: "", system_prompt: "", max_iterations: "10", summary_token_limit: "", enabled: true, tool_slugs: [], knowledge_graph_ids: [], member_agent_ids: [] });
     }
     setAgentOpen(true);
   }
@@ -632,13 +653,15 @@ export default function SettingsPage() {
     const data = {
       name: agentForm.name,
       description: agentForm.description || undefined,
+      agent_type: agentForm.agent_type,
       llm_provider_id: agentForm.llm_provider_id,
       system_prompt: agentForm.system_prompt,
       max_iterations: parseInt(agentForm.max_iterations) || 10,
       summary_token_limit: agentForm.summary_token_limit ? parseInt(agentForm.summary_token_limit) : null,
       enabled: agentForm.enabled,
-      tool_slugs: agentForm.tool_slugs,
+      tool_slugs: agentForm.agent_type === "supervisor" ? [] : agentForm.tool_slugs,
       knowledge_graph_ids: agentForm.knowledge_graph_ids,
+      member_agent_ids: agentForm.agent_type === "supervisor" ? agentForm.member_agent_ids : [],
     };
 
     if (editAgentSlug) {
@@ -708,6 +731,7 @@ export default function SettingsPage() {
           <TabsTrigger value="custom-fields" className="gap-2"><ListFilter className="h-4 w-4" /> Custom Fields</TabsTrigger>
           <TabsTrigger value="delivery" className="gap-2"><CalendarRange className="h-4 w-4" /> Delivery</TabsTrigger>
           <TabsTrigger value="sast" className="gap-2"><ShieldAlert className="h-4 w-4" /> SAST</TabsTrigger>
+          <TabsTrigger value="feedback" className="gap-2"><MessageSquareWarning className="h-4 w-4" /> Feedback</TabsTrigger>
           <TabsTrigger value="backup" className="gap-2"><Database className="h-4 w-4" /> Backup</TabsTrigger>
         </TabsList>
 
@@ -1240,8 +1264,9 @@ export default function SettingsPage() {
                     <TableRow>
                       <TableHead>Name</TableHead>
                       <TableHead>Slug</TableHead>
+                      <TableHead>Type</TableHead>
                       <TableHead>LLM Provider</TableHead>
-                      <TableHead>Tools</TableHead>
+                      <TableHead>Tools / Members</TableHead>
                       <TableHead>Enabled</TableHead>
                       <TableHead className="w-28" />
                     </TableRow>
@@ -1249,6 +1274,7 @@ export default function SettingsPage() {
                   <TableBody>
                     {agents.map((a) => {
                       const provider = llmProviders.find((p) => p.id === a.llm_provider_id);
+                      const isSupervisor = a.agent_type === "supervisor";
                       return (
                         <TableRow key={a.id}>
                           <TableCell className="font-medium">
@@ -1258,8 +1284,19 @@ export default function SettingsPage() {
                             </div>
                           </TableCell>
                           <TableCell className="font-mono text-sm text-muted-foreground">{a.slug}</TableCell>
+                          <TableCell>
+                            {isSupervisor
+                              ? <Badge className="text-[10px] bg-violet-100 text-violet-800 dark:bg-violet-900 dark:text-violet-200 hover:bg-violet-100">Supervisor</Badge>
+                              : <Badge variant="outline" className="text-[10px]">Standard</Badge>
+                            }
+                          </TableCell>
                           <TableCell className="text-sm">{provider?.name || <span className="text-muted-foreground">None</span>}</TableCell>
-                          <TableCell><Badge variant="outline" className="text-[10px]">{a.tool_slugs.length} tools</Badge></TableCell>
+                          <TableCell>
+                            {isSupervisor
+                              ? <Badge variant="outline" className="text-[10px]">{(a.member_agent_ids || []).length} agents</Badge>
+                              : <Badge variant="outline" className="text-[10px]">{a.tool_slugs.length} tools</Badge>
+                            }
+                          </TableCell>
                           <TableCell>
                             <Switch
                               checked={a.enabled}
@@ -1281,7 +1318,7 @@ export default function SettingsPage() {
                     })}
                     {agents.length === 0 && (
                       <TableRow>
-                        <TableCell colSpan={6} className="py-8 text-center text-muted-foreground">No agents configured.</TableCell>
+                        <TableCell colSpan={7} className="py-8 text-center text-muted-foreground">No agents configured.</TableCell>
                       </TableRow>
                     )}
                   </TableBody>
@@ -1307,9 +1344,26 @@ export default function SettingsPage() {
                       <p className="text-xs text-muted-foreground">Unique identifier. Cannot be changed after creation.</p>
                     </div>
                   </div>
-                  <div className="space-y-2">
-                    <Label>Description</Label>
-                    <Input value={agentForm.description} onChange={(e) => setAgentForm((f) => ({ ...f, description: e.target.value }))} placeholder="What does this agent do?" />
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <div className="space-y-2">
+                      <Label>Description</Label>
+                      <Input value={agentForm.description} onChange={(e) => setAgentForm((f) => ({ ...f, description: e.target.value }))} placeholder="What does this agent do?" />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Agent Type</Label>
+                      <Select value={agentForm.agent_type} onValueChange={(v) => setAgentForm((f) => ({ ...f, agent_type: v as "standard" | "supervisor" }))}>
+                        <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="standard">Standard Agent</SelectItem>
+                          <SelectItem value="supervisor">Supervisor Agent</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <p className="text-xs text-muted-foreground">
+                        {agentForm.agent_type === "supervisor"
+                          ? "Orchestrates other agents by delegating sub-tasks."
+                          : "A regular agent with direct tool access."}
+                      </p>
+                    </div>
                   </div>
                   <div className="grid gap-4 sm:grid-cols-3">
                     <div className="min-w-0 space-y-2">
@@ -1348,27 +1402,56 @@ export default function SettingsPage() {
                     />
                   </div>
 
-                  {/* Tool Assignment */}
-                  <div className="space-y-2">
-                    <Label className="flex items-center gap-2"><Wrench className="h-3.5 w-3.5" /> Assigned Tools</Label>
-                    <p className="text-xs text-muted-foreground">Select which tools this agent can use. If none are selected, the agent will have access to all tools.</p>
-                    <div className="grid gap-2 sm:grid-cols-2 mt-2">
-                      {aiTools.map((t) => (
-                        <label key={t.slug} className="flex items-start gap-2 rounded-md border p-2 cursor-pointer hover:bg-muted/50">
-                          <input
-                            type="checkbox"
-                            checked={agentForm.tool_slugs.includes(t.slug)}
-                            onChange={() => toggleToolSlug(t.slug)}
-                            className="mt-0.5"
-                          />
-                          <div className="min-w-0">
-                            <p className="text-sm font-medium leading-tight">{t.name}</p>
-                            <p className="text-xs text-muted-foreground truncate">{t.description}</p>
-                          </div>
-                        </label>
-                      ))}
+                  {agentForm.agent_type === "supervisor" ? (
+                    <div className="space-y-2">
+                      <Label className="flex items-center gap-2"><Users className="h-3.5 w-3.5" /> Member Agents</Label>
+                      <p className="text-xs text-muted-foreground">Select which agents this supervisor can delegate to. Only enabled standard agents are shown.</p>
+                      <div className="grid gap-2 sm:grid-cols-2 mt-2">
+                        {agents.filter((a) => a.agent_type !== "supervisor" && a.slug !== agentForm.slug).map((a) => (
+                          <label key={a.id} className="flex items-start gap-2 rounded-md border p-2 cursor-pointer hover:bg-muted/50">
+                            <input
+                              type="checkbox"
+                              checked={agentForm.member_agent_ids.includes(a.id)}
+                              onChange={() => {
+                                setAgentForm((f) => ({
+                                  ...f,
+                                  member_agent_ids: f.member_agent_ids.includes(a.id)
+                                    ? f.member_agent_ids.filter((id) => id !== a.id)
+                                    : [...f.member_agent_ids, a.id],
+                                }));
+                              }}
+                              className="mt-0.5"
+                            />
+                            <div className="min-w-0">
+                              <p className="text-sm font-medium leading-tight">{a.name}</p>
+                              <p className="text-xs text-muted-foreground truncate">{a.description || a.slug} &middot; {a.tool_slugs.length} tools</p>
+                            </div>
+                          </label>
+                        ))}
+                      </div>
                     </div>
-                  </div>
+                  ) : (
+                    <div className="space-y-2">
+                      <Label className="flex items-center gap-2"><Wrench className="h-3.5 w-3.5" /> Assigned Tools</Label>
+                      <p className="text-xs text-muted-foreground">Select which tools this agent can use. If none are selected, the agent will have access to all tools.</p>
+                      <div className="grid gap-2 sm:grid-cols-2 mt-2">
+                        {aiTools.map((t) => (
+                          <label key={t.slug} className="flex items-start gap-2 rounded-md border p-2 cursor-pointer hover:bg-muted/50">
+                            <input
+                              type="checkbox"
+                              checked={agentForm.tool_slugs.includes(t.slug)}
+                              onChange={() => toggleToolSlug(t.slug)}
+                              className="mt-0.5"
+                            />
+                            <div className="min-w-0">
+                              <p className="text-sm font-medium leading-tight">{t.name}</p>
+                              <p className="text-xs text-muted-foreground truncate">{t.description}</p>
+                            </div>
+                          </label>
+                        ))}
+                      </div>
+                    </div>
+                  )}
 
                   {/* Knowledge Graphs */}
                   {knowledgeGraphs.length > 0 && (
@@ -1828,7 +1911,224 @@ export default function SettingsPage() {
             </Card>
           )}
         </TabsContent>
+
+        <TabsContent value="feedback" className="space-y-4">
+          <Card>
+            <CardHeader>
+              <CardTitle>Feedback & Capability Gaps</CardTitle>
+              <CardDescription>Agent-reported gaps and human feedback on AI responses. Review, annotate, and track resolution.</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="flex flex-wrap gap-3 mb-4">
+                <div className="flex items-center gap-2">
+                  <Label className="text-xs whitespace-nowrap">Source</Label>
+                  <Select value={fbSourceFilter} onValueChange={setFbSourceFilter}>
+                    <SelectTrigger className="w-[120px] h-8 text-xs"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All</SelectItem>
+                      <SelectItem value="agent">Agent</SelectItem>
+                      <SelectItem value="human">Human</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Label className="text-xs whitespace-nowrap">Status</Label>
+                  <Select value={fbStatusFilter} onValueChange={setFbStatusFilter}>
+                    <SelectTrigger className="w-[120px] h-8 text-xs"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All</SelectItem>
+                      <SelectItem value="new">New</SelectItem>
+                      <SelectItem value="reviewed">Reviewed</SelectItem>
+                      <SelectItem value="resolved">Resolved</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Label className="text-xs whitespace-nowrap">Agent</Label>
+                  <Select value={fbAgentFilter} onValueChange={setFbAgentFilter}>
+                    <SelectTrigger className="w-[160px] h-8 text-xs"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All Agents</SelectItem>
+                      {agents.map((a) => (
+                        <SelectItem key={a.slug} value={a.slug}>{a.name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+
+              {!feedbackData?.items?.length ? (
+                <p className="text-sm text-muted-foreground py-8 text-center">No feedback yet.</p>
+              ) : (
+                <div className="border rounded-lg overflow-hidden">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead className="w-[140px]">Date</TableHead>
+                        <TableHead className="w-[80px]">Source</TableHead>
+                        <TableHead className="w-[120px]">Category</TableHead>
+                        <TableHead>Content</TableHead>
+                        <TableHead className="w-[120px]">Agent</TableHead>
+                        <TableHead className="w-[90px]">Status</TableHead>
+                        <TableHead className="w-[80px]">Actions</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {feedbackData.items.map((item) => (
+                        <TableRow
+                          key={item.id}
+                          className="cursor-pointer hover:bg-muted/50"
+                          onClick={() => {
+                            setFbDetailItem(item);
+                            setFbAdminNotes(item.admin_notes || "");
+                            setFbDetailStatus(item.status);
+                          }}
+                        >
+                          <TableCell className="text-xs text-muted-foreground">
+                            {new Date(item.created_at).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })}
+                          </TableCell>
+                          <TableCell>
+                            <Badge variant={item.source === "agent" ? "secondary" : "outline"} className="text-xs">
+                              {item.source === "agent" ? "Agent" : "Human"}
+                            </Badge>
+                          </TableCell>
+                          <TableCell className="text-xs">{item.category || "—"}</TableCell>
+                          <TableCell className="text-xs max-w-[300px] truncate">{item.content}</TableCell>
+                          <TableCell className="text-xs">{item.agent_slug || "—"}</TableCell>
+                          <TableCell>
+                            <Badge variant={
+                              item.status === "new" ? "default" :
+                              item.status === "reviewed" ? "secondary" : "outline"
+                            } className="text-xs">
+                              {item.status}
+                            </Badge>
+                          </TableCell>
+                          <TableCell>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-7 w-7"
+                              onClick={(e) => { e.stopPropagation(); setDeleteFeedbackId(item.id); }}
+                            >
+                              <Trash2 className="h-3 w-3" />
+                            </Button>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              )}
+
+              {feedbackData && feedbackData.total > 0 && (
+                <p className="text-xs text-muted-foreground mt-2">
+                  Showing {feedbackData.items.length} of {feedbackData.total} item{feedbackData.total !== 1 ? "s" : ""}
+                </p>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
       </Tabs>
+
+      {/* Feedback detail dialog */}
+      <Dialog open={!!fbDetailItem} onOpenChange={(v) => { if (!v) setFbDetailItem(null); }}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Feedback Detail</DialogTitle>
+          </DialogHeader>
+          {fbDetailItem && (
+            <div className="space-y-4">
+              <div className="flex gap-2">
+                <Badge variant={fbDetailItem.source === "agent" ? "secondary" : "outline"}>
+                  {fbDetailItem.source === "agent" ? "Agent" : "Human"}
+                </Badge>
+                {fbDetailItem.category && <Badge variant="outline">{fbDetailItem.category}</Badge>}
+                <Badge variant={
+                  fbDetailItem.status === "new" ? "default" :
+                  fbDetailItem.status === "reviewed" ? "secondary" : "outline"
+                }>
+                  {fbDetailItem.status}
+                </Badge>
+              </div>
+
+              <div>
+                <Label className="text-xs text-muted-foreground">Content</Label>
+                <p className="text-sm mt-1 whitespace-pre-wrap">{fbDetailItem.content}</p>
+              </div>
+
+              {fbDetailItem.user_query && (
+                <div>
+                  <Label className="text-xs text-muted-foreground">User Query</Label>
+                  <p className="text-sm mt-1 whitespace-pre-wrap bg-muted p-2 rounded text-muted-foreground">{fbDetailItem.user_query}</p>
+                </div>
+              )}
+
+              {fbDetailItem.agent_slug && (
+                <div>
+                  <Label className="text-xs text-muted-foreground">Agent</Label>
+                  <p className="text-sm mt-1">{fbDetailItem.agent_slug}</p>
+                </div>
+              )}
+
+              <div className="text-xs text-muted-foreground">
+                Created: {new Date(fbDetailItem.created_at).toLocaleString()}
+                {fbDetailItem.updated_at !== fbDetailItem.created_at && (
+                  <> &middot; Updated: {new Date(fbDetailItem.updated_at).toLocaleString()}</>
+                )}
+              </div>
+
+              <div className="border-t pt-4 space-y-3">
+                <div className="space-y-1">
+                  <Label className="text-xs">Status</Label>
+                  <Select value={fbDetailStatus} onValueChange={setFbDetailStatus}>
+                    <SelectTrigger className="h-8"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="new">New</SelectItem>
+                      <SelectItem value="reviewed">Reviewed</SelectItem>
+                      <SelectItem value="resolved">Resolved</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs">Admin Notes</Label>
+                  <Textarea
+                    value={fbAdminNotes}
+                    onChange={(e) => setFbAdminNotes(e.target.value)}
+                    rows={3}
+                    placeholder="Add notes about this feedback..."
+                    className="text-sm"
+                  />
+                </div>
+                <Button
+                  size="sm"
+                  className="w-full"
+                  disabled={updateFeedback.isPending}
+                  onClick={async () => {
+                    await updateFeedback.mutateAsync({
+                      id: fbDetailItem.id,
+                      status: fbDetailStatus,
+                      admin_notes: fbAdminNotes,
+                    });
+                    setFbDetailItem(null);
+                  }}
+                >
+                  {updateFeedback.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                  Save Changes
+                </Button>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      <ConfirmDialog
+        open={!!deleteFeedbackId}
+        onOpenChange={(v) => !v && setDeleteFeedbackId(null)}
+        title="Delete Feedback"
+        description="This will permanently remove this feedback item. This action cannot be undone."
+        confirmLabel="Delete"
+        onConfirm={() => { if (deleteFeedbackId) { deleteFeedback.mutate(deleteFeedbackId); setDeleteFeedbackId(null); } }}
+      />
 
       <ConfirmDialog
         open={!!deleteKeyId}

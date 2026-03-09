@@ -26,7 +26,8 @@ import {
 import { queryKeys } from "@/lib/query-keys";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { SyncLogViewer } from "@/components/sync-log-viewer";
-import { FindingsOverTimeChart } from "@/components/charts/findings-over-time-chart";
+import { formatRelativeTime } from "@/components/insight-finding-card";
+import { InsightRunHistory } from "@/components/insight-run-history";
 import { api } from "@/lib/api-client";
 import type { TeamInsightFinding } from "@/lib/types";
 
@@ -302,78 +303,8 @@ function formatMetricValue(value: unknown): string {
   return String(value);
 }
 
-function RunHistory({ projectId, teamId }: { projectId: string; teamId: string }) {
-  const { data: runs } = useTeamInsightRuns(projectId, teamId);
-  const [expanded, setExpanded] = useState(false);
-
-  if (!runs || runs.length === 0) return null;
-
-  const visible = expanded ? runs : runs.slice(0, 5);
-
-  return (
-    <Card>
-      <CardHeader className="py-3 px-4">
-        <div className="flex items-center justify-between">
-          <CardTitle className="text-sm font-medium">Analysis History</CardTitle>
-          {runs.length > 5 && (
-            <Button variant="ghost" size="sm" onClick={() => setExpanded(!expanded)}>
-              {expanded ? "Show less" : `Show all (${runs.length})`}
-            </Button>
-          )}
-        </div>
-      </CardHeader>
-      <CardContent className="pt-0 px-4 pb-3">
-        <div className="space-y-1.5">
-          {visible.map((run) => {
-            const statusColor =
-              run.status === "completed" ? "text-emerald-500" :
-              run.status === "failed" ? "text-red-500" :
-              "text-amber-500";
-            const StatusIcon =
-              run.status === "completed" ? CheckCircle2 :
-              run.status === "failed" ? AlertTriangle :
-              Loader2;
-            return (
-              <div key={run.id} className="flex items-center gap-3 text-sm py-1">
-                <StatusIcon className={`h-3.5 w-3.5 ${statusColor} ${run.status === "running" ? "animate-spin" : ""}`} />
-                <span className="text-muted-foreground">{formatRelativeTime(run.started_at)}</span>
-                <span className="text-muted-foreground">&middot;</span>
-                <span>{run.findings_count} findings</span>
-                {run.error_message && (
-                  <span className="text-xs text-red-400 truncate max-w-48" title={run.error_message}>
-                    {run.error_message}
-                  </span>
-                )}
-              </div>
-            );
-          })}
-        </div>
-
-        {runs.length >= 2 && (
-          <FindingsOverTimeChart
-            runs={runs.map((r) => ({
-              id: r.id,
-              started_at: r.started_at,
-              findings_count: r.findings_count,
-              status: r.status,
-            }))}
-          />
-        )}
-      </CardContent>
-    </Card>
-  );
-}
-
-function formatRelativeTime(iso: string): string {
-  const diff = Date.now() - new Date(iso).getTime();
-  const minutes = Math.floor(diff / 60000);
-  if (minutes < 1) return "just now";
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.floor(hours / 24);
-  return `${days}d ago`;
-}
+const getTeamLogUrl = (projectId: string, teamId: string) => (runId: string) =>
+  `${api.getApiBase()}/projects/${projectId}/teams/${teamId}/insights/runs/${runId}/logs`;
 
 export function TeamInsightsTab({ projectId, teamId }: { projectId: string; teamId: string }) {
   const qc = useQueryClient();
@@ -496,7 +427,7 @@ export function TeamInsightsTab({ projectId, teamId }: { projectId: string; team
         </Card>
       )}
 
-      <RunHistory projectId={projectId} teamId={teamId} />
+      <InsightRunHistory runs={runs} getLogUrl={getTeamLogUrl(projectId, teamId)} />
     </div>
   );
 }

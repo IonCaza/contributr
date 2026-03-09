@@ -10,10 +10,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.agents.base import build_agent, resolve_system_prompt
 from app.agents.context.manager import prepare_history
 from app.agents.llm.manager import build_llm_from_provider
+from app.agents.supervisor import build_delegation_tools
 from sqlalchemy import select
 
 from app.agents.registry import is_ai_enabled, get_agent_by_slug
 from app.agents.tools.chat_history import build_search_chat_history_tool
+from app.agents.tools.feedback_gap import build_report_capability_gap_tool
 from app.db.models.llm_provider import LlmProvider
 
 logger = logging.getLogger(__name__)
@@ -80,6 +82,19 @@ async def run_agent_stream(
     extra_tools = []
     if session_id is not None:
         extra_tools.append(build_search_chat_history_tool(db, session_id))
+        extra_tools.append(build_report_capability_gap_tool(db, session_id, agent_slug))
+
+    if getattr(agent_config, "agent_type", "standard") == "supervisor":
+        member_agents = getattr(agent_config, "member_agents", [])
+        if member_agents:
+            delegation_tools = build_delegation_tools(db, member_agents, provider)
+            extra_tools.extend(delegation_tools)
+            logger.info(
+                "Supervisor %s: %d delegation tools for members %s",
+                agent_slug,
+                len(delegation_tools),
+                [m.slug for m in member_agents],
+            )
 
     agent, max_iterations = build_agent(
         agent_config, provider, db, extra_tools=extra_tools,

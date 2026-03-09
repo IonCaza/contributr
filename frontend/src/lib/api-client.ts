@@ -291,9 +291,9 @@ export const api = {
   // Agents
   listAgents: () => request<AgentConfig[]>("/ai/agents"),
   getAgent: (slug: string) => request<AgentConfig>(`/ai/agents/${slug}`),
-  createAgent: (data: { slug: string; name: string; description?: string; llm_provider_id?: string; system_prompt?: string; max_iterations?: number; summary_token_limit?: number | null; enabled?: boolean; tool_slugs?: string[]; knowledge_graph_ids?: string[] }) =>
+  createAgent: (data: { slug: string; name: string; description?: string; agent_type?: string; llm_provider_id?: string; system_prompt?: string; max_iterations?: number; summary_token_limit?: number | null; enabled?: boolean; tool_slugs?: string[]; knowledge_graph_ids?: string[]; member_agent_ids?: string[] }) =>
     request<AgentConfig>("/ai/agents", { method: "POST", body: JSON.stringify(data) }),
-  updateAgent: (slug: string, data: { name?: string; description?: string; llm_provider_id?: string; system_prompt?: string; max_iterations?: number; summary_token_limit?: number | null; enabled?: boolean; tool_slugs?: string[]; knowledge_graph_ids?: string[] }) =>
+  updateAgent: (slug: string, data: { name?: string; description?: string; agent_type?: string; llm_provider_id?: string; system_prompt?: string; max_iterations?: number; summary_token_limit?: number | null; enabled?: boolean; tool_slugs?: string[]; knowledge_graph_ids?: string[]; member_agent_ids?: string[] }) =>
     request<AgentConfig>(`/ai/agents/${slug}`, { method: "PUT", body: JSON.stringify(data) }),
   deleteAgent: (slug: string) => request<void>(`/ai/agents/${slug}`, { method: "DELETE" }),
 
@@ -609,6 +609,24 @@ export const api = {
     `${API_BASE}/repositories/${repoId}/sast/report?format=${format}`,
   getProjectSastReportUrl: (projectId: string, format: string) =>
     `${API_BASE}/projects/${projectId}/sast/report?format=${format}`,
+
+  // Feedback
+  listFeedback: (params?: { source?: string; status?: string; agent_slug?: string; category?: string; skip?: number; limit?: number }) => {
+    const qs = new URLSearchParams();
+    if (params?.source) qs.set("source", params.source);
+    if (params?.status) qs.set("status", params.status);
+    if (params?.agent_slug) qs.set("agent_slug", params.agent_slug);
+    if (params?.category) qs.set("category", params.category);
+    if (params?.skip !== undefined) qs.set("skip", String(params.skip));
+    if (params?.limit !== undefined) qs.set("limit", String(params.limit));
+    const q = qs.toString();
+    return request<import("./types").PaginatedFeedback>(`/feedback${q ? `?${q}` : ""}`);
+  },
+  createFeedback: (data: { source?: string; category?: string; content: string; user_query?: string; agent_slug?: string; session_id?: string; message_id?: string }) =>
+    request<import("./types").FeedbackItem>("/feedback", { method: "POST", body: JSON.stringify(data) }),
+  updateFeedback: (id: string, data: { status?: string; admin_notes?: string }) =>
+    request<import("./types").FeedbackItem>(`/feedback/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
+  deleteFeedback: (id: string) => request<void>(`/feedback/${id}`, { method: "DELETE" }),
 
   getApiBase: () => API_BASE,
   getAuthToken: () => getToken(),

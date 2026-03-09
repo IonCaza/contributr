@@ -233,6 +233,7 @@ export interface AgentConfig {
   slug: string;
   name: string;
   description: string | null;
+  agent_type: "standard" | "supervisor";
   llm_provider_id: string | null;
   system_prompt: string;
   max_iterations: number;
@@ -241,6 +242,7 @@ export interface AgentConfig {
   is_builtin: boolean;
   tool_slugs: string[];
   knowledge_graph_ids: string[];
+  member_agent_ids: string[];
 }
 
 export interface KnowledgeGraphListItem {
@@ -860,4 +862,25 @@ export interface SastIgnoredRule {
 
 export interface SastSettings {
   auto_sast_on_sync: boolean;
+}
+
+export interface FeedbackItem {
+  id: string;
+  source: "agent" | "human";
+  category: string | null;
+  content: string;
+  user_query: string | null;
+  agent_slug: string | null;
+  session_id: string | null;
+  message_id: string | null;
+  user_id: string | null;
+  status: "new" | "reviewed" | "resolved";
+  admin_notes: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PaginatedFeedback {
+  items: FeedbackItem[];
+  total: number;
 }

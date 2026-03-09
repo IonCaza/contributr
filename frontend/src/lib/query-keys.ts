@@ -115,4 +115,8 @@ export const queryKeys = {
     settings: ["sast", "settings"] as const,
     ignoredRules: (scope: "global" | string) => ["sast", "ignoredRules", scope] as const,
   },
+  feedback: {
+    all: (filters?: Record<string, unknown>) => ["feedback", filters] as const,
+    detail: (id: string) => ["feedback", id] as const,
+  },
 };

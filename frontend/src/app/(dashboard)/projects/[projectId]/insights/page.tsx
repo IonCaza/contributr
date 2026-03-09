@@ -2,7 +2,7 @@
 
 import { use, useState, useCallback, useEffect } from "react";
 import {
-  AlertTriangle, AlertCircle, Info, CheckCircle2, Play, Loader2, Clock, TrendingUp,
+  AlertTriangle, AlertCircle, Info, CheckCircle2, Play, Loader2, TrendingUp,
 } from "lucide-react";
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -22,7 +22,7 @@ import {
 import { queryKeys } from "@/lib/query-keys";
 import { SyncLogViewer } from "@/components/sync-log-viewer";
 import { FindingCard, formatRelativeTime } from "@/components/insight-finding-card";
-import { FindingsOverTimeChart } from "@/components/charts/findings-over-time-chart";
+import { InsightRunHistory } from "@/components/insight-run-history";
 import { api } from "@/lib/api-client";
 
 const CATEGORIES = [
@@ -274,67 +274,8 @@ function SummaryCards({
 }
 
 
-function RunHistory({ projectId }: { projectId: string }) {
-  const { data: runs } = useInsightRuns(projectId);
-  const [expanded, setExpanded] = useState(false);
-
-  if (!runs || runs.length === 0) return null;
-
-  const visible = expanded ? runs : runs.slice(0, 5);
-
-  return (
-    <Card>
-      <CardHeader className="py-3 px-4">
-        <div className="flex items-center justify-between">
-          <CardTitle className="text-sm font-medium">Analysis History</CardTitle>
-          {runs.length > 5 && (
-            <Button variant="ghost" size="sm" onClick={() => setExpanded(!expanded)}>
-              {expanded ? "Show less" : `Show all (${runs.length})`}
-            </Button>
-          )}
-        </div>
-      </CardHeader>
-      <CardContent className="pt-0 px-4 pb-3">
-        <div className="space-y-1.5">
-          {visible.map((run) => {
-            const statusColor =
-              run.status === "completed" ? "text-emerald-500" :
-              run.status === "failed" ? "text-red-500" :
-              "text-amber-500";
-            const StatusIcon =
-              run.status === "completed" ? CheckCircle2 :
-              run.status === "failed" ? AlertTriangle :
-              Loader2;
-            return (
-              <div key={run.id} className="flex items-center gap-3 text-sm py-1">
-                <StatusIcon className={`h-3.5 w-3.5 ${statusColor} ${run.status === "running" ? "animate-spin" : ""}`} />
-                <span className="text-muted-foreground">{formatRelativeTime(run.started_at)}</span>
-                <span className="text-muted-foreground">&middot;</span>
-                <span>{run.findings_count} findings</span>
-                {run.error_message && (
-                  <span className="text-xs text-red-400 truncate max-w-48" title={run.error_message}>
-                    {run.error_message}
-                  </span>
-                )}
-              </div>
-            );
-          })}
-        </div>
-
-        {runs.length >= 2 && (
-          <FindingsOverTimeChart
-            runs={runs.map((r) => ({
-              id: r.id,
-              started_at: r.started_at,
-              findings_count: r.findings_count,
-              status: r.status,
-            }))}
-          />
-        )}
-      </CardContent>
-    </Card>
-  );
-}
+const getProjectLogUrl = (projectId: string) => (runId: string) =>
+  `${api.getApiBase()}/projects/${projectId}/insights/runs/${runId}/logs`;
 
 export default function InsightsPage({
   params,
@@ -476,7 +417,7 @@ export default function InsightsPage({
         </Card>
       )}
 
-      <RunHistory projectId={projectId} />
+      <InsightRunHistory runs={runs} getLogUrl={getProjectLogUrl(projectId)} />
     </div>
   );
 }
