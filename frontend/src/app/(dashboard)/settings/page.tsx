@@ -468,7 +468,7 @@ export default function SettingsPage() {
   // LLM Provider form
   const [providerOpen, setProviderOpen] = useState(false);
   const [editProvider, setEditProvider] = useState<LlmProvider | null>(null);
-  const [providerForm, setProviderForm] = useState({ name: "", provider_type: "openai", model: "", api_key: "", base_url: "", temperature: "0.1", context_window: "", is_default: false });
+  const [providerForm, setProviderForm] = useState({ name: "", provider_type: "openai", model: "", model_type: "chat" as "chat" | "embedding", api_key: "", base_url: "", temperature: "0.1", context_window: "", is_default: false });
   const [showProviderKey, setShowProviderKey] = useState(false);
 
   // Agent form
@@ -509,7 +509,7 @@ export default function SettingsPage() {
   const [fbSourceFilter, setFbSourceFilter] = useState<string>("all");
   const [fbStatusFilter, setFbStatusFilter] = useState<string>("all");
   const [fbAgentFilter, setFbAgentFilter] = useState<string>("all");
-  const { data: feedbackData } = useFeedback({
+  const { data: feedbackData, refetch: refetchFeedback, isFetching: isFetchingFeedback } = useFeedback({
     source: fbSourceFilter !== "all" ? fbSourceFilter : undefined,
     status: fbStatusFilter !== "all" ? fbStatusFilter : undefined,
     agent_slug: fbAgentFilter !== "all" ? fbAgentFilter : undefined,
@@ -588,6 +588,7 @@ export default function SettingsPage() {
         name: provider.name,
         provider_type: provider.provider_type,
         model: provider.model,
+        model_type: provider.model_type || "chat",
         api_key: "",
         base_url: provider.base_url || "",
         temperature: String(provider.temperature),
@@ -596,7 +597,7 @@ export default function SettingsPage() {
       });
     } else {
       setEditProvider(null);
-      setProviderForm({ name: "", provider_type: "openai", model: "", api_key: "", base_url: "", temperature: "0.1", context_window: "", is_default: false });
+      setProviderForm({ name: "", provider_type: "openai", model: "", model_type: "chat", api_key: "", base_url: "", temperature: "0.1", context_window: "", is_default: false });
     }
     setShowProviderKey(false);
     setProviderOpen(true);
@@ -608,6 +609,7 @@ export default function SettingsPage() {
       name: providerForm.name,
       provider_type: providerForm.provider_type,
       model: providerForm.model,
+      model_type: providerForm.model_type,
       base_url: providerForm.base_url || "",
       temperature: parseFloat(providerForm.temperature) || 0.1,
       context_window: providerForm.context_window ? parseInt(providerForm.context_window) : null,
@@ -649,12 +651,11 @@ export default function SettingsPage() {
 
   async function handleSaveAgent(e: React.FormEvent) {
     e.preventDefault();
-    if (!agentForm.llm_provider_id) return;
     const data = {
       name: agentForm.name,
       description: agentForm.description || undefined,
       agent_type: agentForm.agent_type,
-      llm_provider_id: agentForm.llm_provider_id,
+      llm_provider_id: agentForm.llm_provider_id || null,
       system_prompt: agentForm.system_prompt,
       max_iterations: parseInt(agentForm.max_iterations) || 10,
       summary_token_limit: agentForm.summary_token_limit ? parseInt(agentForm.summary_token_limit) : null,
@@ -1057,6 +1058,7 @@ export default function SettingsPage() {
                     <TableRow>
                       <TableHead>Name</TableHead>
                       <TableHead>Type</TableHead>
+                      <TableHead>Purpose</TableHead>
                       <TableHead>Model</TableHead>
                       <TableHead>Base URL</TableHead>
                       <TableHead>API Key</TableHead>
@@ -1073,6 +1075,7 @@ export default function SettingsPage() {
                           </div>
                         </TableCell>
                         <TableCell><Badge variant="outline" className="text-[10px] uppercase">{p.provider_type}</Badge></TableCell>
+                        <TableCell><Badge variant={p.model_type === "embedding" ? "secondary" : "outline"} className="text-[10px] uppercase">{p.model_type || "chat"}</Badge></TableCell>
                         <TableCell className="font-mono text-sm">{p.model}</TableCell>
                         <TableCell className="text-sm text-muted-foreground">{p.base_url || "-"}</TableCell>
                         <TableCell>
@@ -1092,7 +1095,7 @@ export default function SettingsPage() {
                     ))}
                     {llmProviders.length === 0 && (
                       <TableRow>
-                        <TableCell colSpan={6} className="py-8 text-center text-muted-foreground">No LLM providers configured. Add one to get started.</TableCell>
+                        <TableCell colSpan={7} className="py-8 text-center text-muted-foreground">No LLM providers configured. Add one to get started.</TableCell>
                       </TableRow>
                     )}
                   </TableBody>
@@ -1111,7 +1114,7 @@ export default function SettingsPage() {
                     <Label>Name</Label>
                     <Input value={providerForm.name} onChange={(e) => setProviderForm((f) => ({ ...f, name: e.target.value }))} placeholder="e.g. GPT-4o, Local Ollama" required />
                   </div>
-                  <div className="grid gap-4 sm:grid-cols-2">
+                  <div className="grid gap-4 sm:grid-cols-3">
                     <div className="space-y-2">
                       <Label>Provider Type</Label>
                       <Select value={providerForm.provider_type} onValueChange={(v) => setProviderForm((f) => ({ ...f, provider_type: v }))}>
@@ -1127,8 +1130,19 @@ export default function SettingsPage() {
                       </Select>
                     </div>
                     <div className="space-y-2">
+                      <Label>Purpose</Label>
+                      <Select value={providerForm.model_type} onValueChange={(v) => setProviderForm((f) => ({ ...f, model_type: v as "chat" | "embedding" }))}>
+                        <SelectTrigger><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="chat">Chat (LLM)</SelectItem>
+                          <SelectItem value="embedding">Embedding</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <p className="text-xs text-muted-foreground">Chat for agents, embedding for memory</p>
+                    </div>
+                    <div className="space-y-2">
                       <Label>Model</Label>
-                      <Input value={providerForm.model} onChange={(e) => setProviderForm((f) => ({ ...f, model: e.target.value }))} placeholder="gpt-4o-mini, claude-3-sonnet..." required />
+                      <Input value={providerForm.model} onChange={(e) => setProviderForm((f) => ({ ...f, model: e.target.value }))} placeholder={providerForm.model_type === "embedding" ? "text-embedding-3-small" : "gpt-4o-mini, claude-3-sonnet..."} required />
                       <p className="text-xs text-muted-foreground">LiteLLM model identifier</p>
                     </div>
                   </div>
@@ -1371,7 +1385,7 @@ export default function SettingsPage() {
                       <Select value={agentForm.llm_provider_id} onValueChange={(v) => setAgentForm((f) => ({ ...f, llm_provider_id: v }))}>
                         <SelectTrigger className={`w-full overflow-hidden [&>span:first-child]:truncate ${!agentForm.llm_provider_id ? "border-destructive/50" : ""}`}><SelectValue placeholder="Select a provider..." /></SelectTrigger>
                         <SelectContent>
-                          {llmProviders.map((p) => (
+                          {llmProviders.filter((p) => (p.model_type || "chat") === "chat").map((p) => (
                             <SelectItem key={p.id} value={p.id}>
                               {p.name} ({p.model})
                             </SelectItem>
@@ -1955,6 +1969,16 @@ export default function SettingsPage() {
                     </SelectContent>
                   </Select>
                 </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-8 text-xs gap-1.5"
+                  onClick={() => refetchFeedback()}
+                  disabled={isFetchingFeedback}
+                >
+                  <RefreshCw className={`h-3 w-3 ${isFetchingFeedback ? "animate-spin" : ""}`} />
+                  Refresh
+                </Button>
               </div>
 
               {!feedbackData?.items?.length ? (

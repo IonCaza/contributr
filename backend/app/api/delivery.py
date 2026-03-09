@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import json
 import uuid
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy import select, func, case, String, asc, desc, nullslast, delete, or_
@@ -17,6 +17,7 @@ from app.auth.dependencies import get_current_user
 from app.db.base import get_db
 from app.db.models.user import User
 from app.db.models.work_item import WorkItem, WorkItemRelation
+from app.db.models.work_item_activity import WorkItemActivity
 from app.db.models.iteration import Iteration
 from app.db.models.delivery_sync_job import DeliverySyncJob
 from app.db.models.sync_job import SyncStatus
@@ -441,6 +442,93 @@ async def get_work_item(
     }
 
 
+@router.patch("/work-items/{work_item_id}")
+async def update_work_item(
+    project_id: uuid.UUID,
+    work_item_id: uuid.UUID,
+    body: dict,
+    db: AsyncSession = Depends(get_db),
+    _user: User = Depends(get_current_user),
+):
+    """Update a work item's title/description and push the change to Azure DevOps."""
+    import asyncio
+    from app.db.models.project import Project
+    from app.db.models.platform_credential import PlatformCredential
+    from app.db.models.repository import Platform
+    from app.api.platform_credentials import decrypt_token
+    from app.services.azure_workitems_client import update_ado_work_item_fields
+
+    wi = (await db.execute(
+        select(WorkItem).where(WorkItem.id == work_item_id, WorkItem.project_id == project_id)
+    )).scalar_one_or_none()
+    if not wi:
+        raise HTTPException(404, "Work item not found")
+
+    ado_fields: dict[str, str | None] = {}
+    if "title" in body:
+        ado_fields["System.Title"] = body["title"]
+    if "description" in body:
+        ado_fields["System.Description"] = body["description"]
+    if not ado_fields:
+        raise HTTPException(400, "Nothing to update")
+
+    proj = (await db.execute(
+        select(Project).options(selectinload(Project.repositories)).where(Project.id == project_id)
+    )).scalar_one_or_none()
+    if not proj:
+        raise HTTPException(404, "Project not found")
+
+    azure_repo = next(
+        (r for r in proj.repositories if r.platform and r.platform.value == "azure"), None
+    )
+    if not azure_repo:
+        raise HTTPException(400, "No Azure DevOps repository linked to this project")
+
+    cred = (await db.execute(
+        select(PlatformCredential)
+        .where(PlatformCredential.platform == Platform.AZURE)
+        .order_by(PlatformCredential.created_at.desc())
+        .limit(1)
+    )).scalar_one_or_none()
+    if not cred:
+        raise HTTPException(400, "No Azure DevOps credential configured")
+
+    try:
+        token = decrypt_token(cred.token_encrypted)
+    except Exception:
+        raise HTTPException(500, "Failed to decrypt Azure DevOps credential")
+
+    owner = azure_repo.platform_owner or ""
+    org = owner.split("/", 1)[0] if "/" in owner else owner
+    org_url = cred.base_url or (f"https://dev.azure.com/{org}" if org else None)
+    if not org_url:
+        raise HTTPException(400, "Cannot determine Azure DevOps org URL")
+
+    try:
+        await asyncio.to_thread(
+            update_ado_work_item_fields,
+            org_url, token, wi.platform_work_item_id, ado_fields,
+        )
+    except Exception as exc:
+        raise HTTPException(502, f"Azure DevOps update failed: {exc}")
+
+    if "title" in body:
+        wi.title = body["title"]
+    if "description" in body:
+        wi.description = body["description"]
+    await db.commit()
+    await db.refresh(wi)
+
+    return {
+        "id": str(wi.id),
+        "platform_work_item_id": wi.platform_work_item_id,
+        "title": wi.title,
+        "description": wi.description,
+        "state": wi.state,
+        "updated_at": wi.updated_at.isoformat() if wi.updated_at else "",
+    }
+
+
 @router.get("/work-items/{work_item_id}/commits")
 async def get_work_item_commits(
     project_id: uuid.UUID,
@@ -475,6 +563,205 @@ async def get_work_item_commits(
         }
         for wic, c, contrib in rows
     ]
+
+
+# ── Work Item Activity Log ────────────────────────────────────────────
+
+@router.get("/work-items/{work_item_id}/activities")
+async def get_work_item_activities(
+    project_id: uuid.UUID,
+    work_item_id: uuid.UUID,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=200),
+    db: AsyncSession = Depends(get_db),
+    _user: User = Depends(get_current_user),
+):
+    """Return the full activity/revision history for a single work item."""
+    wi = (await db.execute(
+        select(WorkItem).where(
+            WorkItem.id == work_item_id, WorkItem.project_id == project_id,
+        )
+    )).scalar_one_or_none()
+    if not wi:
+        raise HTTPException(404, "Work item not found")
+
+    base = (
+        select(WorkItemActivity)
+        .where(WorkItemActivity.work_item_id == work_item_id)
+    )
+    total = (await db.execute(select(func.count()).select_from(base.subquery()))).scalar() or 0
+
+    q = (
+        base
+        .options(selectinload(WorkItemActivity.contributor))
+        .order_by(WorkItemActivity.activity_at.desc())
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+    )
+    rows = (await db.execute(q)).scalars().all()
+
+    return {
+        "items": [
+            {
+                "id": str(a.id),
+                "contributor": {
+                    "id": str(a.contributor_id),
+                    "name": a.contributor.canonical_name,
+                } if a.contributor else None,
+                "action": a.action,
+                "field_name": a.field_name,
+                "old_value": a.old_value,
+                "new_value": a.new_value,
+                "revision_number": a.revision_number,
+                "activity_at": a.activity_at.isoformat(),
+            }
+            for a in rows
+        ],
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+    }
+
+
+@router.get("/activities/contributor/{contributor_id}")
+async def get_contributor_activities(
+    project_id: uuid.UUID,
+    contributor_id: uuid.UUID,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=200),
+    db: AsyncSession = Depends(get_db),
+    _user: User = Depends(get_current_user),
+):
+    """Return all work item activities performed by a specific contributor within this project."""
+    wi_ids_subq = select(WorkItem.id).where(WorkItem.project_id == project_id)
+    base = (
+        select(WorkItemActivity)
+        .where(
+            WorkItemActivity.contributor_id == contributor_id,
+            WorkItemActivity.work_item_id.in_(wi_ids_subq),
+        )
+    )
+    total = (await db.execute(select(func.count()).select_from(base.subquery()))).scalar() or 0
+
+    q = (
+        base
+        .options(selectinload(WorkItemActivity.work_item))
+        .order_by(WorkItemActivity.activity_at.desc())
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+    )
+    rows = (await db.execute(q)).scalars().all()
+
+    return {
+        "items": [
+            {
+                "id": str(a.id),
+                "work_item": {
+                    "id": str(a.work_item_id),
+                    "title": a.work_item.title if a.work_item else None,
+                    "platform_work_item_id": a.work_item.platform_work_item_id if a.work_item else None,
+                },
+                "action": a.action,
+                "field_name": a.field_name,
+                "old_value": a.old_value,
+                "new_value": a.new_value,
+                "revision_number": a.revision_number,
+                "activity_at": a.activity_at.isoformat(),
+            }
+            for a in rows
+        ],
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+    }
+
+
+@router.get("/activities/contributor/{contributor_id}/metrics")
+async def get_contributor_activity_metrics(
+    project_id: uuid.UUID,
+    contributor_id: uuid.UUID,
+    from_date: date | None = None,
+    to_date: date | None = None,
+    db: AsyncSession = Depends(get_db),
+    _user: User = Depends(get_current_user),
+):
+    """Aggregate activity metrics for a contributor: actions by type, daily activity, and touched work items."""
+    wi_ids_subq = select(WorkItem.id).where(WorkItem.project_id == project_id)
+    base_filter = [
+        WorkItemActivity.contributor_id == contributor_id,
+        WorkItemActivity.work_item_id.in_(wi_ids_subq),
+    ]
+    if from_date:
+        base_filter.append(WorkItemActivity.activity_at >= from_date)
+    if to_date:
+        base_filter.append(WorkItemActivity.activity_at <= to_date)
+
+    action_counts_q = (
+        select(WorkItemActivity.action, func.count().label("count"))
+        .where(*base_filter)
+        .group_by(WorkItemActivity.action)
+    )
+    action_rows = (await db.execute(action_counts_q)).all()
+    actions_by_type = {r.action: r.count for r in action_rows}
+    total_activities = sum(actions_by_type.values())
+
+    daily_q = (
+        select(
+            func.date_trunc("day", WorkItemActivity.activity_at).label("day"),
+            func.count().label("count"),
+        )
+        .where(*base_filter)
+        .group_by("day")
+        .order_by("day")
+    )
+    daily_rows = (await db.execute(daily_q)).all()
+    daily_activity = [
+        {"date": r.day.date().isoformat(), "count": r.count}
+        for r in daily_rows
+    ]
+
+    unique_wi_q = (
+        select(func.count(func.distinct(WorkItemActivity.work_item_id)))
+        .where(*base_filter)
+    )
+    unique_work_items = (await db.execute(unique_wi_q)).scalar() or 0
+
+    top_items_q = (
+        select(
+            WorkItemActivity.work_item_id,
+            func.count().label("activity_count"),
+        )
+        .where(*base_filter)
+        .group_by(WorkItemActivity.work_item_id)
+        .order_by(desc(func.count()))
+        .limit(10)
+    )
+    top_rows = (await db.execute(top_items_q)).all()
+    top_wi_ids = [r.work_item_id for r in top_rows]
+    top_wi_map: dict[uuid.UUID, WorkItem] = {}
+    if top_wi_ids:
+        wi_result = (await db.execute(
+            select(WorkItem).where(WorkItem.id.in_(top_wi_ids))
+        )).scalars().all()
+        top_wi_map = {wi.id: wi for wi in wi_result}
+
+    top_work_items = [
+        {
+            "work_item_id": str(r.work_item_id),
+            "title": top_wi_map[r.work_item_id].title if r.work_item_id in top_wi_map else None,
+            "platform_work_item_id": top_wi_map[r.work_item_id].platform_work_item_id if r.work_item_id in top_wi_map else None,
+            "activity_count": r.activity_count,
+        }
+        for r in top_rows
+    ]
+
+    return {
+        "total_activities": total_activities,
+        "actions_by_type": actions_by_type,
+        "unique_work_items_touched": unique_work_items,
+        "daily_activity": daily_activity,
+        "top_work_items": top_work_items,
+    }
 
 
 # ── Iterations ───────────────────────────────────────────────────────
@@ -822,14 +1109,31 @@ async def trigger_delivery_sync(
     db: AsyncSession = Depends(get_db),
     _user: User = Depends(get_current_user),
 ):
-    running = await db.execute(
+    STALE_QUEUED = timedelta(minutes=10)
+    STALE_RUNNING = timedelta(hours=2)
+    now = datetime.now(timezone.utc)
+
+    blocking_result = await db.execute(
         select(DeliverySyncJob).where(
             DeliverySyncJob.project_id == project_id,
             DeliverySyncJob.status.in_([SyncStatus.QUEUED, SyncStatus.RUNNING]),
         )
     )
-    if running.scalars().first():
-        raise HTTPException(status_code=409, detail="Delivery sync already in progress")
+    blocking_job = blocking_result.scalar_one_or_none()
+
+    if blocking_job:
+        is_stale = (
+            (blocking_job.status == SyncStatus.QUEUED and blocking_job.created_at < now - STALE_QUEUED)
+            or (blocking_job.status == SyncStatus.RUNNING and blocking_job.started_at and blocking_job.started_at < now - STALE_RUNNING)
+            or (blocking_job.status == SyncStatus.RUNNING and blocking_job.started_at is None and blocking_job.created_at < now - STALE_QUEUED)
+        )
+        if is_stale:
+            blocking_job.status = SyncStatus.FAILED
+            blocking_job.error_message = "Automatically marked as failed (stale job)"
+            blocking_job.finished_at = now
+            await db.commit()
+        else:
+            raise HTTPException(status_code=409, detail="Delivery sync already in progress")
 
     job = DeliverySyncJob(project_id=project_id, status=SyncStatus.QUEUED)
     db.add(job)
@@ -855,8 +1159,8 @@ async def purge_delivery_data(
     if result.scalar_one_or_none() is None:
         raise HTTPException(status_code=404, detail="Project not found")
 
-    # Delete in dependency order: work item links, then work items, then stats, iterations, teams, sync jobs
     wi_subq = select(WorkItem.id).where(WorkItem.project_id == project_id)
+    await db.execute(delete(WorkItemActivity).where(WorkItemActivity.work_item_id.in_(wi_subq)))
     await db.execute(delete(WorkItemCommit).where(WorkItemCommit.work_item_id.in_(wi_subq)))
     await db.execute(delete(WorkItemRelation).where(
         or_(

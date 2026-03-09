@@ -1,0 +1,52 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "contributr.fullname" . }}-worker
+  labels:
+    {{- include "contributr.componentLabels" (dict "root" . "component" "worker") | nindent 4 }}
+spec:
+  replicas: {{ .Values.worker.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "contributr.selectorLabels" (dict "root" . "component" "worker") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "contributr.componentLabels" (dict "root" . "component" "worker") | nindent 8 }}
+    spec:
+      initContainers:
+        - name: wait-for-backend
+          image: busybox:1.36
+          command:
+            - sh
+            - -c
+            - |
+              until nc -z {{ include "contributr.fullname" . }}-backend 8000; do
+                echo "Waiting for backend..."
+                sleep 2
+              done
+      containers:
+        - name: worker
+          image: {{ include "contributr.image" (dict "root" . "repository" .Values.backend.image.repository "tag" .Values.backend.image.tag) }}
+          imagePullPolicy: {{ .Values.backend.image.pullPolicy }}
+          command:
+            - celery
+            - -A
+            - app.workers.celery_app:celery
+            - worker
+            - --loglevel=info
+            - --pool=solo
+          envFrom:
+            - secretRef:
+                name: {{ include "contributr.fullname" . }}-backend
+            - configMapRef:
+                name: {{ include "contributr.fullname" . }}-backend
+          resources:
+            {{- toYaml .Values.worker.resources | nindent 12 }}
+          volumeMounts:
+            - name: repos-cache
+              mountPath: /tmp/contributr_repos
+      volumes:
+        - name: repos-cache
+          persistentVolumeClaim:
+            claimName: {{ include "contributr.fullname" . }}-repos-cache

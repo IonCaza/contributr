@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 
 from azure.devops.connection import Connection
 from azure.devops.v7_0.work.models import TeamContext
+from azure.devops.v7_0.work_item_tracking.models import JsonPatchOperation
 from msrest.authentication import BasicAuthentication
 from sqlalchemy import select, func, case, Date
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -17,6 +18,7 @@ from app.db.models.team import Team, TeamMember
 from app.db.models.iteration import Iteration
 from app.db.models.work_item import WorkItem, WorkItemType, WorkItemRelation
 from app.db.models.work_item_commit import WorkItemCommit
+from app.db.models.work_item_activity import WorkItemActivity
 from app.db.models.commit import Commit
 from app.db.models.daily_delivery_stats import DailyDeliveryStats
 from app.db.models.custom_field_config import CustomFieldConfig
@@ -610,6 +612,166 @@ async def _sync_relations(
         logger.info("Created %d commit artifact links", commit_links_created)
 
 
+# ── Work Item Activity / Update History ──────────────────────────────
+
+ACTION_FIELD_MAP: dict[str, str] = {
+    "System.State": "state_changed",
+    "System.AssignedTo": "assigned",
+    "System.Title": "field_changed",
+    "System.IterationPath": "field_changed",
+    "System.AreaPath": "field_changed",
+    "System.Description": "field_changed",
+    "Microsoft.VSTS.Scheduling.StoryPoints": "field_changed",
+    "Microsoft.VSTS.Scheduling.Effort": "field_changed",
+    "Microsoft.VSTS.Common.Priority": "field_changed",
+    "System.Tags": "field_changed",
+}
+
+_MAX_VALUE_LEN = 2048
+
+
+def _truncate(val) -> str | None:
+    if val is None:
+        return None
+    s = str(val) if not isinstance(val, str) else val
+    return s[:_MAX_VALUE_LEN] if len(s) > _MAX_VALUE_LEN else s
+
+
+async def fetch_ado_work_item_activities(
+    db: AsyncSession,
+    project: Project,
+    org_url: str,
+    token: str,
+    ado_project_name: str,
+    sync_log: "SyncLogger | None" = None,
+) -> int:
+    """Fetch the revision/update history for every work item and persist as WorkItemActivity rows."""
+    connection = _get_connection(org_url, token)
+    wit_client = connection.clients.get_work_item_tracking_client()
+
+    wi_rows = (await db.execute(
+        select(WorkItem.id, WorkItem.platform_work_item_id).where(
+            WorkItem.project_id == project.id,
+        )
+    )).all()
+
+    if not wi_rows:
+        if sync_log:
+            sync_log.info("activities", "No work items to fetch activities for")
+        return 0
+
+    existing_revs: dict[int, set[int]] = {}
+    for wi_uuid, ado_id in wi_rows:
+        rev_result = await db.execute(
+            select(WorkItemActivity.revision_number).where(
+                WorkItemActivity.work_item_id == wi_uuid,
+            )
+        )
+        existing_revs[ado_id] = set(rev_result.scalars().all())
+
+    uuid_map = {ado_id: wi_uuid for wi_uuid, ado_id in wi_rows}
+    total_created = 0
+
+    for batch_start in range(0, len(wi_rows), BATCH_SIZE):
+        batch = wi_rows[batch_start:batch_start + BATCH_SIZE]
+        for wi_uuid, ado_id in batch:
+            try:
+                updates = wit_client.get_updates(ado_id)
+            except Exception as e:
+                logger.warning("Failed to fetch updates for work item %d: %s", ado_id, e)
+                continue
+
+            known_revs = existing_revs.get(ado_id, set())
+
+            for update in updates or []:
+                rev = getattr(update, "rev", None) or getattr(update, "id", None)
+                if rev is None or rev in known_revs:
+                    continue
+
+                revised_by = getattr(update, "revised_by", None)
+                revised_date = _parse_datetime(getattr(update, "revised_date", None))
+                if not revised_date:
+                    continue
+
+                contributor = None
+                if revised_by:
+                    name, email = _identity_email(revised_by)
+                    async with db.no_autoflush:
+                        contributor = await resolve_contributor(db, name, email, platform="azure")
+
+                fields_changed = getattr(update, "fields", None) or {}
+
+                if rev == 1:
+                    db.add(WorkItemActivity(
+                        work_item_id=wi_uuid,
+                        contributor_id=contributor.id if contributor else None,
+                        action="created",
+                        field_name=None,
+                        old_value=None,
+                        new_value=None,
+                        revision_number=rev,
+                        activity_at=revised_date,
+                    ))
+                    known_revs.add(rev)
+                    total_created += 1
+                    continue
+
+                if not fields_changed:
+                    db.add(WorkItemActivity(
+                        work_item_id=wi_uuid,
+                        contributor_id=contributor.id if contributor else None,
+                        action="field_changed",
+                        field_name=None,
+                        old_value=None,
+                        new_value=None,
+                        revision_number=rev,
+                        activity_at=revised_date,
+                    ))
+                    known_revs.add(rev)
+                    total_created += 1
+                    continue
+
+                best_action = "field_changed"
+                best_field = None
+                best_old = None
+                best_new = None
+
+                for field_ref, change in fields_changed.items():
+                    old_val = change.get("oldValue") if isinstance(change, dict) else getattr(change, "old_value", None)
+                    new_val = change.get("newValue") if isinstance(change, dict) else getattr(change, "new_value", None)
+
+                    if isinstance(old_val, dict):
+                        old_val = old_val.get("displayName") or old_val.get("uniqueName") or str(old_val)
+                    if isinstance(new_val, dict):
+                        new_val = new_val.get("displayName") or new_val.get("uniqueName") or str(new_val)
+
+                    action = ACTION_FIELD_MAP.get(field_ref, "field_changed")
+                    if action in ("state_changed", "assigned") or best_action == "field_changed":
+                        best_action = action
+                        best_field = field_ref
+                        best_old = _truncate(old_val)
+                        best_new = _truncate(new_val)
+
+                db.add(WorkItemActivity(
+                    work_item_id=wi_uuid,
+                    contributor_id=contributor.id if contributor else None,
+                    action=best_action,
+                    field_name=best_field,
+                    old_value=best_old,
+                    new_value=best_new,
+                    revision_number=rev,
+                    activity_at=revised_date,
+                ))
+                known_revs.add(rev)
+                total_created += 1
+
+        await db.flush()
+
+    if sync_log:
+        sync_log.info("activities", f"Synced {total_created} work item activity records")
+    return total_created
+
+
 # ── Daily Delivery Stats Rebuild ─────────────────────────────────────
 
 async def rebuild_daily_delivery_stats(db: AsyncSession, project_id) -> None:
@@ -654,3 +816,32 @@ async def rebuild_daily_delivery_stats(db: AsyncSession, project_id) -> None:
         ))
 
     await db.flush()
+
+
+# ── Write-back ────────────────────────────────────────────────────────
+
+def update_ado_work_item_fields(
+    org_url: str,
+    token: str,
+    platform_work_item_id: int,
+    fields: dict[str, str | None],
+) -> object:
+    """Push field updates to Azure DevOps and return the updated work item.
+
+    ``fields`` maps ADO field reference names to new values, e.g.
+    ``{"System.Description": "<p>new desc</p>", "System.Title": "New title"}``.
+
+    This is a **synchronous** call because the underlying azure-devops SDK is
+    synchronous.  Call from an async context via ``asyncio.to_thread``.
+    """
+    connection = _get_connection(org_url, token)
+    wit_client = connection.clients.get_work_item_tracking_client()
+    document = [
+        JsonPatchOperation(
+            op="replace",
+            path=f"/fields/{field_ref}",
+            value=value,
+        )
+        for field_ref, value in fields.items()
+    ]
+    return wit_client.update_work_item(document=document, id=platform_work_item_id)

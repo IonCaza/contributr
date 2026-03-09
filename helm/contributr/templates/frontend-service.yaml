@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "contributr.fullname" . }}-frontend
+  labels:
+    {{- include "contributr.componentLabels" (dict "root" . "component" "frontend") | nindent 4 }}
+spec:
+  type: ClusterIP
+  ports:
+    - port: 3000
+      targetPort: http
+      protocol: TCP
+      name: http
+  selector:
+    {{- include "contributr.selectorLabels" (dict "root" . "component" "frontend") | nindent 4 }}

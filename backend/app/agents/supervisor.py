@@ -1,4 +1,5 @@
 import logging
+import uuid
 
 from langchain_core.messages import HumanMessage
 from langchain_core.tools import BaseTool, StructuredTool
@@ -26,9 +27,13 @@ def _make_child_runner(member, provider):
                 child_agent, max_iter = build_agent(
                     member, provider, child_db, extra_tools=None,
                 )
+                child_thread = str(uuid.uuid4())
                 result = await child_agent.ainvoke(
                     {"messages": [HumanMessage(content=query)]},
-                    config={"recursion_limit": (max_iter or 25) * 2},
+                    config={
+                        "configurable": {"thread_id": child_thread},
+                        "recursion_limit": (max_iter or 25) * 2,
+                    },
                 )
                 last_msg = result["messages"][-1]
                 response = last_msg.content if hasattr(last_msg, "content") else str(last_msg)

@@ -1,11 +1,12 @@
 "use client";
 
-import { use, useMemo } from "react";
+import { use, useMemo, useState, useCallback } from "react";
 import Link from "next/link";
-import { ArrowLeft, ExternalLink } from "lucide-react";
+import { ArrowLeft, ExternalLink, Pencil, X, Save, Loader2, ChevronLeft, ChevronRight, Clock, User2, ArrowRightLeft, FileEdit } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
 import {
   Table,
   TableBody,
@@ -14,8 +15,10 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { useWorkItemDetail } from "@/hooks/use-delivery";
+import { useWorkItemDetail, useUpdateWorkItem, useWorkItemActivities } from "@/hooks/use-delivery";
 import { useCustomFields } from "@/hooks/use-custom-fields";
+import { RichTextEditor } from "@/components/rich-text-editor";
+import type { WorkItemActivityEntry } from "@/lib/types";
 
 const TYPE_COLORS: Record<string, string> = {
   epic: "bg-purple-500/10 text-purple-700 dark:text-purple-400",
@@ -74,6 +77,12 @@ export default function WorkItemDetailPage({
   const { projectId, workItemId } = use(params);
   const { data: item, isLoading } = useWorkItemDetail(projectId, workItemId);
   const { data: customFieldConfigs = [] } = useCustomFields(projectId);
+  const updateMutation = useUpdateWorkItem(projectId, workItemId);
+
+  const [editing, setEditing] = useState(false);
+  const [editTitle, setEditTitle] = useState("");
+  const [editDescription, setEditDescription] = useState("");
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   const fieldDisplayNames = useMemo(() => {
     const map: Record<string, string> = {};
@@ -90,6 +99,35 @@ export default function WorkItemDetailPage({
       .replace(/<font[^>]*>/gi, "")
       .replace(/<\/font>/gi, "");
   }, [item?.description]);
+
+  const handleEdit = useCallback(() => {
+    if (!item) return;
+    setEditTitle(item.title);
+    setEditDescription(item.description || "");
+    setSaveError(null);
+    setEditing(true);
+  }, [item]);
+
+  const handleCancel = useCallback(() => {
+    setEditing(false);
+    setSaveError(null);
+  }, []);
+
+  const handleSave = useCallback(() => {
+    if (!item) return;
+    setSaveError(null);
+    const payload: { title?: string; description?: string } = {};
+    if (editTitle !== item.title) payload.title = editTitle;
+    if (editDescription !== (item.description || "")) payload.description = editDescription;
+    if (Object.keys(payload).length === 0) {
+      setEditing(false);
+      return;
+    }
+    updateMutation.mutate(payload, {
+      onSuccess: () => setEditing(false),
+      onError: (err) => setSaveError(err instanceof Error ? err.message : "Save failed"),
+    });
+  }, [item, editTitle, editDescription, updateMutation]);
 
   if (isLoading) {
     return (
@@ -118,12 +156,20 @@ export default function WorkItemDetailPage({
 
   return (
     <div className="space-y-6">
-      <Button variant="ghost" size="sm" asChild>
-        <Link href={`/projects/${projectId}/delivery`}>
-          <ArrowLeft className="mr-2 h-4 w-4" />
-          Back to Project
-        </Link>
-      </Button>
+      <div className="flex items-center justify-between">
+        <Button variant="ghost" size="sm" asChild>
+          <Link href={`/projects/${projectId}/delivery`}>
+            <ArrowLeft className="mr-2 h-4 w-4" />
+            Back to Project
+          </Link>
+        </Button>
+        {!editing && (
+          <Button variant="outline" size="sm" onClick={handleEdit}>
+            <Pencil className="mr-1.5 h-3.5 w-3.5" />
+            Edit
+          </Button>
+        )}
+      </div>
 
       {/* Header */}
       <div className="space-y-2">
@@ -155,11 +201,45 @@ export default function WorkItemDetailPage({
             </Button>
           )}
         </div>
-        <h1 className="text-2xl font-bold tracking-tight">{item.title}</h1>
+        {editing ? (
+          <Input
+            value={editTitle}
+            onChange={(e) => setEditTitle(e.target.value)}
+            className="text-2xl font-bold tracking-tight h-auto py-1"
+          />
+        ) : (
+          <h1 className="text-2xl font-bold tracking-tight">{item.title}</h1>
+        )}
       </div>
 
       {/* Description */}
-      {cleanDescription && (
+      {editing ? (
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-3">
+            <CardTitle className="text-base">Description</CardTitle>
+            <div className="flex items-center gap-2">
+              {saveError && (
+                <span className="text-xs text-destructive">{saveError}</span>
+              )}
+              <Button variant="ghost" size="sm" onClick={handleCancel} disabled={updateMutation.isPending}>
+                <X className="mr-1 h-3.5 w-3.5" />
+                Cancel
+              </Button>
+              <Button size="sm" onClick={handleSave} disabled={updateMutation.isPending}>
+                {updateMutation.isPending ? (
+                  <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <Save className="mr-1.5 h-3.5 w-3.5" />
+                )}
+                {updateMutation.isPending ? "Saving..." : "Save to DevOps"}
+              </Button>
+            </div>
+          </CardHeader>
+          <CardContent>
+            <RichTextEditor content={editDescription} onChange={setEditDescription} />
+          </CardContent>
+        </Card>
+      ) : cleanDescription ? (
         <Card>
           <CardHeader>
             <CardTitle className="text-base">Description</CardTitle>
@@ -171,7 +251,16 @@ export default function WorkItemDetailPage({
             />
           </CardContent>
         </Card>
-      )}
+      ) : !editing ? (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Description</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <p className="text-sm text-muted-foreground italic">No description.</p>
+          </CardContent>
+        </Card>
+      ) : null}
 
       {/* Attributes grid */}
       <div className="grid gap-4 md:grid-cols-3">
@@ -383,6 +472,9 @@ export default function WorkItemDetailPage({
           </CardContent>
         </Card>
       )}
+
+      {/* Activity Log */}
+      <ActivityLog projectId={projectId} workItemId={workItemId} />
     </div>
   );
 }
@@ -421,5 +513,117 @@ function PersonRow({
         <span className="text-right font-medium">{name ?? fallback}</span>
       )}
     </div>
+  );
+}
+
+const ACTION_LABELS: Record<string, string> = {
+  created: "Created",
+  state_changed: "State changed",
+  assigned: "Reassigned",
+  field_changed: "Field updated",
+  commented: "Commented",
+};
+
+function ActionIcon({ action }: { action: string }) {
+  switch (action) {
+    case "created": return <Clock className="h-3.5 w-3.5 text-green-500" />;
+    case "state_changed": return <ArrowRightLeft className="h-3.5 w-3.5 text-blue-500" />;
+    case "assigned": return <User2 className="h-3.5 w-3.5 text-amber-500" />;
+    default: return <FileEdit className="h-3.5 w-3.5 text-muted-foreground" />;
+  }
+}
+
+function friendlyFieldName(field: string | null): string {
+  if (!field) return "";
+  return field
+    .replace(/^System\./, "")
+    .replace(/^Microsoft\.VSTS\.\w+\./, "")
+    .replace(/([A-Z])/g, " $1")
+    .trim();
+}
+
+function ActivityLog({ projectId, workItemId }: { projectId: string; workItemId: string }) {
+  const [page, setPage] = useState(1);
+  const pageSize = 20;
+  const { data, isLoading } = useWorkItemActivities(projectId, workItemId, { page, page_size: pageSize });
+  const totalPages = data ? Math.ceil(data.total / pageSize) : 0;
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-base">
+          Activity Log {data ? `(${data.total})` : ""}
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        {isLoading && <p className="text-sm text-muted-foreground animate-pulse">Loading activity...</p>}
+        {data && data.items.length === 0 && (
+          <p className="text-sm text-muted-foreground italic">No activity recorded yet. Run a delivery sync to import activity history.</p>
+        )}
+        {data && data.items.length > 0 && (
+          <div className="space-y-4">
+            <div className="relative border-l-2 border-muted pl-6 space-y-4">
+              {data.items.map((a: WorkItemActivityEntry) => (
+                <div key={a.id} className="relative">
+                  <div className="absolute -left-[31px] top-1 rounded-full bg-background border-2 border-muted p-1">
+                    <ActionIcon action={a.action} />
+                  </div>
+                  <div className="flex flex-col gap-0.5">
+                    <div className="flex items-center gap-2 text-sm">
+                      <span className="font-medium">
+                        {a.contributor ? (
+                          <Link href={`/contributors/${a.contributor.id}`} className="text-primary hover:underline">
+                            {a.contributor.name ?? "Unknown"}
+                          </Link>
+                        ) : (
+                          "System"
+                        )}
+                      </span>
+                      <span className="text-muted-foreground">
+                        {ACTION_LABELS[a.action] || a.action}
+                        {a.field_name ? `: ${friendlyFieldName(a.field_name)}` : ""}
+                      </span>
+                    </div>
+                    {(a.old_value || a.new_value) && a.action !== "created" && (
+                      <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                        {a.old_value && (
+                          <span className="line-through truncate max-w-[200px]" title={a.old_value}>
+                            {a.old_value}
+                          </span>
+                        )}
+                        {a.old_value && a.new_value && <span>&rarr;</span>}
+                        {a.new_value && (
+                          <span className="font-medium text-foreground truncate max-w-[200px]" title={a.new_value}>
+                            {a.new_value}
+                          </span>
+                        )}
+                      </div>
+                    )}
+                    <span className="text-xs text-muted-foreground">
+                      {fmt(a.activity_at)}
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </div>
+            {totalPages > 1 && (
+              <div className="flex items-center justify-between pt-2">
+                <p className="text-xs text-muted-foreground">
+                  Page {page} of {totalPages}
+                </p>
+                <div className="flex items-center gap-1">
+                  <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => setPage(page - 1)}>
+                    <ChevronLeft className="h-4 w-4" />
+                  </Button>
+                  <Button variant="outline" size="sm" disabled={page >= totalPages} onClick={() => setPage(page + 1)}>
+                    <ChevronRight className="h-4 w-4" />
+                  </Button>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+      </CardContent>
+    </Card>
   );
 }

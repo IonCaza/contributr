@@ -1,0 +1,100 @@
+global:
+  imageRegistry: ""
+
+# -- Traefik ingress configuration
+ingress:
+  enabled: true
+  className: traefik
+  host: put.here.your.url
+  tls:
+    enabled: true
+    secretName: contributr-tls
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    traefik.ingress.kubernetes.io/router.tls: "true"
+
+# -- PostgreSQL (pgvector)
+postgresql:
+  image:
+    repository: pgvector/pgvector
+    tag: pg18-trixie
+    pullPolicy: IfNotPresent
+  auth:
+    username: contributr
+    password: contributr_secret
+    database: contributr
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: "1"
+      memory: 1Gi
+  persistence:
+    size: 10Gi
+    storageClass: ""
+
+# -- Redis
+redis:
+  image:
+    repository: redis
+    tag: 8.6-alpine
+    pullPolicy: IfNotPresent
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+
+# -- Backend (FastAPI)
+backend:
+  image:
+    repository: contributr-backend
+    tag: latest
+    pullPolicy: Always
+  replicaCount: 1
+  runMigrations: true
+  secretKey: change-me-to-a-random-64-char-string
+  jwtSecret: change-me-to-another-random-string
+  jwtAccessTokenExpireMinutes: 30
+  jwtRefreshTokenExpireDays: 7
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: "1"
+      memory: 1Gi
+
+# -- Celery worker (uses the backend image)
+worker:
+  replicaCount: 1
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: "1"
+      memory: 1Gi
+
+# -- Frontend (Next.js)
+frontend:
+  image:
+    repository: contributr-frontend
+    tag: latest
+    pullPolicy: Always
+  replicaCount: 1
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+# -- Shared repos cache volume (backend + worker)
+reposCache:
+  size: 100Gi
+  storageClass: ""

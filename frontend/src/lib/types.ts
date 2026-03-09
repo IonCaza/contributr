@@ -221,6 +221,7 @@ export interface LlmProvider {
   name: string;
   provider_type: string;
   model: string;
+  model_type: "chat" | "embedding";
   has_api_key: boolean;
   base_url: string | null;
   temperature: number;
@@ -639,6 +640,56 @@ export interface LinkedCommit {
   authored_at: string;
   link_type: string;
   contributor: { id: string; name: string | null } | null;
+}
+
+// Work item activity log
+export interface WorkItemActivityEntry {
+  id: string;
+  contributor: { id: string; name: string | null } | null;
+  action: string;
+  field_name: string | null;
+  old_value: string | null;
+  new_value: string | null;
+  revision_number: number;
+  activity_at: string;
+}
+
+export interface PaginatedActivities {
+  items: WorkItemActivityEntry[];
+  total: number;
+  page: number;
+  page_size: number;
+}
+
+export interface ContributorActivityEntry {
+  id: string;
+  work_item: { id: string; title: string | null; platform_work_item_id: number | null };
+  action: string;
+  field_name: string | null;
+  old_value: string | null;
+  new_value: string | null;
+  revision_number: number;
+  activity_at: string;
+}
+
+export interface PaginatedContributorActivities {
+  items: ContributorActivityEntry[];
+  total: number;
+  page: number;
+  page_size: number;
+}
+
+export interface ContributorActivityMetrics {
+  total_activities: number;
+  actions_by_type: Record<string, number>;
+  unique_work_items_touched: number;
+  daily_activity: { date: string; count: number }[];
+  top_work_items: {
+    work_item_id: string;
+    title: string | null;
+    platform_work_item_id: number | null;
+    activity_count: number;
+  }[];
 }
 
 // Custom field import configuration

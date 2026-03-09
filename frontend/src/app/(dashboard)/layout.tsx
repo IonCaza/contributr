@@ -12,6 +12,7 @@ import {
   type PanelImperativeHandle,
 } from "@/components/ui/resizable";
 import { useAiStatus } from "@/hooks/use-settings";
+import { FeedbackWidget } from "@/components/feedback-widget";
 
 export default function DashboardLayout({
   children,
@@ -91,6 +92,7 @@ export default function DashboardLayout({
           <ChatPanel open={chatOpen} onClose={handleChatClose} />
         </ResizablePanel>
       </ResizablePanelGroup>
+      <FeedbackWidget />
     </div>
   );
 }

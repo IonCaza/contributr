@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useMemo } from "react";
-import { ExternalLink, ChevronLeft, ChevronRight, ChevronDown, GitCommit } from "lucide-react";
+import { ExternalLink, ChevronLeft, ChevronRight, ChevronDown, GitCommit, Clock, ArrowRightLeft, User2, FileEdit, Activity } from "lucide-react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -10,8 +10,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { StatCard } from "@/components/stat-card";
 import { MiniSparkline } from "@/components/charts/mini-sparkline";
-import { useIterations, useVelocity, useDeliveryStats, useWorkItems } from "@/hooks/use-delivery";
-import type { Contributor, WorkItem } from "@/lib/types";
+import { useIterations, useVelocity, useDeliveryStats, useWorkItems, useContributorActivities, useContributorActivityMetrics } from "@/hooks/use-delivery";
+import type { Contributor, WorkItem, ContributorActivityEntry } from "@/lib/types";
 
 const TYPE_COLORS: Record<string, string> = {
   epic: "bg-purple-500/10 text-purple-700 dark:text-purple-400",
@@ -307,6 +307,200 @@ export function ContributorDeliveryTab({
           </>
         )}
       </div>
+
+      {/* Contributor Activity Log */}
+      <ContributorActivityLog projectId={firstProjectId} contributorId={contributorId} />
+    </div>
+  );
+}
+
+// ── Contributor Activity Log ─────────────────────────────────────────
+
+const ACTION_LABELS: Record<string, string> = {
+  created: "Created",
+  state_changed: "State changed",
+  assigned: "Reassigned",
+  field_changed: "Updated",
+  commented: "Commented",
+};
+
+const ACTION_COLORS: Record<string, string> = {
+  created: "bg-green-500/10 text-green-700 dark:text-green-400",
+  state_changed: "bg-blue-500/10 text-blue-700 dark:text-blue-400",
+  assigned: "bg-amber-500/10 text-amber-700 dark:text-amber-400",
+  field_changed: "bg-muted text-muted-foreground",
+  commented: "bg-purple-500/10 text-purple-700 dark:text-purple-400",
+};
+
+function ActionBadge({ action }: { action: string }) {
+  return (
+    <Badge variant="secondary" className={`text-[10px] ${ACTION_COLORS[action] || ""}`}>
+      {ACTION_LABELS[action] || action}
+    </Badge>
+  );
+}
+
+function friendlyField(field: string | null): string {
+  if (!field) return "";
+  return field
+    .replace(/^System\./, "")
+    .replace(/^Microsoft\.VSTS\.\w+\./, "")
+    .replace(/([A-Z])/g, " $1")
+    .trim();
+}
+
+function fmtDate(date: string) {
+  return new Date(date).toLocaleDateString(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function ContributorActivityLog({ projectId, contributorId }: { projectId: string; contributorId: string }) {
+  const [actPage, setActPage] = useState(1);
+  const actPageSize = 20;
+
+  const { data: metrics } = useContributorActivityMetrics(projectId, contributorId);
+  const { data: actData, isLoading: actLoading } = useContributorActivities(projectId, contributorId, { page: actPage, page_size: actPageSize });
+  const actTotalPages = actData ? Math.ceil(actData.total / actPageSize) : 0;
+
+  const sparkData = useMemo(() => {
+    if (!metrics?.daily_activity?.length) return [];
+    return metrics.daily_activity.map((d) => d.count);
+  }, [metrics]);
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center gap-2">
+        <Activity className="h-5 w-5 text-muted-foreground" />
+        <h3 className="text-lg font-semibold">Work Item Activity</h3>
+      </div>
+
+      {metrics && (
+        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+          <StatCard title="Total Activities" value={metrics.total_activities} tooltip="All revisions across work items" />
+          <StatCard title="Items Touched" value={metrics.unique_work_items_touched} tooltip="Unique work items edited by this contributor" />
+          <StatCard
+            title="State Changes"
+            value={metrics.actions_by_type.state_changed ?? 0}
+            tooltip="Number of state transitions"
+          />
+          <StatCard
+            title="Activity Trend"
+            value={metrics.daily_activity.length > 0 ? `${metrics.daily_activity.length}d` : "—"}
+            subtitle="active days"
+            sparklineData={sparkData}
+            tooltip="Daily activity frequency"
+          />
+        </div>
+      )}
+
+      {metrics && metrics.top_work_items.length > 0 && (
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-medium text-muted-foreground">Most Active Work Items</CardTitle>
+          </CardHeader>
+          <CardContent className="p-0">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="w-16">ID</TableHead>
+                  <TableHead>Title</TableHead>
+                  <TableHead className="w-24 text-right">Edits</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {metrics.top_work_items.map((tw) => (
+                  <TableRow key={tw.work_item_id}>
+                    <TableCell className="text-xs text-muted-foreground">#{tw.platform_work_item_id}</TableCell>
+                    <TableCell>
+                      <Link
+                        href={`/projects/${projectId}/delivery/work-items/${tw.work_item_id}`}
+                        className="font-medium hover:underline truncate block max-w-md"
+                      >
+                        {tw.title ?? "—"}
+                      </Link>
+                    </TableCell>
+                    <TableCell className="text-right font-medium">{tw.activity_count}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </CardContent>
+        </Card>
+      )}
+
+      {actLoading && <p className="text-sm text-muted-foreground animate-pulse">Loading activity log...</p>}
+
+      {actData && actData.items.length > 0 && (
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-medium text-muted-foreground">Recent Activity ({actData.total})</CardTitle>
+          </CardHeader>
+          <CardContent className="p-0">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Work Item</TableHead>
+                  <TableHead className="w-28">Action</TableHead>
+                  <TableHead>Change</TableHead>
+                  <TableHead className="w-44">When</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {actData.items.map((a: ContributorActivityEntry) => (
+                  <TableRow key={a.id}>
+                    <TableCell>
+                      <Link
+                        href={`/projects/${projectId}/delivery/work-items/${a.work_item.id}`}
+                        className="hover:underline text-sm"
+                      >
+                        <span className="text-muted-foreground">#{a.work_item.platform_work_item_id}</span>{" "}
+                        <span className="font-medium truncate inline-block max-w-[220px] align-bottom">
+                          {a.work_item.title ?? "—"}
+                        </span>
+                      </Link>
+                    </TableCell>
+                    <TableCell><ActionBadge action={a.action} /></TableCell>
+                    <TableCell className="text-xs text-muted-foreground max-w-xs">
+                      {a.field_name && <span className="font-medium text-foreground">{friendlyField(a.field_name)}: </span>}
+                      {a.old_value && <span className="line-through">{a.old_value}</span>}
+                      {a.old_value && a.new_value && " → "}
+                      {a.new_value && <span className="font-medium text-foreground">{a.new_value}</span>}
+                      {!a.old_value && !a.new_value && !a.field_name && "—"}
+                    </TableCell>
+                    <TableCell className="text-xs text-muted-foreground whitespace-nowrap">
+                      {fmtDate(a.activity_at)}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </CardContent>
+          {actTotalPages > 1 && (
+            <div className="flex items-center justify-between p-4 pt-2 border-t">
+              <p className="text-xs text-muted-foreground">Page {actPage} of {actTotalPages}</p>
+              <div className="flex items-center gap-1">
+                <Button variant="outline" size="sm" disabled={actPage <= 1} onClick={() => setActPage(actPage - 1)}>
+                  <ChevronLeft className="h-4 w-4" />
+                </Button>
+                <Button variant="outline" size="sm" disabled={actPage >= actTotalPages} onClick={() => setActPage(actPage + 1)}>
+                  <ChevronRight className="h-4 w-4" />
+                </Button>
+              </div>
+            </div>
+          )}
+        </Card>
+      )}
+
+      {actData && actData.items.length === 0 && !actLoading && (
+        <p className="text-sm text-muted-foreground italic">
+          No work item activity recorded. Run a delivery sync to import activity history.
+        </p>
+      )}
     </div>
   );
 }

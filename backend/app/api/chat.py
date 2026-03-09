@@ -95,7 +95,6 @@ async def send_message(
         )
         db.add(user_msg)
         session_id = session.id
-        user_msg_id = user_msg.id
         await db.commit()
     except HTTPException:
         raise
@@ -107,35 +106,15 @@ async def send_message(
             detail="Failed to process chat message.",
         )
 
-    session_row = (await db.execute(
-        select(ChatSession).where(ChatSession.id == session_id)
-    )).scalar_one()
-    existing_summary = session_row.context_summary
-
-    history_result = await db.execute(
-        select(ChatMessage)
-        .where(ChatMessage.session_id == session_id)
-        .order_by(ChatMessage.created_at)
-    )
-    history_rows = history_result.scalars().all()
-    chat_history = [
-        {"role": m.role.value, "content": m.content}
-        for m in history_rows
-        if m.id != user_msg_id
-    ]
-
-    context_state: dict = {}
-
     async def event_generator():
         collected = ""
         try:
             yield {"event": "session", "data": json.dumps({"session_id": str(session_id)})}
             async for chunk in run_agent_stream(
-                db, body.message, chat_history,
+                db, body.message,
                 agent_slug=body.agent_slug,
                 session_id=session_id,
-                session_summary=existing_summary,
-                context_state=context_state,
+                user_id=user.id,
             ):
                 collected += chunk
                 yield {"event": "token", "data": json.dumps({"content": chunk})}
@@ -164,13 +143,10 @@ async def send_message(
                         content=content,
                     )
                     db.add(assistant_msg)
-                    update_values: dict = {"updated_at": datetime.now(timezone.utc)}
-                    if "new_summary" in context_state:
-                        update_values["context_summary"] = context_state["new_summary"]
                     await db.execute(
                         update(ChatSession)
                         .where(ChatSession.id == session_id)
-                        .values(**update_values)
+                        .values(updated_at=datetime.now(timezone.utc))
                     )
                     await db.commit()
                     break

@@ -22,6 +22,7 @@ class LlmProvider(Base):
     base_url: Mapped[str | None] = mapped_column(String(2048), comment="Custom API endpoint for proxies or self-hosted models")
     temperature: Mapped[float] = mapped_column(Float, default=0.1, nullable=False, comment="Sampling temperature (0.0 = deterministic, 1.0 = creative)")
     context_window: Mapped[int | None] = mapped_column(Integer, nullable=True, comment="Maximum token capacity of the model (null = auto-detect via LiteLLM)")
+    model_type: Mapped[str] = mapped_column(String(20), default="chat", nullable=False, comment="Purpose: chat (LLM) or embedding (vector embeddings)")
     is_default: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, comment="Fallback provider when an agent has none assigned")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc),

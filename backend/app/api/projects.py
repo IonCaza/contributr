@@ -196,7 +196,10 @@ async def get_project_stats(
 
     contrib_counts_q = (
         select(Commit.contributor_id, func.count().label("cnt"))
-        .where(Commit.id.in_(select(sub.c.id)))
+        .where(
+            Commit.id.in_(select(sub.c.id)),
+            Commit.contributor_id.isnot(None),
+        )
         .group_by(Commit.contributor_id)
     )
     contrib_rows = (await db.execute(contrib_counts_q)).all()

@@ -1,10 +1,13 @@
 from __future__ import annotations
 
-from langchain.agents import create_agent
 from langchain_core.tools import BaseTool
+from langgraph.prebuilt import create_react_agent
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents.llm.manager import build_llm_from_provider
+from app.agents.memory.modifier import make_state_modifier
+from app.agents.memory.pool import get_checkpointer, get_store
+from app.agents.memory.state import AgentState
 from app.agents.tools.registry import build_tools_for_slugs, build_all_tools
 from app.db.models.agent_config import AgentConfig
 from app.db.models.llm_provider import LlmProvider
@@ -44,9 +47,17 @@ def build_agent(
         tools = tools + extra_tools
 
     system_prompt = resolve_system_prompt(agent_config)
+    modifier = make_state_modifier(system_prompt, agent_config, provider)
 
-    return create_agent(
+    checkpointer = get_checkpointer()
+    store = get_store()
+
+    agent = create_react_agent(
         model=llm,
         tools=tools,
-        system_prompt=system_prompt,
-    ), agent_config.max_iterations
+        state_schema=AgentState,
+        checkpointer=checkpointer,
+        store=store,
+        prompt=modifier,
+    )
+    return agent, agent_config.max_iterations

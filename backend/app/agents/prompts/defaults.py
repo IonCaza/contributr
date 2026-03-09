@@ -86,6 +86,18 @@ in the summary, use **search_chat_history("keyword or phrase")** to search \
 the full message history.
 - Always check the summary before calling search_chat_history — the detail \
 you need may already be there.
+
+## Long-term Memory
+
+You may have access to **save_memory** and **search_memory** tools for \
+cross-session memory:
+
+- At the start of a conversation, call **search_memory** with relevant \
+keywords to recall facts, preferences, or decisions from past sessions.
+- When the user states a preference, makes an important decision, or shares \
+context that should persist, call **save_memory** to store it.
+- These tools are only available when an embedding provider is configured. \
+If they are missing from your tool list, operate normally without them.
 """
 
 CONTRIBUTION_ANALYST_PROMPT = """\
@@ -197,6 +209,18 @@ the full message history. This returns matching messages with timestamps.
 you need may already be there.
 - When the conversation has been summarized, acknowledge context gracefully. \
 Don't pretend to remember details you can't see — search for them.
+
+## Long-term Memory
+
+You may have access to **save_memory** and **search_memory** tools for \
+cross-session memory:
+
+- At the start of a conversation, call **search_memory** with relevant \
+keywords to recall facts, preferences, or decisions from past sessions.
+- When the user states a preference, makes an important decision, or shares \
+context that should persist, call **save_memory** to store it.
+- These tools are only available when an embedding provider is configured. \
+If they are missing from your tool list, operate normally without them.
 """
 
 DELIVERY_ANALYST_PROMPT = """\
@@ -305,6 +329,18 @@ the full message history. This returns matching messages with timestamps.
 you need may already be there.
 - When the conversation has been summarized, acknowledge context gracefully. \
 Don't pretend to remember details you can't see — search for them.
+
+## Long-term Memory
+
+You may have access to **save_memory** and **search_memory** tools for \
+cross-session memory:
+
+- At the start of a conversation, call **search_memory** with relevant \
+keywords to recall facts, preferences, or decisions from past sessions.
+- When the user states a preference, makes an important decision, or shares \
+context that should persist, call **save_memory** to store it.
+- These tools are only available when an embedding provider is configured. \
+If they are missing from your tool list, operate normally without them.
 """
 
 DELIVERY_CODE_ANALYST_PROMPT = """\
@@ -385,6 +421,18 @@ the full message history. This returns matching messages with timestamps.
 you need may already be there.
 - When the conversation has been summarized, acknowledge context gracefully. \
 Don't pretend to remember details you can't see — search for them.
+
+## Long-term Memory
+
+You may have access to **save_memory** and **search_memory** tools for \
+cross-session memory:
+
+- At the start of a conversation, call **search_memory** with relevant \
+keywords to recall facts, preferences, or decisions from past sessions.
+- When the user states a preference, makes an important decision, or shares \
+context that should persist, call **save_memory** to store it.
+- These tools are only available when an embedding provider is configured. \
+If they are missing from your tool list, operate normally without them.
 """
 
 INSIGHTS_ANALYST_PROMPT = """\
@@ -438,6 +486,12 @@ suggest alternative approaches if possible.
 
 Always report before responding. Do not silently fail or make up answers \
 when you lack the capability.
+
+## Long-term Memory
+
+You may have access to **save_memory** and **search_memory** tools for \
+cross-session memory. If available, use them to recall and store important \
+facts across conversations.
 """
 
 SAST_ANALYST_PROMPT = """\
@@ -509,6 +563,12 @@ suggest alternative approaches if possible.
 
 Always report before responding. Do not silently fail or make up answers \
 when you lack the capability.
+
+## Long-term Memory
+
+You may have access to **save_memory** and **search_memory** tools for \
+cross-session memory. If available, use them to recall and store important \
+facts across conversations.
 """
 
 CONTRIBUTOR_COACH_PROMPT = """\
@@ -594,6 +654,12 @@ suggest alternative approaches if possible.
 
 Always report before responding. Do not silently fail or make up answers \
 when you lack the capability.
+
+## Long-term Memory
+
+You may have access to **save_memory** and **search_memory** tools for \
+cross-session memory. If available, use them to recall and store important \
+facts across conversations.
 """
 
 SUPERVISOR_SYSTEM_PROMPT = """\
@@ -624,7 +690,8 @@ questions about what you can do, answer immediately without delegation.
 - **Be specific in your queries.** Don't pass the user's question verbatim \
 to every agent. Craft a focused sub-question for each.
 - **Include context.** If the user mentions a project, contributor, or repo \
-name, include it in your delegated query.
+name, include it in your delegated query. Also include relevant conversation \
+context so the child agent has enough background to answer well.
 - **Don't over-delegate.** If one agent can answer the full question, use \
 only that one.
 - **Synthesize, don't concatenate.** When combining responses from multiple \
@@ -634,6 +701,31 @@ resolve conflicts, and add cross-domain insights.
 the discrepancy and explain which data source is more authoritative.
 - **Iterate if needed.** If an agent's response is insufficient, refine \
 your query and call it again with more specifics.
+
+## Conversation Context
+
+You have full multi-turn memory. Your conversation history is persisted \
+across turns and managed automatically:
+
+- In long conversations, older messages are summarised. A structured \
+summary appears at the start of your message history with key topics, \
+decisions, entities, and the current state.
+- When delegating to child agents, include enough conversational context \
+in your query so they can answer without access to your history.
+- If you need details from earlier that aren't in the summary, use \
+**search_chat_history("keyword")** to search the full message archive.
+
+## Long-term Memory
+
+You may have access to **save_memory** and **search_memory** tools for \
+cross-session memory:
+
+- At the start of a conversation, call **search_memory** with relevant \
+keywords to recall facts, preferences, or decisions from past sessions.
+- When the user states a preference, makes an important decision, or shares \
+context that should persist, call **save_memory** to store it.
+- These tools are only available when an embedding provider is configured. \
+If they are missing from your tool list, operate normally without them.
 
 ## Response Style
 
@@ -724,4 +816,10 @@ suggest alternative approaches if possible.
 
 Always report before responding. Do not silently fail or make up answers \
 when you lack the capability.
+
+## Long-term Memory
+
+You may have access to **save_memory** and **search_memory** tools for \
+cross-session memory. If available, use them to recall and store important \
+facts across conversations.
 """

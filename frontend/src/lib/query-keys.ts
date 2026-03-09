@@ -67,6 +67,9 @@ export const queryKeys = {
     teams: (projectId: string) => ["delivery", projectId, "teams"] as const,
     itemDetails: (projectId: string, filters?: Record<string, unknown>) => ["delivery", projectId, "itemDetails", filters] as const,
     contributorSummary: (projectId: string, filters?: Record<string, unknown>) => ["delivery", projectId, "contributorSummary", filters] as const,
+    workItemActivities: (projectId: string, workItemId: string, params?: Record<string, unknown>) => ["delivery", projectId, "workItem", workItemId, "activities", params] as const,
+    contributorActivities: (projectId: string, contributorId: string, params?: Record<string, unknown>) => ["delivery", projectId, "contributorActivities", contributorId, params] as const,
+    contributorActivityMetrics: (projectId: string, contributorId: string, params?: Record<string, unknown>) => ["delivery", projectId, "contributorActivityMetrics", contributorId, params] as const,
   },
   insights: {
     findings: (projectId: string, filters?: Record<string, unknown>) => ["insights", projectId, "findings", filters] as const,

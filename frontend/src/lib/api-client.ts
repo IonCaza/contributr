@@ -282,9 +282,9 @@ export const api = {
 
   // LLM Providers
   listLlmProviders: () => request<LlmProvider[]>("/ai/llm-providers"),
-  createLlmProvider: (data: { name: string; provider_type?: string; model: string; api_key?: string; base_url?: string; temperature?: number; context_window?: number | null; is_default?: boolean }) =>
+  createLlmProvider: (data: { name: string; provider_type?: string; model: string; model_type?: string; api_key?: string; base_url?: string; temperature?: number; context_window?: number | null; is_default?: boolean }) =>
     request<LlmProvider>("/ai/llm-providers", { method: "POST", body: JSON.stringify(data) }),
-  updateLlmProvider: (id: string, data: { name?: string; provider_type?: string; model?: string; api_key?: string; base_url?: string; temperature?: number; context_window?: number | null; is_default?: boolean }) =>
+  updateLlmProvider: (id: string, data: { name?: string; provider_type?: string; model?: string; model_type?: string; api_key?: string; base_url?: string; temperature?: number; context_window?: number | null; is_default?: boolean }) =>
     request<LlmProvider>(`/ai/llm-providers/${id}`, { method: "PUT", body: JSON.stringify(data) }),
   deleteLlmProvider: (id: string) => request<void>(`/ai/llm-providers/${id}`, { method: "DELETE" }),
 
@@ -445,8 +445,34 @@ export const api = {
     request<ContributorDeliverySummary[]>(`/projects/${projectId}/delivery/metrics/contributor-summary${buildDeliveryQuery(params)}`),
   getWorkItemDetail: (projectId: string, workItemId: string) =>
     request<WorkItemDetail>(`/projects/${projectId}/delivery/work-items/${workItemId}`),
+  updateWorkItem: (projectId: string, workItemId: string, data: { description?: string; title?: string }) =>
+    request<WorkItemDetail>(`/projects/${projectId}/delivery/work-items/${workItemId}`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    }),
   getWorkItemCommits: (projectId: string, workItemId: string) =>
     request<LinkedCommit[]>(`/projects/${projectId}/delivery/work-items/${workItemId}/commits`),
+  getWorkItemActivities: (projectId: string, workItemId: string, params?: { page?: number; page_size?: number }) =>
+    request<import("./types").PaginatedActivities>(
+      `/projects/${projectId}/delivery/work-items/${workItemId}/activities${buildQuery({
+        page: params?.page?.toString(),
+        page_size: params?.page_size?.toString(),
+      })}`,
+    ),
+  getContributorActivities: (projectId: string, contributorId: string, params?: { page?: number; page_size?: number }) =>
+    request<import("./types").PaginatedContributorActivities>(
+      `/projects/${projectId}/delivery/activities/contributor/${contributorId}${buildQuery({
+        page: params?.page?.toString(),
+        page_size: params?.page_size?.toString(),
+      })}`,
+    ),
+  getContributorActivityMetrics: (projectId: string, contributorId: string, params?: { from_date?: string; to_date?: string }) =>
+    request<import("./types").ContributorActivityMetrics>(
+      `/projects/${projectId}/delivery/activities/contributor/${contributorId}/metrics${buildQuery({
+        from_date: params?.from_date,
+        to_date: params?.to_date,
+      })}`,
+    ),
   getSprintDetail: (projectId: string, iterationId: string) =>
     request<SprintDetail>(`/projects/${projectId}/delivery/iterations/${iterationId}`),
   getSprintBurndown: (projectId: string, iterationId: string) =>

@@ -10,6 +10,9 @@ from app.db.base import engine, async_session
 from app.db.models import Repository
 from app.db.models.agent_config import AgentConfig, AgentToolAssignment, SupervisorMember
 from app.db.models.ai_settings import AiSettings, SINGLETON_ID
+from app.db.models.llm_provider import LlmProvider
+from app.agents.llm.manager import build_embeddings_from_provider, get_embedding_dims
+from app.agents.memory.pool import init_memory_pool, close_memory_pool
 from app.api import (
     auth, projects, repositories, contributors, stats,
     ssh_keys, commits, backup, chat, ai_settings,
@@ -166,12 +169,34 @@ async def _seed_builtin_agents():
             await db.commit()
 
 
+async def _init_memory():
+    """Start the LangGraph memory pool with an optional embedding provider."""
+    embed_fn = None
+    embed_dims = 1536
+    try:
+        async with async_session() as db:
+            row = (await db.execute(
+                select(LlmProvider).where(LlmProvider.model_type == "embedding").limit(1)
+            )).scalar_one_or_none()
+            if row:
+                embed_fn = build_embeddings_from_provider(row)
+                embed_dims = get_embedding_dims(row)
+                logger.info("Embedding provider: %s (dims=%d)", row.model, embed_dims)
+            else:
+                logger.info("No embedding provider configured — long-term memory store disabled")
+    except Exception:
+        logger.exception("Failed to resolve embedding provider")
+    await init_memory_pool(embed_fn=embed_fn, embed_dims=embed_dims)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await _backfill_platform_fields()
     await _ensure_ai_settings()
     await _seed_builtin_agents()
+    await _init_memory()
     yield
+    await close_memory_pool()
     await engine.dispose()
 
 

@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "contributr.fullname" . }}-repos-cache
+  labels:
+    {{- include "contributr.labels" . | nindent 4 }}
+spec:
+  accessModes:
+    - ReadWriteOnce
+  {{- if .Values.reposCache.storageClass }}
+  storageClassName: {{ .Values.reposCache.storageClass | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.reposCache.size }}

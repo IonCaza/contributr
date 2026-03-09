@@ -28,6 +28,7 @@ from app.db.models.insight import InsightRun, InsightFinding
 from app.db.models.contributor_insight import ContributorInsightRun, ContributorInsightFinding
 from app.db.models.team_insight import TeamInsightRun, TeamInsightFinding
 from app.db.models.sast import SastScanRun, SastFinding, SastRuleProfile, SastIgnoredRule
+from app.db.models.work_item_activity import WorkItemActivity
 from app.db.models.feedback import Feedback, FeedbackSource, FeedbackStatus
 
 __all__ = [
@@ -75,6 +76,7 @@ __all__ = [
     "SastFinding",
     "SastRuleProfile",
     "SastIgnoredRule",
+    "WorkItemActivity",
     "Feedback",
     "FeedbackSource",
     "FeedbackStatus",

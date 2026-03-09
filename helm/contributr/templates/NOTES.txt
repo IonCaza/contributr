@@ -1,0 +1,34 @@
+============================================================
+  Contributr has been deployed!
+============================================================
+
+{{- $scheme := ternary "https" "http" .Values.ingress.tls.enabled }}
+
+{{- if .Values.ingress.enabled }}
+
+  Application URL: {{ $scheme }}://{{ .Values.ingress.host }}
+  API URL:         {{ $scheme }}://{{ .Values.ingress.host }}/api
+
+{{- else }}
+
+  No ingress was created. Access the services via port-forward:
+
+    # Frontend
+    kubectl port-forward svc/{{ include "contributr.fullname" . }}-frontend 3000:3000
+
+    # Backend API
+    kubectl port-forward svc/{{ include "contributr.fullname" . }}-backend 8000:8000
+
+{{- end }}
+
+  Internal services:
+    PostgreSQL: {{ include "contributr.fullname" . }}-postgresql:5432
+    Redis:      {{ include "contributr.fullname" . }}-redis:6379
+
+  To check pod status:
+    kubectl get pods -l app.kubernetes.io/part-of=contributr
+
+  IMPORTANT: Update the following secrets before going to production:
+    - postgresql.auth.password
+    - backend.secretKey
+    - backend.jwtSecret

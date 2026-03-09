@@ -1,18 +1,20 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import uuid
 from typing import AsyncIterator
 
-from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.messages import HumanMessage
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.agents.base import build_agent, resolve_system_prompt
-from app.agents.context.manager import prepare_history
+from app.agents.base import build_agent
 from app.agents.llm.manager import build_llm_from_provider
+from app.agents.memory.cleanup import cleanup_checkpoint
+from app.agents.memory.extraction import extract_memories
+from app.agents.memory.tools import build_memory_tools
 from app.agents.supervisor import build_delegation_tools
-from sqlalchemy import select
-
 from app.agents.registry import is_ai_enabled, get_agent_by_slug
 from app.agents.tools.chat_history import build_search_chat_history_tool
 from app.agents.tools.feedback_gap import build_report_capability_gap_tool
@@ -21,31 +23,19 @@ from app.db.models.llm_provider import LlmProvider
 logger = logging.getLogger(__name__)
 
 
-def history_to_messages(history: list[dict]) -> list[HumanMessage | AIMessage]:
-    messages: list[HumanMessage | AIMessage] = []
-    for entry in history:
-        if entry["role"] == "user":
-            messages.append(HumanMessage(content=entry["content"]))
-        elif entry["role"] == "assistant":
-            messages.append(AIMessage(content=entry["content"]))
-    return messages
-
-
 async def run_agent_stream(
     db: AsyncSession,
     user_input: str,
-    chat_history: list[dict],
     agent_slug: str = "contribution-analyst",
     *,
     session_id: uuid.UUID | None = None,
-    session_summary: str | None = None,
-    context_state: dict | None = None,
+    user_id: uuid.UUID | None = None,
 ) -> AsyncIterator[str]:
     """Run a named agent and yield streamed text chunks.
 
-    Args:
-        context_state: Mutable dict. If summarization occurs the key
-            ``"new_summary"`` is set so the caller can persist it.
+    The checkpointer handles message history natively via thread_id.
+    Only the new user message is passed in; all prior context is loaded
+    from the checkpoint automatically.
     """
     if not await is_ai_enabled(db):
         raise RuntimeError("AI is not enabled")
@@ -59,30 +49,24 @@ async def run_agent_stream(
         result = await db.execute(
             select(LlmProvider)
             .where(LlmProvider.is_default.is_(True))
+            .where(LlmProvider.model_type == "chat")
             .limit(1)
         )
         provider = result.scalar_one_or_none()
     if not provider:
-        result = await db.execute(select(LlmProvider).limit(1))
+        result = await db.execute(
+            select(LlmProvider).where(LlmProvider.model_type == "chat").limit(1)
+        )
         provider = result.scalar_one_or_none()
     if not provider:
         raise RuntimeError("No LLM provider available — configure one in Settings > AI")
-
-    system_prompt = resolve_system_prompt(agent_config)
-    llm = build_llm_from_provider(provider, streaming=False)
-
-    trimmed_history, new_summary = await prepare_history(
-        agent_config, provider, llm, system_prompt,
-        user_input, chat_history, session_summary,
-    )
-
-    if new_summary is not None and context_state is not None:
-        context_state["new_summary"] = new_summary
 
     extra_tools = []
     if session_id is not None:
         extra_tools.append(build_search_chat_history_tool(db, session_id))
         extra_tools.append(build_report_capability_gap_tool(session_id, agent_slug))
+    if user_id is not None:
+        extra_tools.extend(build_memory_tools(user_id))
 
     if getattr(agent_config, "agent_type", "standard") == "supervisor":
         member_agents = getattr(agent_config, "member_agents", [])
@@ -99,15 +83,17 @@ async def run_agent_stream(
     agent, max_iterations = build_agent(
         agent_config, provider, db, extra_tools=extra_tools,
     )
-    messages = history_to_messages(trimmed_history)
-    messages.append(HumanMessage(content=user_input))
 
-    run_config = {"recursion_limit": (max_iterations or 25) * 2}
+    thread_id = str(session_id) if session_id else str(uuid.uuid4())
+    run_config = {
+        "configurable": {"thread_id": thread_id},
+        "recursion_limit": (max_iterations or 25) * 2,
+    }
 
     collected = ""
     pending_separator = False
     async for event in agent.astream_events(
-        {"messages": messages},
+        {"messages": [HumanMessage(content=user_input)]},
         version="v2",
         config=run_config,
     ):
@@ -127,9 +113,19 @@ async def run_agent_stream(
 
     if not collected:
         result = await agent.ainvoke(
-            {"messages": messages},
+            {"messages": [HumanMessage(content=user_input)]},
             config=run_config,
         )
         last_msg = result["messages"][-1]
         output = last_msg.content if hasattr(last_msg, "content") else "I wasn't able to generate a response."
         yield output
+
+    llm = build_llm_from_provider(provider, streaming=False)
+    await cleanup_checkpoint(agent, run_config, llm, agent_config, provider)
+
+    if user_id and collected:
+        turn_msgs = [
+            {"role": "user", "content": user_input},
+            {"role": "assistant", "content": collected},
+        ]
+        asyncio.create_task(extract_memories(user_id, turn_msgs))

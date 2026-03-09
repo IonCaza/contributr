@@ -22,6 +22,7 @@ class LlmProviderOut(BaseModel):
     name: str
     provider_type: str
     model: str
+    model_type: str
     has_api_key: bool
     base_url: str | None
     temperature: float
@@ -35,6 +36,7 @@ class LlmProviderCreate(BaseModel):
     name: str
     provider_type: str = "openai"
     model: str
+    model_type: str = "chat"
     api_key: str | None = None
     base_url: str | None = None
     temperature: float = 0.1
@@ -46,6 +48,7 @@ class LlmProviderUpdate(BaseModel):
     name: str | None = None
     provider_type: str | None = None
     model: str | None = None
+    model_type: str | None = None
     api_key: str | None = None
     base_url: str | None = None
     temperature: float | None = None
@@ -59,6 +62,7 @@ def _to_out(row: LlmProvider) -> LlmProviderOut:
         name=row.name,
         provider_type=row.provider_type,
         model=row.model,
+        model_type=row.model_type,
         has_api_key=bool(row.api_key_encrypted),
         base_url=row.base_url,
         temperature=row.temperature,
@@ -89,6 +93,7 @@ async def create_provider(
         name=body.name,
         provider_type=body.provider_type,
         model=body.model,
+        model_type=body.model_type,
         api_key_encrypted=encrypt_key(body.api_key) if body.api_key else None,
         base_url=body.base_url or None,
         temperature=body.temperature,
@@ -118,6 +123,8 @@ async def update_provider(
         row.provider_type = body.provider_type
     if body.model is not None:
         row.model = body.model
+    if body.model_type is not None:
+        row.model_type = body.model_type
     if body.api_key is not None:
         row.api_key_encrypted = encrypt_key(body.api_key) if body.api_key else None
     if body.base_url is not None:

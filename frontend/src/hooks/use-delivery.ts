@@ -165,11 +165,46 @@ export function useWorkItemDetail(projectId: string, workItemId: string) {
   });
 }
 
+export function useUpdateWorkItem(projectId: string, workItemId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (data: { description?: string; title?: string }) =>
+      api.updateWorkItem(projectId, workItemId, data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: queryKeys.delivery.workItemDetail(projectId, workItemId) });
+    },
+  });
+}
+
 export function useWorkItemCommits(projectId: string, workItemId: string) {
   return useQuery({
     queryKey: queryKeys.delivery.workItemCommits(projectId, workItemId),
     queryFn: () => api.getWorkItemCommits(projectId, workItemId),
     enabled: !!projectId && !!workItemId,
+  });
+}
+
+export function useWorkItemActivities(projectId: string, workItemId: string, params?: { page?: number; page_size?: number }) {
+  return useQuery({
+    queryKey: queryKeys.delivery.workItemActivities(projectId, workItemId, params),
+    queryFn: () => api.getWorkItemActivities(projectId, workItemId, params),
+    enabled: !!projectId && !!workItemId,
+  });
+}
+
+export function useContributorActivities(projectId: string, contributorId: string, params?: { page?: number; page_size?: number }) {
+  return useQuery({
+    queryKey: queryKeys.delivery.contributorActivities(projectId, contributorId, params),
+    queryFn: () => api.getContributorActivities(projectId, contributorId, params),
+    enabled: !!projectId && !!contributorId,
+  });
+}
+
+export function useContributorActivityMetrics(projectId: string, contributorId: string, params?: { from_date?: string; to_date?: string }) {
+  return useQuery({
+    queryKey: queryKeys.delivery.contributorActivityMetrics(projectId, contributorId, params),
+    queryFn: () => api.getContributorActivityMetrics(projectId, contributorId, params),
+    enabled: !!projectId && !!contributorId,
   });
 }
 

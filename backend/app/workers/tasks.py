@@ -18,7 +18,8 @@ from app.services.gitlab_client import fetch_gitlab_mrs
 from app.services.azure_client import fetch_azure_prs
 from app.services.azure_workitems_client import (
     fetch_ado_teams, fetch_ado_iterations, fetch_ado_work_items,
-    rebuild_daily_delivery_stats, _parse_ado_project,
+    fetch_ado_work_item_activities, rebuild_daily_delivery_stats,
+    _parse_ado_project,
 )
 from app.services.metrics import rebuild_daily_stats
 from app.services.sync_logger import SyncLogger
@@ -33,21 +34,28 @@ def _get_session() -> async_sessionmaker[AsyncSession]:
 
 
 async def _cleanup_orphaned_running_jobs() -> None:
+    from app.db.models.delivery_sync_job import DeliverySyncJob
+
     Session = _get_session()
     async with Session() as db:
-        result = await db.execute(
-            select(SyncJob).where(SyncJob.status == SyncStatus.RUNNING)
-        )
-        orphaned = result.scalars().all()
-        if not orphaned:
-            return
         now = datetime.now(timezone.utc)
-        for job in orphaned:
-            job.status = SyncStatus.FAILED
-            job.error_message = "Worker restarted; task was interrupted"
-            job.finished_at = now
-            logger.info("Cleaned up orphaned RUNNING job %s on worker startup", job.id)
-        await db.commit()
+        cleaned = 0
+
+        for model in (SyncJob, DeliverySyncJob):
+            result = await db.execute(
+                select(model).where(
+                    model.status.in_([SyncStatus.QUEUED, SyncStatus.RUNNING])
+                )
+            )
+            for job in result.scalars().all():
+                job.status = SyncStatus.FAILED
+                job.error_message = "Worker restarted; task was interrupted"
+                job.finished_at = now
+                cleaned += 1
+                logger.info("Cleaned up orphaned %s job %s on worker startup", model.__tablename__, job.id)
+
+        if cleaned:
+            await db.commit()
 
 
 @worker_ready.connect
@@ -384,6 +392,10 @@ async def _run_delivery_sync(project_id: str, job_id: str | None = None) -> dict
             wi_count = await fetch_ado_work_items(db, project, org_url, token, ado_project_name, slog)
             slog.info("work_items", f"Synced {wi_count} work items")
 
+            slog.info("activities", "Fetching work item activity history...")
+            act_count = await fetch_ado_work_item_activities(db, project, org_url, token, ado_project_name, slog)
+            slog.info("activities", f"Synced {act_count} activity records")
+
             slog.info("stats", "Rebuilding daily delivery stats...")
             await rebuild_daily_delivery_stats(db, project.id)
             slog.info("stats", "Daily delivery stats rebuilt")
@@ -399,13 +411,36 @@ async def _run_delivery_sync(project_id: str, job_id: str | None = None) -> dict
         except Exception as e:
             logger.exception("Delivery sync FAILED for project %s: %s", project_id, e)
             slog.fail(str(e)[:500])
+            await db.rollback()
             await _fail_job(str(e)[:500])
             return {"error": str(e)}
         finally:
             slog.close()
 
 
-@celery.task(name="sync_delivery")
+async def _mark_delivery_job_failed(job_id: str, error: str) -> None:
+    from app.db.models.delivery_sync_job import DeliverySyncJob
+    Session = _get_session()
+    async with Session() as db:
+        job = await db.get(DeliverySyncJob, uuid.UUID(job_id))
+        if job and job.status in (SyncStatus.QUEUED, SyncStatus.RUNNING):
+            job.status = SyncStatus.FAILED
+            job.error_message = f"Task failed unexpectedly: {error[:2000]}"
+            job.finished_at = datetime.now(timezone.utc)
+            await db.commit()
+            logger.info("Marked stale delivery job %s as FAILED via on_failure hook", job_id)
+
+
+class _DeliverySyncTask(celery.Task):
+    def on_failure(self, exc, task_id, args, kwargs, einfo):
+        if args and len(args) >= 2 and args[1]:
+            try:
+                asyncio.run(_mark_delivery_job_failed(args[1], str(exc)))
+            except Exception:
+                logger.exception("on_failure hook could not mark delivery job as failed")
+
+
+@celery.task(name="sync_delivery", base=_DeliverySyncTask)
 def sync_delivery(project_id: str, job_id: str | None = None) -> dict:
     logger.info("Celery task sync_delivery called: project=%s job=%s", project_id, job_id)
     return asyncio.run(_run_delivery_sync(project_id, job_id))
