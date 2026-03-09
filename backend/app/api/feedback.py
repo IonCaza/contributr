@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.auth.dependencies import get_current_user
 from app.db.base import get_db
 from app.db.models.user import User
-from app.db.models.feedback import Feedback, FeedbackSource, FeedbackStatus
+from app.db.models.feedback import Feedback
 
 router = APIRouter(prefix="/api/feedback", tags=["feedback"])
 
@@ -58,7 +58,7 @@ class PaginatedFeedback(BaseModel):
 def _row_to_out(row: Feedback) -> FeedbackOut:
     return FeedbackOut(
         id=str(row.id),
-        source=row.source.value if isinstance(row.source, FeedbackSource) else str(row.source),
+        source=str(row.source),
         category=row.category,
         content=row.content,
         user_query=row.user_query,
@@ -66,7 +66,7 @@ def _row_to_out(row: Feedback) -> FeedbackOut:
         session_id=str(row.session_id) if row.session_id else None,
         user_id=str(row.user_id) if row.user_id else None,
         message_id=str(row.message_id) if row.message_id else None,
-        status=row.status.value if isinstance(row.status, FeedbackStatus) else str(row.status),
+        status=str(row.status),
         admin_notes=row.admin_notes,
         created_at=row.created_at.isoformat() if isinstance(row.created_at, datetime) else str(row.created_at),
         updated_at=row.updated_at.isoformat() if isinstance(row.updated_at, datetime) else str(row.updated_at),
@@ -82,7 +82,7 @@ async def create_feedback(
     user: User = Depends(get_current_user),
 ):
     row = Feedback(
-        source=FeedbackSource(body.source),
+        source=body.source,
         category=body.category,
         content=body.content,
         user_query=body.user_query,
@@ -114,11 +114,11 @@ async def list_feedback(
     count_q = select(func.count(Feedback.id))
 
     if source:
-        q = q.where(Feedback.source == FeedbackSource(source))
-        count_q = count_q.where(Feedback.source == FeedbackSource(source))
+        q = q.where(Feedback.source == source)
+        count_q = count_q.where(Feedback.source == source)
     if feedback_status:
-        q = q.where(Feedback.status == FeedbackStatus(feedback_status))
-        count_q = count_q.where(Feedback.status == FeedbackStatus(feedback_status))
+        q = q.where(Feedback.status == feedback_status)
+        count_q = count_q.where(Feedback.status == feedback_status)
     if agent_slug:
         q = q.where(Feedback.agent_slug == agent_slug)
         count_q = count_q.where(Feedback.agent_slug == agent_slug)
@@ -166,7 +166,7 @@ async def update_feedback(
         raise HTTPException(status_code=404, detail="Feedback not found")
 
     if body.status is not None:
-        row.status = FeedbackStatus(body.status)
+        row.status = body.status
     if body.admin_notes is not None:
         row.admin_notes = body.admin_notes
 

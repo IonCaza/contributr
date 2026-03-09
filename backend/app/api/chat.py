@@ -140,10 +140,17 @@ async def send_message(
                 collected += chunk
                 yield {"event": "token", "data": json.dumps({"content": chunk})}
             yield {"event": "done", "data": json.dumps({"content": collected})}
-        except Exception:
+        except Exception as exc:
             logger.exception("Agent streaming error")
             if not collected:
-                collected = "Sorry, I encountered an error processing your request."
+                exc_str = str(exc).lower()
+                if "rate" in exc_str and "limit" in exc_str:
+                    collected = (
+                        "The AI provider is temporarily rate-limited. "
+                        "Please wait a moment and try again."
+                    )
+                else:
+                    collected = "Sorry, I encountered an error processing your request."
                 yield {"event": "error", "data": json.dumps({"detail": collected})}
         finally:
             content = collected or "No response generated."

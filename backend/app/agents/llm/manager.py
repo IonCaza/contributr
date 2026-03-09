@@ -3,11 +3,15 @@ from __future__ import annotations
 import base64
 import hashlib
 
+import litellm
 from cryptography.fernet import Fernet, InvalidToken
 from langchain_litellm import ChatLiteLLM
 
 from app.config import settings as app_settings
 from app.db.models.llm_provider import LlmProvider
+
+litellm.num_retries = 3
+litellm.request_timeout = 120
 
 
 def _fernet() -> Fernet:
@@ -31,6 +35,7 @@ def build_llm_from_provider(provider: LlmProvider, *, streaming: bool = True) ->
         "model": provider.model,
         "temperature": provider.temperature,
         "streaming": streaming,
+        "max_retries": 5,
     }
     if provider.api_key_encrypted:
         api_key = decrypt_key(provider.api_key_encrypted)

@@ -2,7 +2,7 @@ import uuid
 import enum
 from datetime import datetime, timezone
 
-from sqlalchemy import String, Text, DateTime, ForeignKey, Enum as SAEnum
+from sqlalchemy import String, Text, DateTime, ForeignKey
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -34,9 +34,8 @@ class Feedback(Base):
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4,
         comment="Auto-generated unique identifier",
     )
-    source: Mapped[FeedbackSource] = mapped_column(
-        SAEnum(FeedbackSource, values_callable=lambda e: [x.value for x in e], create_type=False),
-        nullable=False,
+    source: Mapped[str] = mapped_column(
+        String(10), nullable=False,
         comment="Origin of the feedback: agent (auto-reported capability gap) or human (manual submission)",
     )
     category: Mapped[str | None] = mapped_column(
@@ -69,9 +68,8 @@ class Feedback(Base):
         UUID(as_uuid=True), ForeignKey("chat_messages.id", ondelete="SET NULL"),
         comment="Specific chat message the feedback is about (thumbs-down on a message)",
     )
-    status: Mapped[FeedbackStatus] = mapped_column(
-        SAEnum(FeedbackStatus, values_callable=lambda e: [x.value for x in e], create_type=False),
-        nullable=False, default=FeedbackStatus.NEW,
+    status: Mapped[str] = mapped_column(
+        String(10), nullable=False, default=FeedbackStatus.NEW.value,
         comment="Review status: new, reviewed, or resolved",
     )
     admin_notes: Mapped[str | None] = mapped_column(

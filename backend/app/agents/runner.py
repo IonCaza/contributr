@@ -82,7 +82,7 @@ async def run_agent_stream(
     extra_tools = []
     if session_id is not None:
         extra_tools.append(build_search_chat_history_tool(db, session_id))
-        extra_tools.append(build_report_capability_gap_tool(db, session_id, agent_slug))
+        extra_tools.append(build_report_capability_gap_tool(session_id, agent_slug))
 
     if getattr(agent_config, "agent_type", "standard") == "supervisor":
         member_agents = getattr(agent_config, "member_agents", [])

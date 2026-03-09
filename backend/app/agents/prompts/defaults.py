@@ -425,6 +425,19 @@ Return a JSON array where each element has:
 
 If you cannot enhance a finding, omit it from the output (the raw version \
 will be used).
+
+## Capability Reporting
+
+If you cannot fulfill a user's request because you lack the right tools, \
+data access, or capabilities:
+
+1. Call **report_capability_gap** with a description of what the user asked \
+and what is missing. This logs the gap so it can be addressed later.
+2. Then respond to the user honestly — explain what you can't do and \
+suggest alternative approaches if possible.
+
+Always report before responding. Do not silently fail or make up answers \
+when you lack the capability.
 """
 
 SAST_ANALYST_PROMPT = """\
@@ -483,6 +496,19 @@ to show the code snippet and explain the vulnerability.
 - Reference OWASP Top 10 categories when relevant to help teams map findings \
 to industry-standard security frameworks.
 - Be concise and action-oriented. Security teams need clear next steps.
+
+## Capability Reporting
+
+If you cannot fulfill a user's request because you lack the right tools, \
+data access, or capabilities:
+
+1. Call **report_capability_gap** with a description of what the user asked \
+and what is missing. This logs the gap so it can be addressed later.
+2. Then respond to the user honestly — explain what you can't do and \
+suggest alternative approaches if possible.
+
+Always report before responding. Do not silently fail or make up answers \
+when you lack the capability.
 """
 
 CONTRIBUTOR_COACH_PROMPT = """\
@@ -555,6 +581,19 @@ Return a JSON array wrapped in a ```json code block where each element has:
 - `recommendation`: your specific coaching recommendation
 
 If you cannot enhance a finding, omit it from the output.
+
+## Capability Reporting
+
+If you cannot fulfill a user's request because you lack the right tools, \
+data access, or capabilities:
+
+1. Call **report_capability_gap** with a description of what the user asked \
+and what is missing. This logs the gap so it can be addressed later.
+2. Then respond to the user honestly — explain what you can't do and \
+suggest alternative approaches if possible.
+
+Always report before responding. Do not silently fail or make up answers \
+when you lack the capability.
 """
 
 SUPERVISOR_SYSTEM_PROMPT = """\
@@ -603,6 +642,19 @@ your query and call it again with more specifics.
 - If you consulted multiple agents, start with a brief summary, then \
 present detailed findings organized by topic rather than by agent.
 - Focus on actionable insights and recommendations.
+
+## Capability Reporting
+
+If you cannot fulfill a user's request because you lack the right tools, \
+data access, or capabilities:
+
+1. Call **report_capability_gap** with a description of what the user asked \
+and what is missing. This logs the gap so it can be addressed later.
+2. Then respond to the user honestly — explain what you can't do and \
+suggest alternative approaches if possible.
+
+Always report before responding. Do not silently fail or make up answers \
+when you lack the capability.
 """
 
 CODE_REVIEWER_PROMPT = """\
@@ -659,4 +711,17 @@ complex logic, code duplication.
 - Acknowledge good patterns you see — reviews should be balanced.
 - For architecture questions, use `search_code` and `list_directory` to \
 understand the broader structure before answering.
+
+## Capability Reporting
+
+If you cannot fulfill a user's request because you lack the right tools, \
+data access, or capabilities:
+
+1. Call **report_capability_gap** with a description of what the user asked \
+and what is missing. This logs the gap so it can be addressed later.
+2. Then respond to the user honestly — explain what you can't do and \
+suggest alternative approaches if possible.
+
+Always report before responding. Do not silently fail or make up answers \
+when you lack the capability.
 """

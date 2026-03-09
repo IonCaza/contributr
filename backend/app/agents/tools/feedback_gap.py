@@ -3,23 +3,28 @@
 Injected dynamically into every agent by the runner -- not part of the
 assignable tool registry. When an agent cannot fulfil a user's request it
 calls this tool to record the gap in the feedback table.
+
+Uses an independent database session to avoid conflicts with the agent's
+main session (which may already be mid-flush when tools execute).
 """
 from __future__ import annotations
 
+import logging
 import uuid
 
 from langchain_core.tools import tool
-from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models.feedback import Feedback, FeedbackSource
+from app.db.base import async_session
+from app.db.models.feedback import Feedback
+
+logger = logging.getLogger(__name__)
 
 
 def build_report_capability_gap_tool(
-    db: AsyncSession,
     session_id: uuid.UUID,
     agent_slug: str,
 ):
-    """Return a @tool bound to a specific chat session, db session, and agent."""
+    """Return a @tool bound to a specific chat session and agent."""
 
     @tool
     async def report_capability_gap(
@@ -36,16 +41,21 @@ def build_report_capability_gap_tool(
             gap_description: What is missing (tool, data source, permission, etc.).
             category: One of: capability_gap, missing_data, missing_tool, integration_needed.
         """
-        feedback = Feedback(
-            source=FeedbackSource.AGENT,
-            category=category,
-            content=gap_description,
-            user_query=user_request,
-            agent_slug=agent_slug,
-            session_id=session_id,
-        )
-        db.add(feedback)
-        await db.flush()
+        try:
+            async with async_session() as db:
+                feedback = Feedback(
+                    source="agent",
+                    category=category,
+                    content=gap_description,
+                    user_query=user_request,
+                    agent_slug=agent_slug,
+                    session_id=session_id,
+                )
+                db.add(feedback)
+                await db.commit()
+        except Exception:
+            logger.exception("Failed to record capability gap feedback")
+
         return (
             "Gap recorded. Thank the user for their question, explain what "
             "you cannot do, and suggest alternatives if possible."
