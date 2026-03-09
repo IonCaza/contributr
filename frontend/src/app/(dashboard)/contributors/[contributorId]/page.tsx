@@ -6,6 +6,8 @@ import { FolderGit2, Search, Users } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { StatCard } from "@/components/stat-card";
+import { ProfileHeaderSkeleton, FilterBarSkeleton, StatRowSkeleton, ChartSkeleton } from "@/components/page-skeleton";
+import { ANIM_CARD, stagger } from "@/lib/animations";
 import { ContributionAreaChart } from "@/components/charts/contribution-area-chart";
 import { ContributorHeatmap } from "@/components/contributor-heatmap";
 import { CommitList } from "@/components/commit-list";
@@ -88,7 +90,15 @@ export default function ContributorDetailPage() {
     commits: d.commits,
   })), [daily]);
 
-  if (!contributor || !stats) return <div className="animate-pulse text-muted-foreground">Loading contributor...</div>;
+  if (!contributor || !stats) return (
+    <div className="space-y-6">
+      <ProfileHeaderSkeleton />
+      <FilterBarSkeleton />
+      <StatRowSkeleton count={5} />
+      <StatRowSkeleton count={5} />
+      <ChartSkeleton />
+    </div>
+  );
 
   return (
     <div className="space-y-6">
@@ -176,18 +186,18 @@ export default function ContributorDetailPage() {
       </div>
 
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-5">
-        <StatCard title="Total Commits" value={stats.total_commits} trend={stats.trends.wow_commits_delta} tooltip="Total number of commits authored in the selected time period" onClick={() => setDrillDown({ title: "Total Commits", metric: "commits" })} />
-        <StatCard title="Lines Added" value={stats.total_lines_added} tooltip="Total lines of code added across all commits" onClick={() => setDrillDown({ title: "Lines Added", metric: "lines" })} />
-        <StatCard title="Lines Deleted" value={stats.total_lines_deleted} tooltip="Total lines of code removed across all commits" onClick={() => setDrillDown({ title: "Lines Deleted", metric: "lines" })} />
-        <StatCard title="Repositories" value={stats.repository_count} tooltip="Number of distinct repositories this contributor has committed to" onClick={() => setDrillDown({ title: "Repositories", metric: "repos" })} />
-        <StatCard title="Current Streak" value={`${stats.current_streak_days}d`} subtitle="Consecutive active days" tooltip="Number of consecutive days with at least one commit, up to today" />
+        <StatCard className={ANIM_CARD} style={stagger(0)} title="Total Commits" value={stats.total_commits} trend={stats.trends.wow_commits_delta} tooltip="Total number of commits authored in the selected time period" onClick={() => setDrillDown({ title: "Total Commits", metric: "commits" })} />
+        <StatCard className={ANIM_CARD} style={stagger(1)} title="Lines Added" value={stats.total_lines_added} tooltip="Total lines of code added across all commits" onClick={() => setDrillDown({ title: "Lines Added", metric: "lines" })} />
+        <StatCard className={ANIM_CARD} style={stagger(2)} title="Lines Deleted" value={stats.total_lines_deleted} tooltip="Total lines of code removed across all commits" onClick={() => setDrillDown({ title: "Lines Deleted", metric: "lines" })} />
+        <StatCard className={ANIM_CARD} style={stagger(3)} title="Repositories" value={stats.repository_count} tooltip="Number of distinct repositories this contributor has committed to" onClick={() => setDrillDown({ title: "Repositories", metric: "repos" })} />
+        <StatCard className={ANIM_CARD} style={stagger(4)} title="Current Streak" value={`${stats.current_streak_days}d`} subtitle="Consecutive active days" tooltip="Number of consecutive days with at least one commit, up to today" />
       </div>
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-5">
-        <StatCard title="Avg Commit Size" value={`${stats.avg_commit_size} lines`} subtitle="Lines per commit" tooltip="Average number of lines changed (added + deleted) per commit. Smaller commits are generally easier to review." />
-        <StatCard title="Code Velocity" value={stats.code_velocity.toLocaleString()} subtitle="Net lines (added - deleted)" tooltip="Net change in codebase size: lines added minus lines deleted. Positive means growth, negative means reduction." onClick={() => setDrillDown({ title: "Code Velocity", metric: "lines" })} />
-        <StatCard title="Active Days" value={stats.active_days} subtitle="Days with commits" tooltip="Number of unique days where this contributor made at least one commit" onClick={() => setDrillDown({ title: "Active Days", metric: "commits" })} />
-        <StatCard title="Impact Score" value={stats.impact_score.toLocaleString()} subtitle="Weighted contribution" tooltip="Weighted score combining commits, lines changed, PRs created, and code reviews given to measure overall contribution impact" />
-        <StatCard title="Review Engagement" value={`${stats.review_engagement}x`} subtitle={`${stats.reviews_given} reviews / ${stats.prs_authored} PRs`} tooltip="Ratio of code reviews given to pull requests authored. Values above 1x mean this person reviews more code than they submit." />
+        <StatCard className={ANIM_CARD} style={stagger(5)} title="Avg Commit Size" value={`${stats.avg_commit_size} lines`} subtitle="Lines per commit" tooltip="Average number of lines changed (added + deleted) per commit. Smaller commits are generally easier to review." />
+        <StatCard className={ANIM_CARD} style={stagger(6)} title="Code Velocity" value={stats.code_velocity.toLocaleString()} subtitle="Net lines (added - deleted)" tooltip="Net change in codebase size: lines added minus lines deleted. Positive means growth, negative means reduction." onClick={() => setDrillDown({ title: "Code Velocity", metric: "lines" })} />
+        <StatCard className={ANIM_CARD} style={stagger(7)} title="Active Days" value={stats.active_days} subtitle="Days with commits" tooltip="Number of unique days where this contributor made at least one commit" onClick={() => setDrillDown({ title: "Active Days", metric: "commits" })} />
+        <StatCard className={ANIM_CARD} style={stagger(8)} title="Impact Score" value={stats.impact_score.toLocaleString()} subtitle="Weighted contribution" tooltip="Weighted score combining commits, lines changed, PRs created, and code reviews given to measure overall contribution impact" />
+        <StatCard className={ANIM_CARD} style={stagger(9)} title="Review Engagement" value={`${stats.review_engagement}x`} subtitle={`${stats.reviews_given} reviews / ${stats.prs_authored} PRs`} tooltip="Ratio of code reviews given to pull requests authored. Values above 1x mean this person reviews more code than they submit." />
       </div>
 
       <StatDetailSheet

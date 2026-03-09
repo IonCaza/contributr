@@ -142,7 +142,7 @@ export default function ContributorsPage() {
       )}
 
       {isLoading ? (
-        <div className="animate-pulse text-muted-foreground">Loading...</div>
+        <div className="flex items-center gap-2 text-muted-foreground"><div className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />Loading...</div>
       ) : filtered.length === 0 ? (
         <Card>
           <CardContent className="flex flex-col items-center justify-center py-12 text-center">

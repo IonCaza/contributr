@@ -4,7 +4,7 @@ import base64
 import hashlib
 
 from cryptography.fernet import Fernet, InvalidToken
-from langchain_community.chat_models import ChatLiteLLM
+from langchain_litellm import ChatLiteLLM
 
 from app.config import settings as app_settings
 from app.db.models.llm_provider import LlmProvider

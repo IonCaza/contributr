@@ -4,15 +4,28 @@ import { useState, useMemo, useEffect } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import { useQueryClient } from "@tanstack/react-query";
-import { RefreshCw, AlertCircle, CheckCircle2, Clock, Loader2, XCircle, Ban, Search, ArrowUpDown, ChevronDown, ChevronRight, FileCode2, Flame, GitBranch, GitCommitHorizontal } from "lucide-react";
+import {
+  RefreshCw, AlertCircle, CheckCircle2, Clock, Loader2, XCircle, Ban, Search,
+  ArrowUpDown, ChevronDown, ChevronRight, FileCode2, Flame, GitBranch,
+  GitCommitHorizontal, ShieldAlert, ShieldCheck, AlertTriangle, Info, Play,
+  EyeOff, ExternalLink, Download, Bug, TrendingDown,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Card } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import {
+  Collapsible, CollapsibleContent, CollapsibleTrigger,
+} from "@/components/ui/collapsible";
+import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { StatCard } from "@/components/stat-card";
+import { FilterBarSkeleton, StatRowSkeleton, ChartSkeleton, TableSkeleton } from "@/components/page-skeleton";
+import { ANIM_CARD, stagger } from "@/lib/animations";
 import { StatDetailSheet } from "@/components/stat-detail-sheet";
 import { ContributionAreaChart } from "@/components/charts/contribution-area-chart";
 import { AuthorBarChart } from "@/components/charts/author-bar-chart";
@@ -27,9 +40,11 @@ import { BranchMultiSelect } from "@/components/branch-multi-select";
 import { SyncLogViewer, ViewLogsButton } from "@/components/sync-log-viewer";
 import { queryKeys } from "@/lib/query-keys";
 import { useRepo, useRepoStats, useSyncJobs, useRepoBranches, useRepoContributors, useFileTree, useRepoCommits, useSyncRepo, useCancelSync } from "@/hooks/use-repos";
+import { useSastSummary, useSastFindings, useSastRuns } from "@/hooks/use-sast";
 import { useDailyStats } from "@/hooks/use-daily-stats";
 import { useIterations } from "@/hooks/use-delivery";
-import type { ContributorSummary } from "@/lib/types";
+import { api } from "@/lib/api-client";
+import type { ContributorSummary, SastFinding, SastSummary as SastSummaryType } from "@/lib/types";
 
 const STATUS_ICON: Record<string, React.ReactNode> = {
   completed: <CheckCircle2 className="h-4 w-4 text-emerald-500" />,
@@ -37,6 +52,13 @@ const STATUS_ICON: Record<string, React.ReactNode> = {
   running: <RefreshCw className="h-4 w-4 animate-spin text-blue-500" />,
   queued: <Clock className="h-4 w-4 text-muted-foreground" />,
   cancelled: <Ban className="h-4 w-4 text-amber-500" />,
+};
+
+const SCAN_STATUS_ICON: Record<string, React.ReactNode> = {
+  completed: <CheckCircle2 className="h-4 w-4 text-emerald-500" />,
+  failed: <AlertCircle className="h-4 w-4 text-destructive" />,
+  running: <RefreshCw className="h-4 w-4 animate-spin text-blue-500" />,
+  queued: <Clock className="h-4 w-4 text-muted-foreground" />,
 };
 
 export default function RepoDetailPage() {
@@ -189,7 +211,15 @@ export default function RepoDetailPage() {
     return map;
   }, [daily]);
 
-  if (!repo) return <div className="animate-pulse text-muted-foreground">Loading repository...</div>;
+  if (!repo) return (
+    <div className="space-y-6">
+      <FilterBarSkeleton />
+      <StatRowSkeleton />
+      <StatRowSkeleton />
+      <ChartSkeleton />
+      <TableSkeleton rows={5} cols={4} />
+    </div>
+  );
 
   const hasActivity = (id: string) => {
     const cs = contribStatsMap.get(id);
@@ -225,6 +255,24 @@ export default function RepoDetailPage() {
           <div className="flex items-center gap-2 text-sm text-muted-foreground">
             <Badge variant="secondary">{repo.platform}</Badge>
             {repo.platform_owner && <span>{repo.platform_owner}/{repo.platform_repo}</span>}
+            <span className="text-border">|</span>
+            <GitBranch className="h-3.5 w-3.5" />
+            <Select
+              value={repo.default_branch || ""}
+              onValueChange={async (v) => {
+                await api.updateRepo(repoId, { default_branch: v });
+                qc.invalidateQueries({ queryKey: queryKeys.repos.detail(repoId) });
+              }}
+            >
+              <SelectTrigger className="h-6 w-auto gap-1 border-none bg-transparent px-1 text-xs font-medium shadow-none">
+                <SelectValue placeholder="Set default branch" />
+              </SelectTrigger>
+              <SelectContent>
+                {branches.map((b) => (
+                  <SelectItem key={b.id} value={b.name}>{b.name}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
         </div>
         <div className="flex items-center gap-2">
@@ -269,16 +317,16 @@ export default function RepoDetailPage() {
       {stats && (
         <>
           <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-            <StatCard title="Total Commits" value={stats.total_commits} tooltip="Total number of commits in this repository for the selected period" onClick={() => setDrillDown({ title: "Total Commits", metric: "commits" })} />
-            <StatCard title="Contributors" value={stats.contributor_count} tooltip="Number of unique people who made commits in the selected period" onClick={() => setDrillDown({ title: "Contributors", metric: "contributors" })} />
-            <StatCard title="Bus Factor" value={stats.bus_factor} subtitle="50% commit threshold" tooltip="Minimum number of contributors whose combined work accounts for 50% of all commits." onClick={() => setDrillDown({ title: "Bus Factor", metric: "bus_factor" })} />
-            <StatCard title="Commits/Day (7d)" value={stats.trends.avg_commits_7d} trend={stats.trends.wow_commits_delta} tooltip="Average number of commits per day over the last 7 days." onClick={() => setDrillDown({ title: "Commits/Day (7d)", metric: "commits_per_day" })} />
+            <StatCard className={ANIM_CARD} style={stagger(0)} title="Total Commits" value={stats.total_commits} tooltip="Total number of commits in this repository for the selected period" onClick={() => setDrillDown({ title: "Total Commits", metric: "commits" })} />
+            <StatCard className={ANIM_CARD} style={stagger(1)} title="Contributors" value={stats.contributor_count} tooltip="Number of unique people who made commits in the selected period" onClick={() => setDrillDown({ title: "Contributors", metric: "contributors" })} />
+            <StatCard className={ANIM_CARD} style={stagger(2)} title="Bus Factor" value={stats.bus_factor} subtitle="50% commit threshold" tooltip="Minimum number of contributors whose combined work accounts for 50% of all commits." onClick={() => setDrillDown({ title: "Bus Factor", metric: "bus_factor" })} />
+            <StatCard className={ANIM_CARD} style={stagger(3)} title="Commits/Day (7d)" value={stats.trends.avg_commits_7d} trend={stats.trends.wow_commits_delta} tooltip="Average number of commits per day over the last 7 days." onClick={() => setDrillDown({ title: "Commits/Day (7d)", metric: "commits_per_day" })} />
           </div>
           <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-            <StatCard title="PR Cycle Time" value={`${stats.pr_cycle_time_hours}h`} subtitle="Avg open to merge" tooltip="Average time from when a pull request is opened to when it gets merged." />
-            <StatCard title="Review Turnaround" value={`${stats.pr_review_turnaround_hours}h`} subtitle="Avg to first review" tooltip="Average time from when a pull request is opened until it receives its first code review." />
-            <StatCard title="Churn Ratio" value={stats.churn_ratio} subtitle="Deleted / added lines" tooltip="Ratio of lines deleted to lines added." onClick={() => setDrillDown({ title: "Churn Ratio", metric: "churn" })} />
-            <StatCard title="Work Distribution" value={stats.contribution_gini} subtitle="Gini (0=even, 1=concentrated)" tooltip="Measures how evenly work is spread across contributors." onClick={() => setDrillDown({ title: "Work Distribution", metric: "work_distribution" })} />
+            <StatCard className={ANIM_CARD} style={stagger(4)} title="PR Cycle Time" value={`${stats.pr_cycle_time_hours}h`} subtitle="Avg open to merge" tooltip="Average time from when a pull request is opened to when it gets merged." />
+            <StatCard className={ANIM_CARD} style={stagger(5)} title="Review Turnaround" value={`${stats.pr_review_turnaround_hours}h`} subtitle="Avg to first review" tooltip="Average time from when a pull request is opened until it receives its first code review." />
+            <StatCard className={ANIM_CARD} style={stagger(6)} title="Churn Ratio" value={stats.churn_ratio} subtitle="Deleted / added lines" tooltip="Ratio of lines deleted to lines added." onClick={() => setDrillDown({ title: "Churn Ratio", metric: "churn" })} />
+            <StatCard className={ANIM_CARD} style={stagger(7)} title="Work Distribution" value={stats.contribution_gini} subtitle="Gini (0=even, 1=concentrated)" tooltip="Measures how evenly work is spread across contributors." onClick={() => setDrillDown({ title: "Work Distribution", metric: "work_distribution" })} />
           </div>
 
           <StatDetailSheet
@@ -396,6 +444,7 @@ export default function RepoDetailPage() {
             <TabsTrigger value="commits" className="gap-2"><GitCommitHorizontal className="h-4 w-4" /> Commits</TabsTrigger>
             <TabsTrigger value="files" className="gap-2"><FileCode2 className="h-4 w-4" /> Files</TabsTrigger>
             <TabsTrigger value="hotspots" className="gap-2"><Flame className="h-4 w-4" /> Hotspots</TabsTrigger>
+            <TabsTrigger value="security" className="gap-2"><ShieldAlert className="h-4 w-4" /> Security</TabsTrigger>
           </TabsList>
 
           {activeTab === "commits" && branches.length > 0 && (
@@ -470,6 +519,10 @@ export default function RepoDetailPage() {
         <TabsContent value="hotspots">
           <HotspotTable repoId={repoId} branch={filesBranch} onSelectFile={(p) => setSelectedFile(p)} />
         </TabsContent>
+
+        <TabsContent value="security">
+          <RepoSecuritySection repoId={repoId} />
+        </TabsContent>
       </Tabs>
 
       <div>
@@ -504,6 +557,367 @@ export default function RepoDetailPage() {
           </Table>
         </Card>
       </div>
+    </div>
+  );
+}
+
+const SEVERITY_CONFIG: Record<string, { icon: typeof ShieldAlert; color: string; bg: string }> = {
+  critical: { icon: ShieldAlert, color: "text-red-600", bg: "bg-red-50 dark:bg-red-950/30" },
+  high: { icon: AlertTriangle, color: "text-orange-500", bg: "bg-orange-50 dark:bg-orange-950/30" },
+  medium: { icon: AlertCircle, color: "text-amber-500", bg: "bg-amber-50 dark:bg-amber-950/30" },
+  low: { icon: Info, color: "text-blue-500", bg: "bg-blue-50 dark:bg-blue-950/30" },
+  info: { icon: Info, color: "text-slate-400", bg: "bg-slate-50 dark:bg-slate-950/30" },
+};
+
+function formatRelative(dateStr: string | null) {
+  if (!dateStr) return "N/A";
+  const diff = Date.now() - new Date(dateStr).getTime();
+  const mins = Math.floor(diff / 60000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours}h ago`;
+  return `${Math.floor(hours / 24)}d ago`;
+}
+
+function SecurityFindingRow({
+  finding,
+  onDismiss,
+  onFalsePositive,
+}: {
+  finding: SastFinding;
+  onDismiss: (id: string) => void;
+  onFalsePositive: (id: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const config = SEVERITY_CONFIG[finding.severity] || SEVERITY_CONFIG.info;
+  const SevIcon = config.icon;
+  const ruleShort = finding.rule_id.split(".").slice(-2).join(".");
+
+  return (
+    <Collapsible open={open} onOpenChange={setOpen}>
+      <Card className={`border-l-4 ${
+        finding.severity === "critical" ? "border-l-red-500" :
+        finding.severity === "high" ? "border-l-orange-500" :
+        finding.severity === "medium" ? "border-l-amber-500" :
+        finding.severity === "low" ? "border-l-blue-500" : "border-l-slate-300"
+      }`}>
+        <CollapsibleTrigger asChild>
+          <CardContent className="flex items-start gap-3 py-3 px-4 cursor-pointer hover:bg-muted/30 transition-colors">
+            <div className={`rounded-md p-1.5 mt-0.5 ${config.bg}`}>
+              <SevIcon className={`h-4 w-4 ${config.color}`} />
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="font-medium text-sm">{finding.message}</span>
+                <Badge variant="outline" className="text-xs font-mono">{ruleShort}</Badge>
+                {finding.cwe_ids?.map((c) => (
+                  <Badge key={c} variant="secondary" className="text-xs">{c}</Badge>
+                ))}
+              </div>
+              <div className="flex items-center gap-3 mt-1 text-xs text-muted-foreground">
+                <span className="flex items-center gap-1">
+                  <FileCode2 className="h-3 w-3" />
+                  {finding.file_path}:{finding.start_line}
+                </span>
+                <span>First seen: {formatRelative(finding.first_detected_at)}</span>
+                <Badge variant="outline" className="text-xs capitalize">{finding.confidence}</Badge>
+              </div>
+            </div>
+            {open ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+          </CardContent>
+        </CollapsibleTrigger>
+        <CollapsibleContent>
+          <div className="border-t px-4 py-3 space-y-3 bg-muted/10">
+            {finding.code_snippet && (
+              <div>
+                <p className="text-xs font-medium text-muted-foreground mb-1">Vulnerable Code</p>
+                <pre className="text-xs bg-muted rounded-md p-3 overflow-x-auto font-mono"><code>{finding.code_snippet}</code></pre>
+              </div>
+            )}
+            {finding.fix_suggestion && (
+              <div>
+                <p className="text-xs font-medium text-muted-foreground mb-1">Suggested Fix</p>
+                <pre className="text-xs bg-emerald-50 dark:bg-emerald-950/20 rounded-md p-3 overflow-x-auto font-mono border border-emerald-200 dark:border-emerald-800"><code>{finding.fix_suggestion}</code></pre>
+              </div>
+            )}
+            {finding.metadata && (finding.metadata as Record<string, unknown>).references && (
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-xs text-muted-foreground">References:</span>
+                {((finding.metadata as Record<string, unknown>).references as string[]).slice(0, 3).map((ref) => (
+                  <a key={ref} href={ref} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-500 hover:underline flex items-center gap-0.5">
+                    {new URL(ref).hostname}<ExternalLink className="h-3 w-3" />
+                  </a>
+                ))}
+              </div>
+            )}
+            <div className="flex items-center gap-2 pt-1">
+              <Button variant="outline" size="sm" className="text-xs" onClick={() => onDismiss(finding.id)}>
+                <EyeOff className="h-3 w-3 mr-1" />Dismiss
+              </Button>
+              <Button variant="outline" size="sm" className="text-xs" onClick={() => onFalsePositive(finding.id)}>
+                <XCircle className="h-3 w-3 mr-1" />False Positive
+              </Button>
+            </div>
+          </div>
+        </CollapsibleContent>
+      </Card>
+    </Collapsible>
+  );
+}
+
+function RepoSecuritySection({ repoId }: { repoId: string }) {
+  const qc = useQueryClient();
+  const { data: summary } = useSastSummary(repoId);
+  const { data: findings, isLoading } = useSastFindings(repoId);
+  const { data: runs } = useSastRuns(repoId);
+  const [scanningRunId, setScanningRunId] = useState<string | null>(null);
+  const [severityFilter, setSeverityFilter] = useState("");
+
+  const lastRun = runs?.[0];
+  const isRunActive = lastRun?.status === "running" || lastRun?.status === "queued";
+
+  useEffect(() => {
+    if (isRunActive && lastRun && !scanningRunId) {
+      setScanningRunId(lastRun.id);
+    }
+  }, [isRunActive, lastRun, scanningRunId]);
+
+  async function handleScan() {
+    if (scanningRunId) return;
+    try {
+      const run = await api.triggerSastScan(repoId);
+      setScanningRunId(run.id);
+    } catch { /* ignore */ }
+  }
+
+  function handleScanDone() {
+    setScanningRunId(null);
+    qc.invalidateQueries({ queryKey: queryKeys.sast.findings(repoId, "repo") });
+    qc.invalidateQueries({ queryKey: queryKeys.sast.summary(repoId, "repo") });
+    qc.invalidateQueries({ queryKey: queryKeys.sast.runs(repoId, "repo") });
+  }
+
+  async function handleDismiss(findingId: string) {
+    await api.dismissSastFinding(repoId, findingId);
+    qc.invalidateQueries({ queryKey: queryKeys.sast.findings(repoId, "repo") });
+    qc.invalidateQueries({ queryKey: queryKeys.sast.summary(repoId, "repo") });
+  }
+
+  async function handleFalsePositive(findingId: string) {
+    await api.markSastFalsePositive(repoId, findingId);
+    qc.invalidateQueries({ queryKey: queryKeys.sast.findings(repoId, "repo") });
+    qc.invalidateQueries({ queryKey: queryKeys.sast.summary(repoId, "repo") });
+  }
+
+  function handleReportDownload(format: string) {
+    const token = api.getAuthToken();
+    const baseUrl = api.getSastReportUrl(repoId, format);
+    const url = token ? `${baseUrl}&token=${encodeURIComponent(token)}` : baseUrl;
+    window.open(url, "_blank");
+  }
+
+  const score = summary
+    ? Math.max(0, 100 - (summary.critical * 20) - (summary.high * 10) - (summary.medium * 3) - (summary.low * 1))
+    : null;
+  const scoreColor = score === null ? "bg-muted" : score >= 80 ? "bg-emerald-500" : score >= 50 ? "bg-amber-500" : "bg-red-500";
+
+  const filteredFindings = severityFilter
+    ? findings?.filter((f) => f.severity === severityFilter)
+    : findings;
+
+  const sevCards: { label: string; value: number; icon: typeof ShieldAlert; color: string }[] = summary ? [
+    { label: "Critical", value: summary.critical, icon: ShieldAlert, color: "text-red-600" },
+    { label: "High", value: summary.high, icon: AlertTriangle, color: "text-orange-500" },
+    { label: "Medium", value: summary.medium, icon: AlertCircle, color: "text-amber-500" },
+    { label: "Low", value: summary.low, icon: Info, color: "text-blue-500" },
+    { label: "Fixed (30d)", value: summary.fixed_30d, icon: TrendingDown, color: "text-emerald-500" },
+    { label: "Total Open", value: summary.total_open, icon: Bug, color: "text-slate-500" },
+  ] : [];
+
+  return (
+    <div className="space-y-4">
+      {/* Score banner + actions */}
+      <Card>
+        <CardContent className="flex items-center justify-between py-4 px-6 gap-4">
+          <div className="flex items-center gap-4">
+            <div className={`h-12 w-12 rounded-full ${scoreColor} flex items-center justify-center`}>
+              <span className="text-white font-bold text-lg">{score ?? "?"}</span>
+            </div>
+            <div>
+              <p className="font-semibold text-lg">Security Score</p>
+              <p className="text-sm text-muted-foreground">
+                {lastRun ? `Last scan: ${formatRelative(lastRun.created_at)}` : "No scans yet"}
+              </p>
+            </div>
+            {score !== null && (
+              <div className="hidden sm:flex items-center gap-1 ml-4">
+                <div className="h-2 w-48 rounded-full bg-muted overflow-hidden">
+                  <div className={`h-full rounded-full transition-all ${scoreColor}`} style={{ width: `${score}%` }} />
+                </div>
+              </div>
+            )}
+          </div>
+          <div className="flex items-center gap-2">
+            <Button size="sm" onClick={handleScan} disabled={!!scanningRunId}>
+              {scanningRunId ? (
+                <><Loader2 className="h-4 w-4 animate-spin mr-1" />Scanning...</>
+              ) : (
+                <><Play className="h-4 w-4 mr-1" />Run Scan</>
+              )}
+            </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="outline" size="sm"><Download className="h-4 w-4 mr-1" /> Report</Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem onClick={() => handleReportDownload("json")}>Download JSON</DropdownMenuItem>
+                <DropdownMenuItem onClick={() => handleReportDownload("csv")}>Download CSV</DropdownMenuItem>
+                <DropdownMenuItem onClick={() => handleReportDownload("pdf")}>Download PDF</DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Scan log viewer */}
+      {scanningRunId && (
+        <SyncLogViewer
+          logUrl={`${api.getApiBase()}/repositories/${repoId}/sast/runs/${scanningRunId}/logs`}
+          compact
+          title="SAST Scan Logs"
+          onDone={handleScanDone}
+        />
+      )}
+
+      {/* Severity cards */}
+      {summary && (
+        <div className="grid gap-4 grid-cols-2 md:grid-cols-3 lg:grid-cols-6">
+          {sevCards.map((c) => (
+            <Card key={c.label}>
+              <CardContent className="flex items-center gap-3 py-4 px-4">
+                <c.icon className={`h-7 w-7 ${c.color}`} />
+                <div>
+                  <p className="text-2xl font-bold">{c.value}</p>
+                  <p className="text-xs text-muted-foreground">{c.label}</p>
+                </div>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+      )}
+
+      {/* Severity filter */}
+      <div className="flex items-center gap-1 rounded-lg bg-muted p-1 w-fit">
+        {[{ v: "", l: "All" }, { v: "critical", l: "Critical" }, { v: "high", l: "High" }, { v: "medium", l: "Medium" }, { v: "low", l: "Low" }].map((s) => (
+          <button
+            key={s.v}
+            onClick={() => setSeverityFilter(s.v)}
+            className={`px-2.5 py-1 text-xs font-medium rounded-md transition-colors ${
+              severityFilter === s.v ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            {s.l}
+          </button>
+        ))}
+      </div>
+
+      {/* Findings list */}
+      {isLoading ? (
+        <div className="flex items-center justify-center py-12">
+          <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+        </div>
+      ) : filteredFindings && filteredFindings.length > 0 ? (
+        <div className="space-y-2">
+          {filteredFindings.map((f) => (
+            <SecurityFindingRow key={f.id} finding={f} onDismiss={handleDismiss} onFalsePositive={handleFalsePositive} />
+          ))}
+        </div>
+      ) : (
+        <Card>
+          <CardContent className="flex flex-col items-center justify-center py-12 text-muted-foreground">
+            <ShieldCheck className="h-10 w-10 mb-2 text-emerald-500" />
+            <p className="font-medium">No security findings</p>
+            <p className="text-sm mt-1">
+              {runs?.length ? "All clear! No open vulnerabilities detected." : "Run a SAST scan to check for vulnerabilities."}
+            </p>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Top rules & files */}
+      {summary && (Object.keys(summary.by_rule).length > 0 || Object.keys(summary.by_file).length > 0) && (
+        <div className="grid gap-4 md:grid-cols-2">
+          {Object.keys(summary.by_rule).length > 0 && (
+            <Card>
+              <CardHeader className="py-3 px-4"><CardTitle className="text-sm font-medium">Top Rules</CardTitle></CardHeader>
+              <CardContent className="pt-0 px-4 pb-3">
+                <Table>
+                  <TableHeader><TableRow><TableHead>Rule</TableHead><TableHead className="text-right">Count</TableHead></TableRow></TableHeader>
+                  <TableBody>
+                    {Object.entries(summary.by_rule).map(([rule, count]) => (
+                      <TableRow key={rule}><TableCell className="font-mono text-xs">{rule}</TableCell><TableCell className="text-right">{count}</TableCell></TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </CardContent>
+            </Card>
+          )}
+          {Object.keys(summary.by_file).length > 0 && (
+            <Card>
+              <CardHeader className="py-3 px-4"><CardTitle className="text-sm font-medium">Most Affected Files</CardTitle></CardHeader>
+              <CardContent className="pt-0 px-4 pb-3">
+                <Table>
+                  <TableHeader><TableRow><TableHead>File</TableHead><TableHead className="text-right">Findings</TableHead></TableRow></TableHeader>
+                  <TableBody>
+                    {Object.entries(summary.by_file).map(([file, count]) => (
+                      <TableRow key={file}><TableCell className="font-mono text-xs truncate max-w-md">{file}</TableCell><TableCell className="text-right">{count}</TableCell></TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </CardContent>
+            </Card>
+          )}
+        </div>
+      )}
+
+      {/* Scan history */}
+      {runs && runs.length > 0 && (
+        <div>
+          <h2 className="mb-3 text-xl font-semibold">Scan History</h2>
+          <Card>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Status</TableHead>
+                  <TableHead>Started</TableHead>
+                  <TableHead>Findings</TableHead>
+                  <TableHead>Commit</TableHead>
+                  <TableHead>Error</TableHead>
+                  <TableHead className="w-16"></TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {runs.slice(0, 10).map((run) => (
+                  <TableRow key={run.id}>
+                    <TableCell className="flex items-center gap-2">
+                      {SCAN_STATUS_ICON[run.status] || null}
+                      <span className="capitalize">{run.status}</span>
+                    </TableCell>
+                    <TableCell>{run.created_at ? new Date(run.created_at).toLocaleString() : "-"}</TableCell>
+                    <TableCell>{run.findings_count}</TableCell>
+                    <TableCell className="font-mono text-xs text-muted-foreground">{run.commit_sha ? run.commit_sha.slice(0, 7) : "-"}</TableCell>
+                    <TableCell className="max-w-xs truncate text-destructive">{run.error_message || "-"}</TableCell>
+                    <TableCell>
+                      <ViewLogsButton logUrl={`${api.getApiBase()}/repositories/${repoId}/sast/runs/${run.id}/logs`} />
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </Card>
+        </div>
+      )}
     </div>
   );
 }

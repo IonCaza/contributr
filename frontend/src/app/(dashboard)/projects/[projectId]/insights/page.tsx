@@ -6,6 +6,7 @@ import {
 } from "lucide-react";
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "@/components/ui/sheet";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -46,11 +47,13 @@ const INFO_PENALTY = 1;
 
 function HealthScoreBanner({
   summary,
+  isLoading,
   lastRun,
   onRunAnalysis,
   isRunning,
 }: {
   summary: { total_active: number; critical: number; warning: number; info: number; resolved_30d: number } | undefined;
+  isLoading: boolean;
   lastRun: { started_at: string; status: string } | undefined;
   onRunAnalysis: () => void;
   isRunning: boolean;
@@ -87,37 +90,50 @@ function HealthScoreBanner({
       <Card>
         <CardContent className="flex items-center justify-between py-4 px-6">
           <div className="flex items-center gap-4">
-            <TooltipProvider>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <div
-                    className="flex items-center gap-3 cursor-pointer select-none rounded-lg p-1 -m-1 hover:bg-muted/50 transition-colors"
-                    onDoubleClick={() => setSheetOpen(true)}
-                  >
-                    <div className={`h-12 w-12 rounded-full ${scoreColor} flex items-center justify-center`}>
-                      <span className="text-white font-bold text-lg">{score ?? "?"}</span>
-                    </div>
-                    <div>
-                      <p className="font-semibold text-lg">Health Score</p>
-                      <p className="text-sm text-muted-foreground">{lastRunLabel}</p>
+            {isLoading && !summary ? (
+              <>
+                <Skeleton className="h-12 w-12 rounded-full" />
+                <div className="space-y-1.5">
+                  <Skeleton className="h-5 w-28" />
+                  <Skeleton className="h-4 w-36" />
+                </div>
+                <Skeleton className="hidden sm:block h-2 w-48 rounded-full" />
+              </>
+            ) : (
+              <>
+                <TooltipProvider>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <div
+                        className="flex items-center gap-3 cursor-pointer select-none rounded-lg p-1 -m-1 hover:bg-muted/50 transition-colors"
+                        onDoubleClick={() => setSheetOpen(true)}
+                      >
+                        <div className={`h-12 w-12 rounded-full ${scoreColor} flex items-center justify-center`}>
+                          <span className="text-white font-bold text-lg">{score ?? "?"}</span>
+                        </div>
+                        <div>
+                          <p className="font-semibold text-lg">Health Score</p>
+                          <p className="text-sm text-muted-foreground">{lastRunLabel}</p>
+                        </div>
+                      </div>
+                    </TooltipTrigger>
+                    <TooltipContent side="bottom" className="max-w-64">
+                      <p>Double-click to see how the Health Score is calculated</p>
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+                {score !== null && (
+                  <div className="hidden sm:flex items-center gap-1 ml-4">
+                    <div className="h-2 w-48 rounded-full bg-muted overflow-hidden">
+                      <div
+                        className={`h-full rounded-full transition-all ${scoreColor}`}
+                        style={{ width: `${score}%` }}
+                      />
                     </div>
                   </div>
-                </TooltipTrigger>
-                <TooltipContent side="bottom" className="max-w-64">
-                  <p>Double-click to see how the Health Score is calculated</p>
-                </TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
-          {score !== null && (
-            <div className="hidden sm:flex items-center gap-1 ml-4">
-              <div className="h-2 w-48 rounded-full bg-muted overflow-hidden">
-                <div
-                  className={`h-full rounded-full transition-all ${scoreColor}`}
-                  style={{ width: `${score}%` }}
-                />
-              </div>
-            </div>
-          )}
+                )}
+              </>
+            )}
         </div>
         <Button onClick={onRunAnalysis} disabled={isRunning} size="sm">
           {isRunning ? (
@@ -208,10 +224,30 @@ function HealthScoreBanner({
 
 function SummaryCards({
   summary,
+  isLoading,
 }: {
   summary: { total_active: number; critical: number; warning: number; info: number; resolved_30d: number } | undefined;
+  isLoading: boolean;
 }) {
-  if (!summary) return null;
+  if (!summary && !isLoading) return null;
+
+  if (!summary) {
+    return (
+      <div className="grid gap-4 grid-cols-2 lg:grid-cols-4">
+        {Array.from({ length: 4 }).map((_, i) => (
+          <Card key={i}>
+            <CardContent className="flex items-center gap-3 py-4 px-4">
+              <Skeleton className="h-8 w-8 rounded-md" />
+              <div className="space-y-1.5">
+                <Skeleton className="h-7 w-10" />
+                <Skeleton className="h-3 w-16" />
+              </div>
+            </CardContent>
+          </Card>
+        ))}
+      </div>
+    );
+  }
 
   const cards = [
     { label: "Critical", value: summary.critical, icon: AlertTriangle, color: "text-red-500" },
@@ -316,8 +352,8 @@ export default function InsightsPage({
     ...(severityFilter && { severity: severityFilter }),
   };
 
-  const { data: summary } = useInsightsSummary(projectId);
-  const { data: findings, isLoading } = useInsightFindings(projectId, filters);
+  const { data: summary, isLoading: summaryLoading } = useInsightsSummary(projectId);
+  const { data: findings, isLoading: findingsLoading } = useInsightFindings(projectId, filters);
   const { data: runs, refetch: refetchRuns } = useInsightRuns(projectId);
   const triggerRun = useTriggerInsightRun(projectId);
   const dismissFinding = useDismissInsightFinding(projectId);
@@ -354,6 +390,7 @@ export default function InsightsPage({
     <div className="space-y-6">
       <HealthScoreBanner
         summary={summary}
+        isLoading={summaryLoading}
         lastRun={lastRun}
         onRunAnalysis={handleTriggerRun}
         isRunning={isRunning}
@@ -363,7 +400,7 @@ export default function InsightsPage({
         <SyncLogViewer logUrl={logUrl} compact title="Analysis Logs" onDone={handleLogsDone} />
       )}
 
-      <SummaryCards summary={summary} />
+      <SummaryCards summary={summary} isLoading={summaryLoading} />
 
       {/* Filter bar */}
       <div className="flex flex-wrap items-center gap-2">
@@ -400,9 +437,20 @@ export default function InsightsPage({
       </div>
 
       {/* Findings list */}
-      {isLoading ? (
-        <div className="flex items-center justify-center py-12">
-          <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+      {findingsLoading ? (
+        <div className="space-y-3">
+          {Array.from({ length: 4 }).map((_, i) => (
+            <Card key={i}>
+              <CardContent className="flex items-start gap-3 py-4 px-4">
+                <Skeleton className="h-8 w-8 rounded-md mt-0.5" />
+                <div className="flex-1 space-y-2">
+                  <Skeleton className="h-5 w-2/3" />
+                  <Skeleton className="h-3 w-full" />
+                  <Skeleton className="h-3 w-4/5" />
+                </div>
+              </CardContent>
+            </Card>
+          ))}
         </div>
       ) : findings && findings.length > 0 ? (
         <div className="space-y-3">

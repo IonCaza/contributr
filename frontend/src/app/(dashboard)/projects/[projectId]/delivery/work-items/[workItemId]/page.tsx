@@ -93,7 +93,8 @@ export default function WorkItemDetailPage({
 
   if (isLoading) {
     return (
-      <div className="animate-pulse text-muted-foreground">
+      <div className="flex items-center gap-2 text-muted-foreground">
+        <div className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
         Loading work item...
       </div>
     );

@@ -36,10 +36,11 @@ export default function SetupPage() {
     setForm((prev) => ({ ...prev, [field]: e.target.value }));
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-background p-4">
-      <Card className="w-full max-w-md">
+    <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-background p-4">
+      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_center,_var(--tw-gradient-stops))] from-primary/[0.08] via-transparent to-transparent" />
+      <Card className="relative w-full max-w-md animate-in fade-in zoom-in-95 slide-in-from-bottom-4 duration-500">
         <CardHeader className="text-center">
-          <div className="mx-auto mb-2 flex h-12 w-12 items-center justify-center rounded-xl bg-primary">
+          <div className="relative mx-auto mb-2 flex h-12 w-12 items-center justify-center rounded-lg bg-primary shadow-lg shadow-primary/25">
             <FolderGit2 className="h-6 w-6 text-primary-foreground" />
           </div>
           <CardTitle className="text-2xl">Set up Contributr</CardTitle>

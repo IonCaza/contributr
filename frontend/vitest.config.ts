@@ -11,6 +11,7 @@ export default defineConfig({
     globals: true,
     coverage: {
       provider: "v8",
+      include: ["src/**/*.{ts,tsx}"],
       reporter: ["text", "html"],
       thresholds: {
         lines: 5,

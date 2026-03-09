@@ -1,7 +1,6 @@
 from __future__ import annotations
 
-from langchain.agents import AgentExecutor, create_tool_calling_agent
-from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+from langchain.agents import create_agent
 from langchain_core.tools import BaseTool
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -26,13 +25,13 @@ def resolve_system_prompt(agent_config: AgentConfig) -> str:
     return system_prompt
 
 
-def build_agent_executor(
+def build_agent(
     agent_config: AgentConfig,
     provider: LlmProvider,
     db: AsyncSession,
     *,
     extra_tools: list[BaseTool] | None = None,
-) -> AgentExecutor:
+):
     llm = build_llm_from_provider(provider, streaming=True)
 
     tool_slugs = {a.tool_slug for a in agent_config.tool_assignments}
@@ -46,18 +45,8 @@ def build_agent_executor(
 
     system_prompt = resolve_system_prompt(agent_config)
 
-    prompt = ChatPromptTemplate.from_messages([
-        ("system", system_prompt),
-        MessagesPlaceholder("chat_history"),
-        ("human", "{input}"),
-        MessagesPlaceholder("agent_scratchpad"),
-    ])
-
-    agent = create_tool_calling_agent(llm, tools, prompt)
-    return AgentExecutor(
-        agent=agent,
+    return create_agent(
+        model=llm,
         tools=tools,
-        verbose=False,
-        handle_parsing_errors=True,
-        max_iterations=agent_config.max_iterations,
-    )
+        system_prompt=system_prompt,
+    ), agent_config.max_iterations

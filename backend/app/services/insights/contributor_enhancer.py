@@ -14,8 +14,8 @@ from app.agents.tools.registry import build_tools_for_slugs, build_all_tools
 from app.db.models.llm_provider import LlmProvider
 from app.services.insights.types import RawFinding
 
-from langchain.agents import AgentExecutor, create_tool_calling_agent
-from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+from langchain.agents import create_agent
+from langchain_core.messages import HumanMessage
 
 logger = logging.getLogger(__name__)
 
@@ -120,27 +120,22 @@ async def enhance_contributor_findings(
     if kg_blocks:
         system_prompt += "\n\n## Data Context\n\n" + "\n\n---\n\n".join(kg_blocks)
 
-    prompt = ChatPromptTemplate.from_messages([
-        ("system", system_prompt),
-        MessagesPlaceholder("chat_history"),
-        ("human", "{input}"),
-        MessagesPlaceholder("agent_scratchpad"),
-    ])
-
-    agent = create_tool_calling_agent(llm, tools, prompt)
-    executor = AgentExecutor(
-        agent=agent,
+    agent = create_agent(
+        model=llm,
         tools=tools,
-        verbose=False,
-        handle_parsing_errors=True,
-        max_iterations=agent_config.max_iterations,
+        system_prompt=system_prompt,
     )
 
     user_message = _build_investigation_prompt(raw_findings, contributor_id)
+    run_config = {"recursion_limit": (agent_config.max_iterations or 25) * 2}
 
     try:
-        result = await executor.ainvoke({"input": user_message, "chat_history": []})
-        output = result.get("output", "")
+        result = await agent.ainvoke(
+            {"messages": [HumanMessage(content=user_message)]},
+            config=run_config,
+        )
+        last_msg = result["messages"][-1]
+        output = last_msg.content if hasattr(last_msg, "content") else ""
 
         json_str = output
         if "```json" in json_str:
@@ -162,13 +157,15 @@ async def enhance_contributor_findings(
                     f.recommendation = enhanced["recommendation"]
                 enhanced_count += 1
 
+        tool_calls = sum(
+            1 for m in result.get("messages", [])
+            if hasattr(m, "type") and m.type == "tool"
+        )
         logger.info(
             "Agentic enhancement: enhanced %d of %d findings (used %d tool calls)",
-            enhanced_count, len(raw_findings),
-            len(result.get("intermediate_steps", [])),
+            enhanced_count, len(raw_findings), tool_calls,
         )
         if slog:
-            tool_calls = len(result.get("intermediate_steps", []))
             slog.info(
                 "enhance",
                 f"Agent enhanced {enhanced_count}/{len(raw_findings)} findings "

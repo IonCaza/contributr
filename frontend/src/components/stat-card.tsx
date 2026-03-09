@@ -5,6 +5,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { TrendBadge } from "@/components/trend-badge";
 import { MiniSparkline } from "@/components/charts/mini-sparkline";
+import { useCountUp } from "@/hooks/use-count-up";
+import { cn } from "@/lib/utils";
 
 interface StatCardProps {
   title: string;
@@ -14,12 +16,22 @@ interface StatCardProps {
   subtitle?: string;
   tooltip?: string;
   onClick?: () => void;
+  className?: string;
+  style?: React.CSSProperties;
 }
 
-export function StatCard({ title, value, trend, sparklineData, subtitle, tooltip, onClick }: StatCardProps) {
+export function StatCard({ title, value, trend, sparklineData, subtitle, tooltip, onClick, className, style }: StatCardProps) {
+  const numericValue = typeof value === "number" ? value : null;
+  const animatedValue = useCountUp(numericValue ?? 0);
+
   return (
     <Card
-      className={onClick ? "cursor-pointer transition-colors hover:border-primary/40 hover:bg-muted/40" : undefined}
+      className={cn(
+        "transition-all duration-200",
+        onClick && "cursor-pointer hover:border-primary/40 hover:shadow-md hover:-translate-y-0.5",
+        className,
+      )}
+      style={style}
       onClick={onClick}
     >
       <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
@@ -41,7 +53,9 @@ export function StatCard({ title, value, trend, sparklineData, subtitle, tooltip
         {trend !== undefined && <TrendBadge value={trend} />}
       </CardHeader>
       <CardContent>
-        <div className="text-2xl font-bold">{typeof value === "number" ? value.toLocaleString() : value}</div>
+        <div className="text-2xl font-bold tabular-nums">
+          {numericValue !== null ? animatedValue.toLocaleString() : value}
+        </div>
         {subtitle && <p className="text-xs text-muted-foreground mt-1">{subtitle}</p>}
         {sparklineData && sparklineData.length > 1 && (
           <div className="mt-3 h-10">

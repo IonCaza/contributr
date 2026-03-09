@@ -22,7 +22,10 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
+import { Skeleton } from "@/components/ui/skeleton";
 import { StatCard } from "@/components/stat-card";
+import { StatRowSkeleton, ChartSkeleton, TableSkeleton } from "@/components/page-skeleton";
+import { ANIM_CARD, stagger } from "@/lib/animations";
 import { DateRangeFilter, defaultRange } from "@/components/date-range-filter";
 import type { DateRange } from "@/components/date-range-filter";
 import { ViewLogsButton } from "@/components/sync-log-viewer";
@@ -100,9 +103,6 @@ function EmptyState({ message }: { message: string }) {
   return <p className="py-8 text-center text-sm text-muted-foreground">{message}</p>;
 }
 
-function LoadingPulse() {
-  return <p className="py-4 text-muted-foreground animate-pulse">Loading...</p>;
-}
 
 // ── Main Component ──────────────────────────────────────────────────
 
@@ -153,7 +153,7 @@ export function ProjectDeliveryTab({ projectId }: { projectId: string }) {
 
   // ── Data hooks ──────────────────────────────────────────────────
   const { data: stats, isLoading: statsLoading } = useDeliveryStats(projectId, deliveryFilters);
-  const { data: iterations } = useIterations(projectId);
+  const { data: iterations, isLoading: iterationsLoading } = useIterations(projectId);
   const { data: flow, isLoading: flowLoading } = useFlowMetrics(projectId, deliveryFilters);
   const { data: backlog, isLoading: backlogLoading } = useBacklogHealth(projectId, deliveryFilters);
   const { data: quality, isLoading: qualityLoading } = useQualityMetrics(projectId, deliveryFilters);
@@ -291,7 +291,9 @@ export function ProjectDeliveryTab({ projectId }: { projectId: string }) {
     <div className="space-y-6">
       {/* ── Global Filter Bar ──────────────────────────────────────── */}
       <div className="flex flex-wrap items-center gap-3 rounded-lg border border-border bg-muted/30 px-4 py-3">
-        {sortedIterations.length > 0 && (
+        {iterationsLoading ? (
+          <Skeleton className="h-9 w-72 rounded-md" />
+        ) : sortedIterations.length > 0 ? (
           <Select value={sprintAlign} onValueChange={handleSprintAlign}>
             <SelectTrigger className="w-72">
               <SelectValue placeholder="Align to Sprint" />
@@ -330,7 +332,7 @@ export function ProjectDeliveryTab({ projectId }: { projectId: string }) {
               })}
             </SelectContent>
           </Select>
-        )}
+        ) : null}
 
         <div className="h-5 w-px bg-border" />
 
@@ -405,14 +407,23 @@ export function ProjectDeliveryTab({ projectId }: { projectId: string }) {
 
         {/* ── Overview Tab ──────────────────────────────────────────── */}
         <TabsContent value="overview" className="space-y-4">
-          {statsLoading && <LoadingPulse />}
+          {statsLoading && (
+            <>
+              <StatRowSkeleton count={4} />
+              <StatRowSkeleton count={2} />
+              <div className="grid gap-4 md:grid-cols-2">
+                <ChartSkeleton />
+                <ChartSkeleton />
+              </div>
+            </>
+          )}
           {stats && (
             <>
               <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-                <StatCard title="Total Work Items" value={stats.total_work_items} tooltip="Total work items tracked in this project" onClick={() => setDrillDown({ title: "Total Work Items", metric: "work_items" })} />
-                <StatCard title="Open Items" value={stats.open_items} tooltip="Work items in an active/new state" onClick={() => setDrillDown({ title: "Open Items", metric: "open_items" })} />
-                <StatCard title="Completed" value={stats.completed_items} tooltip="Work items resolved or closed" onClick={() => setDrillDown({ title: "Completed", metric: "completed" })} />
-                <StatCard
+                <StatCard className={ANIM_CARD} style={stagger(0)} title="Total Work Items" value={stats.total_work_items} tooltip="Total work items tracked in this project" onClick={() => setDrillDown({ title: "Total Work Items", metric: "work_items" })} />
+                <StatCard className={ANIM_CARD} style={stagger(1)} title="Open Items" value={stats.open_items} tooltip="Work items in an active/new state" onClick={() => setDrillDown({ title: "Open Items", metric: "open_items" })} />
+                <StatCard className={ANIM_CARD} style={stagger(2)} title="Completed" value={stats.completed_items} tooltip="Work items resolved or closed" onClick={() => setDrillDown({ title: "Completed", metric: "completed" })} />
+                <StatCard className={ANIM_CARD} style={stagger(3)}
                   title="Story Points Completed"
                   value={stats.completed_story_points}
                   subtitle={`of ${stats.total_story_points} total`}
@@ -421,7 +432,7 @@ export function ProjectDeliveryTab({ projectId }: { projectId: string }) {
                 />
               </div>
               <div className="grid gap-4 md:grid-cols-2">
-                <StatCard
+                <StatCard className={ANIM_CARD} style={stagger(4)}
                   title="Avg Cycle Time"
                   value={`${stats.avg_cycle_time_hours}h`}
                   subtitle="Activated → Resolved"
@@ -429,7 +440,7 @@ export function ProjectDeliveryTab({ projectId }: { projectId: string }) {
                   sparklineData={stats.cycle_time_trend?.map((t) => t.median_hours)}
                   onClick={() => setDrillDown({ title: "Avg Cycle Time", metric: "cycle_time" })}
                 />
-                <StatCard
+                <StatCard className={ANIM_CARD} style={stagger(5)}
                   title="Avg Lead Time"
                   value={`${stats.avg_lead_time_hours}h`}
                   subtitle="Created → Closed"
@@ -455,18 +466,24 @@ export function ProjectDeliveryTab({ projectId }: { projectId: string }) {
 
         {/* ── Velocity & Throughput Tab ─────────────────────────────── */}
         <TabsContent value="velocity" className="space-y-4">
-          {statsLoading && <LoadingPulse />}
+          {statsLoading && (
+            <>
+              <StatRowSkeleton count={2} />
+              <ChartSkeleton />
+              <ChartSkeleton />
+            </>
+          )}
           {stats && (
             <>
               <div className="grid gap-4 md:grid-cols-2">
-                <StatCard
+                <StatCard className={ANIM_CARD} style={stagger(0)}
                   title="Avg Velocity"
                   value={stats.velocity_trend?.length > 0 ? `${Math.round(stats.velocity_trend.reduce((s, v) => s + v.points, 0) / stats.velocity_trend.length * 10) / 10} SP` : "—"}
                   subtitle="Mean story points per sprint"
                   tooltip="Average story points completed per sprint"
                   onClick={() => setDrillDown({ title: "Avg Velocity", metric: "avg_velocity" })}
                 />
-                <StatCard
+                <StatCard className={ANIM_CARD} style={stagger(1)}
                   title="Avg Throughput"
                   value={stats.throughput_trend?.length > 0 ? `${Math.round(stats.throughput_trend.reduce((s, t) => s + t.completed, 0) / stats.throughput_trend.length * 10) / 10} / day` : "—"}
                   subtitle="Mean items completed per day"
@@ -492,11 +509,18 @@ export function ProjectDeliveryTab({ projectId }: { projectId: string }) {
 
         {/* ── Flow Tab ─────────────────────────────────────────────── */}
         <TabsContent value="flow" className="space-y-4">
-          {flowLoading && <LoadingPulse />}
+          {flowLoading && (
+            <>
+              <StatRowSkeleton count={2} />
+              <ChartSkeleton />
+              <ChartSkeleton />
+              <ChartSkeleton />
+            </>
+          )}
           {flow && (
             <>
               <div className="grid gap-4 md:grid-cols-2">
-                <StatCard
+                <StatCard className={ANIM_CARD} style={stagger(0)}
                   title="Cycle Time (median)"
                   value={stats ? `${stats.avg_cycle_time_hours}h` : "—"}
                   subtitle="Activated → Resolved"
@@ -504,7 +528,7 @@ export function ProjectDeliveryTab({ projectId }: { projectId: string }) {
                   sparklineData={stats?.cycle_time_trend?.map((t) => t.median_hours)}
                   onClick={() => setDrillDown({ title: "Cycle Time", metric: "cycle_time" })}
                 />
-                <StatCard
+                <StatCard className={ANIM_CARD} style={stagger(1)}
                   title="Lead Time (median)"
                   value={stats ? `${stats.avg_lead_time_hours}h` : "—"}
                   subtitle="Created → Closed"
@@ -541,17 +565,26 @@ export function ProjectDeliveryTab({ projectId }: { projectId: string }) {
 
         {/* ── Backlog Health Tab ────────────────────────────────────── */}
         <TabsContent value="backlog" className="space-y-4">
-          {backlogLoading && <LoadingPulse />}
+          {backlogLoading && (
+            <>
+              <StatRowSkeleton count={2} />
+              <div className="grid gap-4 md:grid-cols-2">
+                <ChartSkeleton />
+                <ChartSkeleton />
+              </div>
+              <ChartSkeleton />
+            </>
+          )}
           {(backlog || stats) && (
             <div className="grid gap-4 md:grid-cols-2">
-              <StatCard
+              <StatCard className={ANIM_CARD} style={stagger(0)}
                 title="Stale Items"
                 value={backlog?.stale_items ? backlog.stale_items.reduce((s, i) => s + i.count, 0) : "—"}
                 subtitle="Not updated in 30+ days"
                 tooltip="Open work items with no updates for 30 days or more"
                 onClick={() => setDrillDown({ title: "Stale Items", metric: "stale_items" })}
               />
-              <StatCard
+              <StatCard className={ANIM_CARD} style={stagger(1)}
                 title="Net Growth (period)"
                 value={backlog?.growth ? (() => { const net = backlog.growth.reduce((s, g) => s + g.net, 0); return net > 0 ? `+${net}` : `${net}`; })() : "—"}
                 subtitle="Created minus completed"
@@ -592,7 +625,12 @@ export function ProjectDeliveryTab({ projectId }: { projectId: string }) {
 
         {/* ── Quality Tab ──────────────────────────────────────────── */}
         <TabsContent value="quality" className="space-y-4">
-          {qualityLoading && <LoadingPulse />}
+          {qualityLoading && (
+            <>
+              <ChartSkeleton />
+              <StatRowSkeleton count={3} />
+            </>
+          )}
           {quality && (
             <>
               {quality.bug_trend?.length > 0 ? (
@@ -603,21 +641,21 @@ export function ProjectDeliveryTab({ projectId }: { projectId: string }) {
 
               {quality.resolution_time && (
                 <div className="grid gap-4 md:grid-cols-3">
-                  <StatCard
+                  <StatCard className={ANIM_CARD} style={stagger(0)}
                     title="Bug Resolution (median)"
                     value={`${quality.resolution_time.median_hours ?? 0}h`}
                     subtitle={`${quality.resolution_time.sample_size ?? 0} bugs`}
                     tooltip="Median hours to resolve a bug"
                     onClick={() => setDrillDown({ title: "Bug Resolution", metric: "bug_resolution" })}
                   />
-                  <StatCard
+                  <StatCard className={ANIM_CARD} style={stagger(1)}
                     title="Bug Resolution (p90)"
                     value={`${quality.resolution_time.p90_hours ?? 0}h`}
                     tooltip="90th percentile bug resolution time"
                     onClick={() => setDrillDown({ title: "Bug Resolution", metric: "bug_resolution" })}
                   />
                   {quality.defect_density && (
-                    <StatCard
+                    <StatCard className={ANIM_CARD} style={stagger(2)}
                       title="Defect Density"
                       value={`${((quality.defect_density.ratio ?? 0) * 100).toFixed(1)}%`}
                       subtitle={`${quality.defect_density.bugs ?? 0} bugs / ${quality.defect_density.total ?? 0} items`}
@@ -637,20 +675,20 @@ export function ProjectDeliveryTab({ projectId }: { projectId: string }) {
           <TabsContent value="integration" className="space-y-4">
             {intersection && (
               <div className="grid gap-4 md:grid-cols-3">
-                <StatCard
+                <StatCard className={ANIM_CARD} style={stagger(0)}
                   title="Link Coverage"
                   value={`${intersection.link_coverage_pct.toFixed(1)}%`}
                   subtitle={`${intersection.total_linked_items} / ${intersection.total_items} items linked`}
                   tooltip="Percentage of work items linked to commits"
                   onClick={() => setDrillDown({ title: "Link Coverage", metric: "link_coverage" })}
                 />
-                <StatCard
+                <StatCard className={ANIM_CARD} style={stagger(1)}
                   title="Commits per Story Point"
                   value={intersection.commits_per_story_point.toFixed(1)}
                   tooltip="Average number of commits per story point"
                   onClick={() => setDrillDown({ title: "Commits per Story Point", metric: "commits_per_sp" })}
                 />
-                <StatCard
+                <StatCard className={ANIM_CARD} style={stagger(2)}
                   title="Avg First-Commit to Resolution"
                   value={`${intersection.avg_first_commit_to_resolution_hours.toFixed(0)}h`}
                   tooltip="Average hours from first linked commit to work item resolution"
@@ -982,7 +1020,7 @@ export function ProjectDeliveryTab({ projectId }: { projectId: string }) {
           />
         ) : (
           <>
-            {wiLoading && <LoadingPulse />}
+            {wiLoading && <TableSkeleton rows={8} cols={6} />}
 
             {workItemsData && (
           <>

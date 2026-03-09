@@ -8,7 +8,7 @@ import litellm
 if TYPE_CHECKING:
     from app.db.models.agent_config import AgentConfig
     from app.db.models.llm_provider import LlmProvider
-    from langchain_community.chat_models import ChatLiteLLM
+    from langchain_litellm import ChatLiteLLM
 
 from app.agents.context.summarizer import summarize_messages
 

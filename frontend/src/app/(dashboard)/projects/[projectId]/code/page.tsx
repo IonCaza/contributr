@@ -15,6 +15,8 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { StatCard } from "@/components/stat-card";
+import { FilterBarSkeleton, StatRowSkeleton, ChartSkeleton, TableSkeleton } from "@/components/page-skeleton";
+import { ANIM_CARD, stagger } from "@/lib/animations";
 import { StatDetailSheet } from "@/components/stat-detail-sheet";
 import { ContributionAreaChart } from "@/components/charts/contribution-area-chart";
 import { MiniSparkline } from "@/components/charts/mini-sparkline";
@@ -262,7 +264,15 @@ export default function ProjectCodePage({
     });
   }, [project, repoSort]);
 
-  if (!project) return <div className="animate-pulse text-muted-foreground">Loading...</div>;
+  if (!project) return (
+    <div className="space-y-6">
+      <FilterBarSkeleton />
+      <StatRowSkeleton />
+      <StatRowSkeleton />
+      <ChartSkeleton />
+      <TableSkeleton rows={4} cols={5} />
+    </div>
+  );
 
   return (
     <div className="space-y-6">
@@ -330,16 +340,16 @@ export default function ProjectCodePage({
       {stats && (
         <>
           <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-            <StatCard title="Repositories" value={stats.repository_count} tooltip="Number of repositories tracked in this project" />
-            <StatCard title="Total Commits" value={stats.total_commits} tooltip="Total number of commits across all repositories in the selected period" onClick={() => setDrillDown({ title: "Total Commits", metric: "commits" })} />
-            <StatCard title="Contributors" value={stats.contributor_count} tooltip="Number of unique people who made commits in the selected period" onClick={() => setDrillDown({ title: "Contributors", metric: "contributors" })} />
-            <StatCard title="Commits/Day (30d)" value={stats.trends.avg_commits_30d} trend={stats.trends.wow_commits_delta} tooltip="Average number of commits per day over the last 30 days. The trend shows week-over-week change." onClick={() => setDrillDown({ title: "Commits/Day (30d)", metric: "commits_per_day" })} />
+            <StatCard className={ANIM_CARD} style={stagger(0)} title="Repositories" value={stats.repository_count} tooltip="Number of repositories tracked in this project" />
+            <StatCard className={ANIM_CARD} style={stagger(1)} title="Total Commits" value={stats.total_commits} tooltip="Total number of commits across all repositories in the selected period" onClick={() => setDrillDown({ title: "Total Commits", metric: "commits" })} />
+            <StatCard className={ANIM_CARD} style={stagger(2)} title="Contributors" value={stats.contributor_count} tooltip="Number of unique people who made commits in the selected period" onClick={() => setDrillDown({ title: "Contributors", metric: "contributors" })} />
+            <StatCard className={ANIM_CARD} style={stagger(3)} title="Commits/Day (30d)" value={stats.trends.avg_commits_30d} trend={stats.trends.wow_commits_delta} tooltip="Average number of commits per day over the last 30 days. The trend shows week-over-week change." onClick={() => setDrillDown({ title: "Commits/Day (30d)", metric: "commits_per_day" })} />
           </div>
           <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-            <StatCard title="PR Cycle Time" value={`${stats.pr_cycle_time_hours}h`} subtitle="Avg open to merge" tooltip="Average time from when a pull request is opened to when it gets merged. Lower is better." />
-            <StatCard title="Review Turnaround" value={`${stats.pr_review_turnaround_hours}h`} subtitle="Avg to first review" tooltip="Average time from when a pull request is opened until it receives its first code review. Lower means faster feedback." />
-            <StatCard title="Churn Ratio" value={stats.churn_ratio} subtitle="Deleted / added lines" tooltip="Ratio of lines deleted to lines added. High churn can indicate rework, refactoring, or unstable code." onClick={() => setDrillDown({ title: "Churn Ratio", metric: "churn" })} />
-            <StatCard title="Work Distribution" value={stats.contribution_gini} subtitle="Gini (0=even, 1=concentrated)" tooltip="Measures how evenly work is spread across contributors. 0 means everyone contributes equally, 1 means one person does all the work." onClick={() => setDrillDown({ title: "Work Distribution", metric: "work_distribution" })} />
+            <StatCard className={ANIM_CARD} style={stagger(4)} title="PR Cycle Time" value={`${stats.pr_cycle_time_hours}h`} subtitle="Avg open to merge" tooltip="Average time from when a pull request is opened to when it gets merged. Lower is better." />
+            <StatCard className={ANIM_CARD} style={stagger(5)} title="Review Turnaround" value={`${stats.pr_review_turnaround_hours}h`} subtitle="Avg to first review" tooltip="Average time from when a pull request is opened until it receives its first code review. Lower means faster feedback." />
+            <StatCard className={ANIM_CARD} style={stagger(6)} title="Churn Ratio" value={stats.churn_ratio} subtitle="Deleted / added lines" tooltip="Ratio of lines deleted to lines added. High churn can indicate rework, refactoring, or unstable code." onClick={() => setDrillDown({ title: "Churn Ratio", metric: "churn" })} />
+            <StatCard className={ANIM_CARD} style={stagger(7)} title="Work Distribution" value={stats.contribution_gini} subtitle="Gini (0=even, 1=concentrated)" tooltip="Measures how evenly work is spread across contributors. 0 means everyone contributes equally, 1 means one person does all the work." onClick={() => setDrillDown({ title: "Work Distribution", metric: "work_distribution" })} />
           </div>
 
           <StatDetailSheet

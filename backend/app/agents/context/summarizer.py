@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING
 from langchain_core.messages import HumanMessage, SystemMessage
 
 if TYPE_CHECKING:
-    from langchain_community.chat_models import ChatLiteLLM
+    from langchain_litellm import ChatLiteLLM
 
 SUMMARIZATION_PROMPT = """\
 You are a conversation summarizer. Condense the conversation below into a \

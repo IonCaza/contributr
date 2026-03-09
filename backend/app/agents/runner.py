@@ -7,7 +7,7 @@ from typing import AsyncIterator
 from langchain_core.messages import AIMessage, HumanMessage
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.agents.base import build_agent_executor, resolve_system_prompt
+from app.agents.base import build_agent, resolve_system_prompt
 from app.agents.context.manager import prepare_history
 from app.agents.llm.manager import build_llm_from_provider
 from sqlalchemy import select
@@ -81,16 +81,20 @@ async def run_agent_stream(
     if session_id is not None:
         extra_tools.append(build_search_chat_history_tool(db, session_id))
 
-    executor = build_agent_executor(
+    agent, max_iterations = build_agent(
         agent_config, provider, db, extra_tools=extra_tools,
     )
     messages = history_to_messages(trimmed_history)
+    messages.append(HumanMessage(content=user_input))
+
+    run_config = {"recursion_limit": (max_iterations or 25) * 2}
 
     collected = ""
     pending_separator = False
-    async for event in executor.astream_events(
-        {"input": user_input, "chat_history": messages},
+    async for event in agent.astream_events(
+        {"messages": messages},
         version="v2",
+        config=run_config,
     ):
         kind = event["event"]
         if kind == "on_tool_end":
@@ -107,8 +111,10 @@ async def run_agent_stream(
                 yield chunk.content
 
     if not collected:
-        result = await executor.ainvoke(
-            {"input": user_input, "chat_history": messages}
+        result = await agent.ainvoke(
+            {"messages": messages},
+            config=run_config,
         )
-        output = result.get("output", "I wasn't able to generate a response.")
+        last_msg = result["messages"][-1]
+        output = last_msg.content if hasattr(last_msg, "content") else "I wasn't able to generate a response."
         yield output

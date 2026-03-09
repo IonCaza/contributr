@@ -102,7 +102,7 @@ export default function TeamsPage() {
         </div>
       </div>
 
-      {isLoading && <p className="text-muted-foreground animate-pulse">Loading teams...</p>}
+      {isLoading && <div className="flex items-center gap-2 text-muted-foreground"><div className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />Loading teams...</div>}
 
       <Card>
         <Table>

@@ -23,6 +23,8 @@ import {
 } from "@/components/ui/select";
 
 import { StatCard } from "@/components/stat-card";
+import { ProfileHeaderSkeleton, StatRowSkeleton, ChartSkeleton, TableSkeleton } from "@/components/page-skeleton";
+import { ANIM_CARD, stagger } from "@/lib/animations";
 import { DateRangeFilter, defaultRange, type DateRange } from "@/components/date-range-filter";
 import { ContributionAreaChart } from "@/components/charts/contribution-area-chart";
 import { VelocityBarChart } from "@/components/charts/velocity-bar-chart";
@@ -120,8 +122,11 @@ export default function TeamDetailPage() {
 
   if (teamLoading) {
     return (
-      <div className="flex items-center justify-center py-24">
-        <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+      <div className="space-y-6">
+        <ProfileHeaderSkeleton />
+        <StatRowSkeleton count={6} />
+        <ChartSkeleton />
+        <TableSkeleton rows={4} cols={6} />
       </div>
     );
   }
@@ -177,18 +182,18 @@ export default function TeamDetailPage() {
         {/* ── Overview Tab ────────────────────────────── */}
         <TabsContent value="overview" className="space-y-6 mt-4">
           <div className="grid gap-4 grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
-            <StatCard
+            <StatCard className={ANIM_CARD} style={stagger(0)}
               title="Total Commits"
               value={codeStats?.total_commits ?? "—"}
               tooltip="Commits by team members in the selected period"
             />
-            <StatCard
+            <StatCard className={ANIM_CARD} style={stagger(1)}
               title="Story Points"
               value={deliveryStats?.completed_story_points ?? "—"}
               subtitle={deliveryStats ? `${deliveryStats.total_story_points} total` : undefined}
               tooltip="Completed story points"
             />
-            <StatCard
+            <StatCard className={ANIM_CARD} style={stagger(2)}
               title="Velocity"
               value={
                 deliveryStats?.velocity_trend?.length
@@ -198,17 +203,17 @@ export default function TeamDetailPage() {
               sparklineData={deliveryStats?.velocity_trend?.map((v) => v.points)}
               tooltip="Story points completed in the most recent sprint"
             />
-            <StatCard
+            <StatCard className={ANIM_CARD} style={stagger(3)}
               title="Completion Rate"
               value={`${completionRate}%`}
               tooltip="Percentage of assigned items completed"
             />
-            <StatCard
+            <StatCard className={ANIM_CARD} style={stagger(4)}
               title="Avg Cycle Time"
               value={deliveryStats ? `${deliveryStats.avg_cycle_time_hours}h` : "—"}
               tooltip="Median hours from Active to Resolved"
             />
-            <StatCard
+            <StatCard className={ANIM_CARD} style={stagger(5)}
               title="Active Members"
               value={memberStats?.filter((m) => m.commits > 0).length ?? team.member_count}
               subtitle={`${team.member_count} total`}
@@ -288,14 +293,14 @@ export default function TeamDetailPage() {
         {/* ── Code Tab ────────────────────────────────── */}
         <TabsContent value="code" className="space-y-6 mt-4">
           <div className="grid gap-4 grid-cols-2 lg:grid-cols-4">
-            <StatCard title="Total Commits" value={codeStats?.total_commits ?? "—"} />
-            <StatCard title="Lines Added" value={codeStats?.lines_added?.toLocaleString() ?? "—"} />
-            <StatCard title="Lines Deleted" value={codeStats?.lines_deleted?.toLocaleString() ?? "—"} />
-            <StatCard title="Active Repos" value={codeStats?.active_repos ?? "—"} />
-            <StatCard title="PRs Opened" value={codeStats?.prs_opened ?? "—"} />
-            <StatCard title="PRs Merged" value={codeStats?.prs_merged ?? "—"} />
-            <StatCard title="Reviews Given" value={codeStats?.reviews_given ?? "—"} />
-            <StatCard title="Avg Commit Size" value={codeStats?.avg_commit_size ?? "—"} subtitle="lines/commit" />
+            <StatCard className={ANIM_CARD} style={stagger(0)} title="Total Commits" value={codeStats?.total_commits ?? "—"} />
+            <StatCard className={ANIM_CARD} style={stagger(1)} title="Lines Added" value={codeStats?.lines_added?.toLocaleString() ?? "—"} />
+            <StatCard className={ANIM_CARD} style={stagger(2)} title="Lines Deleted" value={codeStats?.lines_deleted?.toLocaleString() ?? "—"} />
+            <StatCard className={ANIM_CARD} style={stagger(3)} title="Active Repos" value={codeStats?.active_repos ?? "—"} />
+            <StatCard className={ANIM_CARD} style={stagger(4)} title="PRs Opened" value={codeStats?.prs_opened ?? "—"} />
+            <StatCard className={ANIM_CARD} style={stagger(5)} title="PRs Merged" value={codeStats?.prs_merged ?? "—"} />
+            <StatCard className={ANIM_CARD} style={stagger(6)} title="Reviews Given" value={codeStats?.reviews_given ?? "—"} />
+            <StatCard className={ANIM_CARD} style={stagger(7)} title="Avg Commit Size" value={codeStats?.avg_commit_size ?? "—"} subtitle="lines/commit" />
           </div>
 
           {codeActivity && codeActivity.length > 0 && (
@@ -329,26 +334,26 @@ export default function TeamDetailPage() {
         {/* ── Delivery Tab ────────────────────────────── */}
         <TabsContent value="delivery" className="space-y-6 mt-4">
           <div className="grid gap-4 grid-cols-2 lg:grid-cols-4">
-            <StatCard title="Items Assigned" value={deliveryStats?.total_work_items ?? "—"} />
-            <StatCard title="Open Items" value={deliveryStats?.open_items ?? "—"} />
-            <StatCard title="Completed" value={deliveryStats?.completed_items ?? "—"} />
-            <StatCard title="Completion Rate" value={`${completionRate}%`} />
-            <StatCard
+            <StatCard className={ANIM_CARD} style={stagger(0)} title="Items Assigned" value={deliveryStats?.total_work_items ?? "—"} />
+            <StatCard className={ANIM_CARD} style={stagger(1)} title="Open Items" value={deliveryStats?.open_items ?? "—"} />
+            <StatCard className={ANIM_CARD} style={stagger(2)} title="Completed" value={deliveryStats?.completed_items ?? "—"} />
+            <StatCard className={ANIM_CARD} style={stagger(3)} title="Completion Rate" value={`${completionRate}%`} />
+            <StatCard className={ANIM_CARD} style={stagger(4)}
               title="Story Points"
               value={deliveryStats?.completed_story_points ?? "—"}
               subtitle={deliveryStats ? `${deliveryStats.total_story_points} total` : undefined}
             />
-            <StatCard
+            <StatCard className={ANIM_CARD} style={stagger(5)}
               title="Avg Cycle Time"
               value={deliveryStats ? `${deliveryStats.avg_cycle_time_hours}h` : "—"}
               tooltip="Median hours from Active to Resolved"
             />
-            <StatCard
+            <StatCard className={ANIM_CARD} style={stagger(6)}
               title="Avg Lead Time"
               value={deliveryStats ? `${deliveryStats.avg_lead_time_hours}h` : "—"}
               tooltip="Median hours from Created to Closed"
             />
-            <StatCard
+            <StatCard className={ANIM_CARD} style={stagger(7)}
               title="Link Coverage"
               value={intersection ? `${intersection.link_coverage_pct}%` : "—"}
               tooltip="% of items with linked commits"
@@ -501,7 +506,7 @@ export default function TeamDetailPage() {
 
         {/* ── Members Tab ─────────────────────────────── */}
         <TabsContent value="members" className="mt-4">
-          {membersLoading && <p className="text-muted-foreground animate-pulse">Loading members...</p>}
+          {membersLoading && <div className="flex items-center gap-2 text-muted-foreground"><div className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />Loading members...</div>}
           <Card>
             <Table>
               <TableHeader>

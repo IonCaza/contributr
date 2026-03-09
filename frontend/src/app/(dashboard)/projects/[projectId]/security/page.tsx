@@ -8,6 +8,7 @@ import {
 } from "lucide-react";
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -70,6 +71,7 @@ function formatRelativeTime(dateStr: string | null) {
 
 function SecurityScoreBanner({
   summary,
+  isLoading,
   lastRun,
   repos,
   onScanRepo,
@@ -77,6 +79,7 @@ function SecurityScoreBanner({
   projectId,
 }: {
   summary: SastSummary | undefined;
+  isLoading: boolean;
   lastRun: SastScanRun | undefined;
   repos: Repository[];
   onScanRepo: (repoId: string) => void;
@@ -110,22 +113,35 @@ function SecurityScoreBanner({
     <Card>
       <CardContent className="flex items-center justify-between py-4 px-6 gap-4">
         <div className="flex items-center gap-4">
-          <div className={`h-12 w-12 rounded-full ${scoreColor} flex items-center justify-center`}>
-            <span className="text-white font-bold text-lg">{score ?? "?"}</span>
-          </div>
-          <div>
-            <p className="font-semibold text-lg">Security Score</p>
-            <p className="text-sm text-muted-foreground">{lastRunLabel}</p>
-          </div>
-          {score !== null && (
-            <div className="hidden sm:flex items-center gap-1 ml-4">
-              <div className="h-2 w-48 rounded-full bg-muted overflow-hidden">
-                <div
-                  className={`h-full rounded-full transition-all ${scoreColor}`}
-                  style={{ width: `${score}%` }}
-                />
+          {isLoading && !summary ? (
+            <>
+              <Skeleton className="h-12 w-12 rounded-full" />
+              <div className="space-y-1.5">
+                <Skeleton className="h-5 w-32" />
+                <Skeleton className="h-4 w-24" />
               </div>
-            </div>
+              <Skeleton className="hidden sm:block h-2 w-48 rounded-full" />
+            </>
+          ) : (
+            <>
+              <div className={`h-12 w-12 rounded-full ${scoreColor} flex items-center justify-center`}>
+                <span className="text-white font-bold text-lg">{score ?? "?"}</span>
+              </div>
+              <div>
+                <p className="font-semibold text-lg">Security Score</p>
+                <p className="text-sm text-muted-foreground">{lastRunLabel}</p>
+              </div>
+              {score !== null && (
+                <div className="hidden sm:flex items-center gap-1 ml-4">
+                  <div className="h-2 w-48 rounded-full bg-muted overflow-hidden">
+                    <div
+                      className={`h-full rounded-full transition-all ${scoreColor}`}
+                      style={{ width: `${score}%` }}
+                    />
+                  </div>
+                </div>
+              )}
+            </>
           )}
         </div>
         <div className="flex items-center gap-2 flex-wrap justify-end">
@@ -155,6 +171,9 @@ function SecurityScoreBanner({
               )}
             </Button>
           )}
+          {repos.length === 0 && isLoading && (
+            <Skeleton className="h-9 w-24 rounded-md" />
+          )}
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button variant="outline" size="sm">
@@ -179,8 +198,26 @@ function SecurityScoreBanner({
   );
 }
 
-function SeveritySummaryCards({ summary }: { summary: SastSummary | undefined }) {
-  if (!summary) return null;
+function SeveritySummaryCards({ summary, isLoading }: { summary: SastSummary | undefined; isLoading: boolean }) {
+  if (!summary && !isLoading) return null;
+
+  if (!summary) {
+    return (
+      <div className="grid gap-4 grid-cols-2 md:grid-cols-3 lg:grid-cols-6">
+        {Array.from({ length: 6 }).map((_, i) => (
+          <Card key={i}>
+            <CardContent className="flex items-center gap-3 py-4 px-4">
+              <Skeleton className="h-7 w-7 rounded-md" />
+              <div className="space-y-1.5">
+                <Skeleton className="h-7 w-10" />
+                <Skeleton className="h-3 w-14" />
+              </div>
+            </CardContent>
+          </Card>
+        ))}
+      </div>
+    );
+  }
 
   const cards = [
     { label: "Critical", value: summary.critical, icon: ShieldAlert, color: "text-red-600" },
@@ -485,8 +522,8 @@ export default function SecurityPage({
     ...(statusFilter ? { status: statusFilter } : {}),
   };
 
-  const { data: summary } = useProjectSastSummary(projectId);
-  const { data: findings, isLoading } = useProjectSastFindings(projectId, filters);
+  const { data: summary, isLoading: summaryLoading } = useProjectSastSummary(projectId);
+  const { data: findings, isLoading: findingsLoading } = useProjectSastFindings(projectId, filters);
   const { data: runs, refetch: refetchRuns } = useProjectSastRuns(projectId);
 
   const lastRun = runs?.[0];
@@ -550,6 +587,7 @@ export default function SecurityPage({
     <div className="space-y-6">
       <SecurityScoreBanner
         summary={summary}
+        isLoading={summaryLoading}
         lastRun={lastRun}
         repos={repos}
         onScanRepo={handleScanRepo}
@@ -561,7 +599,7 @@ export default function SecurityPage({
         <SyncLogViewer logUrl={logUrl} compact title="SAST Scan Logs" onDone={handleLogsDone} />
       )}
 
-      <SeveritySummaryCards summary={summary} />
+      <SeveritySummaryCards summary={summary} isLoading={summaryLoading} />
 
       {/* Filter bar */}
       <div className="flex flex-wrap items-center gap-2">
@@ -598,9 +636,19 @@ export default function SecurityPage({
       </div>
 
       {/* Findings list */}
-      {isLoading ? (
-        <div className="flex items-center justify-center py-12">
-          <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+      {findingsLoading ? (
+        <div className="space-y-2">
+          {Array.from({ length: 4 }).map((_, i) => (
+            <Card key={i} className="border-l-4 border-l-muted">
+              <CardContent className="flex items-start gap-3 py-3 px-4">
+                <Skeleton className="h-7 w-7 rounded-md mt-0.5" />
+                <div className="flex-1 space-y-2">
+                  <Skeleton className="h-4 w-3/4" />
+                  <Skeleton className="h-3 w-1/2" />
+                </div>
+              </CardContent>
+            </Card>
+          ))}
         </div>
       ) : findings && findings.length > 0 ? (
         <div className="space-y-2">
