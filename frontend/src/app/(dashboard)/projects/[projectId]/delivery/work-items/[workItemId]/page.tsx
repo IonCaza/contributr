@@ -1,8 +1,8 @@
 "use client";
 
-import { use, useMemo, useState, useCallback } from "react";
+import { use, useMemo, useState, useCallback, useRef } from "react";
 import Link from "next/link";
-import { ArrowLeft, ExternalLink, Pencil, X, Save, Loader2, ChevronLeft, ChevronRight, Clock, User2, ArrowRightLeft, FileEdit } from "lucide-react";
+import { ArrowLeft, ExternalLink, Pencil, X, Save, Loader2, ChevronLeft, ChevronRight, Clock, User2, ArrowRightLeft, FileEdit, RefreshCw, AlertTriangle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -15,7 +15,17 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { useWorkItemDetail, useUpdateWorkItem, useWorkItemActivities } from "@/hooks/use-delivery";
+import { useWorkItemDetail, useUpdateWorkItem, usePullWorkItem, useWorkItemActivities } from "@/hooks/use-delivery";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { useCustomFields } from "@/hooks/use-custom-fields";
 import { RichTextEditor } from "@/components/rich-text-editor";
 import type { WorkItemActivityEntry } from "@/lib/types";
@@ -78,11 +88,16 @@ export default function WorkItemDetailPage({
   const { data: item, isLoading } = useWorkItemDetail(projectId, workItemId);
   const { data: customFieldConfigs = [] } = useCustomFields(projectId);
   const updateMutation = useUpdateWorkItem(projectId, workItemId);
+  const pullMutation = usePullWorkItem(projectId, workItemId);
 
   const [editing, setEditing] = useState(false);
   const [editTitle, setEditTitle] = useState("");
   const [editDescription, setEditDescription] = useState("");
   const [saveError, setSaveError] = useState<string | null>(null);
+
+  const baselineRef = useRef<{ title: string; description: string; updated_at: string } | null>(null);
+  const [conflictOpen, setConflictOpen] = useState(false);
+  const pendingPayloadRef = useRef<{ title?: string; description?: string } | null>(null);
 
   const fieldDisplayNames = useMemo(() => {
     const map: Record<string, string> = {};
@@ -105,29 +120,93 @@ export default function WorkItemDetailPage({
     setEditTitle(item.title);
     setEditDescription(item.description || "");
     setSaveError(null);
+    baselineRef.current = {
+      title: item.title,
+      description: item.description || "",
+      updated_at: item.updated_at || "",
+    };
     setEditing(true);
   }, [item]);
 
   const handleCancel = useCallback(() => {
     setEditing(false);
     setSaveError(null);
+    baselineRef.current = null;
+    pendingPayloadRef.current = null;
   }, []);
+
+  const doSave = useCallback((payload: { title?: string; description?: string }) => {
+    updateMutation.mutate(payload, {
+      onSuccess: () => {
+        setEditing(false);
+        baselineRef.current = null;
+        pendingPayloadRef.current = null;
+      },
+      onError: (err) => setSaveError(err instanceof Error ? err.message : "Save failed"),
+    });
+  }, [updateMutation]);
 
   const handleSave = useCallback(() => {
     if (!item) return;
     setSaveError(null);
     const payload: { title?: string; description?: string } = {};
-    if (editTitle !== item.title) payload.title = editTitle;
-    if (editDescription !== (item.description || "")) payload.description = editDescription;
+    if (editTitle !== (baselineRef.current?.title ?? item.title)) payload.title = editTitle;
+    if (editDescription !== (baselineRef.current?.description ?? item.description ?? "")) payload.description = editDescription;
     if (Object.keys(payload).length === 0) {
       setEditing(false);
       return;
     }
-    updateMutation.mutate(payload, {
-      onSuccess: () => setEditing(false),
-      onError: (err) => setSaveError(err instanceof Error ? err.message : "Save failed"),
+
+    pendingPayloadRef.current = payload;
+
+    pullMutation.mutate(undefined, {
+      onSuccess: (fresh) => {
+        const baseline = baselineRef.current;
+        const remoteChanged =
+          baseline &&
+          (fresh.title !== baseline.title ||
+            (fresh.description ?? "") !== baseline.description ||
+            (fresh.updated_at ?? "") !== baseline.updated_at);
+
+        if (remoteChanged) {
+          setConflictOpen(true);
+        } else {
+          doSave(payload);
+        }
+      },
+      onError: () => {
+        doSave(payload);
+      },
     });
-  }, [item, editTitle, editDescription, updateMutation]);
+  }, [item, editTitle, editDescription, pullMutation, doSave]);
+
+  const handleForceOverwrite = useCallback(() => {
+    setConflictOpen(false);
+    if (pendingPayloadRef.current) {
+      doSave(pendingPayloadRef.current);
+    }
+  }, [doSave]);
+
+  const handleConflictCancel = useCallback(() => {
+    setConflictOpen(false);
+    pendingPayloadRef.current = null;
+  }, []);
+
+  const handlePull = useCallback(() => {
+    pullMutation.mutate(undefined, {
+      onSuccess: (fresh) => {
+        if (editing) {
+          setEditTitle(fresh.title);
+          setEditDescription(fresh.description || "");
+          baselineRef.current = {
+            title: fresh.title,
+            description: fresh.description || "",
+            updated_at: fresh.updated_at || "",
+          };
+        }
+      },
+    });
+  }, [pullMutation, editing]);
 
   if (isLoading) {
     return (
@@ -163,12 +242,23 @@ export default function WorkItemDetailPage({
             Back to Project
           </Link>
         </Button>
-        {!editing && (
-          <Button variant="outline" size="sm" onClick={handleEdit}>
-            <Pencil className="mr-1.5 h-3.5 w-3.5" />
-            Edit
+        <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handlePull}
+            disabled={pullMutation.isPending}
+          >
+            <RefreshCw className={`mr-1.5 h-3.5 w-3.5 ${pullMutation.isPending ? "animate-spin" : ""}`} />
+            {pullMutation.isPending ? "Pulling..." : "Pull Latest"}
           </Button>
-        )}
+          {!editing && (
+            <Button variant="outline" size="sm" onClick={handleEdit}>
+              <Pencil className="mr-1.5 h-3.5 w-3.5" />
+              Edit
+            </Button>
+          )}
+        </div>
       </div>
 
       {/* Header */}
@@ -225,13 +315,13 @@ export default function WorkItemDetailPage({
                 <X className="mr-1 h-3.5 w-3.5" />
                 Cancel
               </Button>
-              <Button size="sm" onClick={handleSave} disabled={updateMutation.isPending}>
-                {updateMutation.isPending ? (
+              <Button size="sm" onClick={handleSave} disabled={updateMutation.isPending || pullMutation.isPending}>
+                {updateMutation.isPending || pullMutation.isPending ? (
                   <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
                 ) : (
                   <Save className="mr-1.5 h-3.5 w-3.5" />
                 )}
-                {updateMutation.isPending ? "Saving..." : "Save to DevOps"}
+                {pullMutation.isPending ? "Checking..." : updateMutation.isPending ? "Saving..." : "Save to DevOps"}
               </Button>
             </div>
           </CardHeader>
@@ -475,6 +565,29 @@ export default function WorkItemDetailPage({
 
       {/* Activity Log */}
       <ActivityLog projectId={projectId} workItemId={workItemId} />
+
+      <AlertDialog open={conflictOpen} onOpenChange={setConflictOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2">
+              <AlertTriangle className="h-5 w-5 text-amber-500" />
+              Work Item Changed in DevOps
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              This work item has been modified in Azure DevOps since you started editing.
+              You can overwrite the remote version with your changes or cancel to review the latest version first.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={handleConflictCancel}>
+              Cancel &amp; Review
+            </AlertDialogCancel>
+            <AlertDialogAction onClick={handleForceOverwrite} className="bg-amber-600 hover:bg-amber-700">
+              Overwrite Anyway
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

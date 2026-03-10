@@ -450,6 +450,10 @@ export const api = {
       method: "PATCH",
       body: JSON.stringify(data),
     }),
+  pullWorkItem: (projectId: string, workItemId: string) =>
+    request<WorkItemDetail>(`/projects/${projectId}/delivery/work-items/${workItemId}/pull`, {
+      method: "POST",
+    }),
   getWorkItemCommits: (projectId: string, workItemId: string) =>
     request<LinkedCommit[]>(`/projects/${projectId}/delivery/work-items/${workItemId}/commits`),
   getWorkItemActivities: (projectId: string, workItemId: string, params?: { page?: number; page_size?: number }) =>

@@ -3,3 +3,5 @@
 3. ADRs
 4. Story writing templates
 5. Story writing agent
+6. A2A
+7. MCP

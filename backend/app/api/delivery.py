@@ -529,6 +529,91 @@ async def update_work_item(
     }
 
 
+@router.post("/work-items/{work_item_id}/pull")
+async def pull_work_item(
+    project_id: uuid.UUID,
+    work_item_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    _user: User = Depends(get_current_user),
+):
+    """Fetch the latest version of a single work item from Azure DevOps and update the local DB."""
+    import asyncio
+    from app.db.models.project import Project
+    from app.db.models.platform_credential import PlatformCredential
+    from app.db.models.repository import Platform
+    from app.api.platform_credentials import decrypt_token
+    from app.services.azure_workitems_client import fetch_single_ado_work_item
+
+    wi = (await db.execute(
+        select(WorkItem).where(WorkItem.id == work_item_id, WorkItem.project_id == project_id)
+    )).scalar_one_or_none()
+    if not wi:
+        raise HTTPException(404, "Work item not found")
+
+    proj = (await db.execute(
+        select(Project).options(selectinload(Project.repositories)).where(Project.id == project_id)
+    )).scalar_one_or_none()
+    if not proj:
+        raise HTTPException(404, "Project not found")
+
+    azure_repo = next(
+        (r for r in proj.repositories if r.platform and r.platform.value == "azure"), None
+    )
+    if not azure_repo:
+        raise HTTPException(400, "No Azure DevOps repository linked to this project")
+
+    cred = (await db.execute(
+        select(PlatformCredential)
+        .where(PlatformCredential.platform == Platform.AZURE)
+        .order_by(PlatformCredential.created_at.desc())
+        .limit(1)
+    )).scalar_one_or_none()
+    if not cred:
+        raise HTTPException(400, "No Azure DevOps credential configured")
+
+    try:
+        token = decrypt_token(cred.token_encrypted)
+    except Exception:
+        raise HTTPException(500, "Failed to decrypt Azure DevOps credential")
+
+    owner = azure_repo.platform_owner or ""
+    org = owner.split("/", 1)[0] if "/" in owner else owner
+    org_url = cred.base_url or (f"https://dev.azure.com/{org}" if org else None)
+    if not org_url:
+        raise HTTPException(400, "Cannot determine Azure DevOps org URL")
+
+    try:
+        ado_data = await asyncio.to_thread(
+            fetch_single_ado_work_item,
+            org_url, token, wi.platform_work_item_id,
+        )
+    except Exception as exc:
+        raise HTTPException(502, f"Azure DevOps pull failed: {exc}")
+
+    wi.title = (ado_data["title"] or wi.title)[:1024]
+    wi.description = ado_data["description"]
+    wi.state = ado_data["state"] or wi.state
+    wi.story_points = ado_data["story_points"]
+    wi.priority = ado_data["priority"]
+    tags_str = ado_data.get("tags") or ""
+    wi.tags = [t.strip() for t in tags_str.split(";") if t.strip()] if tags_str else wi.tags
+
+    await db.commit()
+    await db.refresh(wi)
+
+    return {
+        "id": str(wi.id),
+        "platform_work_item_id": wi.platform_work_item_id,
+        "title": wi.title,
+        "description": wi.description,
+        "state": wi.state,
+        "story_points": wi.story_points,
+        "priority": wi.priority,
+        "tags": wi.tags or [],
+        "updated_at": wi.updated_at.isoformat() if wi.updated_at else "",
+    }
+
+
 @router.get("/work-items/{work_item_id}/commits")
 async def get_work_item_commits(
     project_id: uuid.UUID,

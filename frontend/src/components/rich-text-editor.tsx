@@ -79,6 +79,7 @@ export function RichTextEditor({ content, onChange, className }: RichTextEditorP
       TableHeader,
     ],
     content,
+    immediatelyRender: false,
     onUpdate: ({ editor: e }) => {
       onChange(e.getHTML());
     },

@@ -818,6 +818,30 @@ async def rebuild_daily_delivery_stats(db: AsyncSession, project_id) -> None:
     await db.flush()
 
 
+# ── Single-item pull ──────────────────────────────────────────────────
+
+def fetch_single_ado_work_item(
+    org_url: str,
+    token: str,
+    platform_work_item_id: int,
+) -> dict:
+    """Fetch the latest fields for one work item from Azure DevOps (synchronous)."""
+    connection = _get_connection(org_url, token)
+    wit_client = connection.clients.get_work_item_tracking_client()
+    wi = wit_client.get_work_item(platform_work_item_id, fields=WI_FIELDS)
+    fields = wi.fields or {}
+    return {
+        "title": fields.get("System.Title", ""),
+        "description": fields.get("System.Description"),
+        "state": fields.get("System.State", ""),
+        "story_points": fields.get("Microsoft.VSTS.Scheduling.StoryPoints")
+            or fields.get("Microsoft.VSTS.Scheduling.Effort"),
+        "priority": fields.get("Microsoft.VSTS.Common.Priority"),
+        "tags": fields.get("System.Tags", ""),
+        "updated_at": fields.get("System.ChangedDate"),
+    }
+
+
 # ── Write-back ────────────────────────────────────────────────────────
 
 def update_ado_work_item_fields(

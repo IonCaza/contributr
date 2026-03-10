@@ -176,6 +176,16 @@ export function useUpdateWorkItem(projectId: string, workItemId: string) {
   });
 }
 
+export function usePullWorkItem(projectId: string, workItemId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.pullWorkItem(projectId, workItemId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: queryKeys.delivery.workItemDetail(projectId, workItemId) });
+    },
+  });
+}
+
 export function useWorkItemCommits(projectId: string, workItemId: string) {
   return useQuery({
     queryKey: queryKeys.delivery.workItemCommits(projectId, workItemId),

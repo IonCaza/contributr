@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import uuid
@@ -14,6 +15,7 @@ from sse_starlette.sse import EventSourceResponse
 from app.auth.dependencies import get_current_user
 from app.db.base import get_db
 from app.db.models.chat import ChatSession, ChatMessage, MessageRole
+from app.db.models.agent_activity import AgentActivity
 from app.db.models.ai_settings import AiSettings, SINGLETON_ID
 from app.db.models.agent_config import AgentConfig
 from app.db.models.user import User
@@ -40,13 +42,78 @@ class ChatSessionOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class AgentActivityOut(BaseModel):
+    id: uuid.UUID
+    trigger_message_id: uuid.UUID
+    agent_slug: str
+    run_id: str
+    content: str
+    started_at: datetime
+    finished_at: datetime | None = None
+
+    model_config = {"from_attributes": True}
+
+
 class ChatMessageOut(BaseModel):
     id: uuid.UUID
     role: str
     content: str
     created_at: datetime
+    agent_activities: list[AgentActivityOut] = []
 
     model_config = {"from_attributes": True}
+
+
+async def _persist_response(
+    db: AsyncSession,
+    session_id: uuid.UUID,
+    content: str,
+    trigger_message_id: uuid.UUID | None = None,
+    agent_activities: list[dict] | None = None,
+) -> None:
+    """Save the assistant response, any agent activities, and update the session.
+
+    Retries once after rollback in case the session was poisoned by a
+    prior failed transaction.
+    """
+    for attempt in range(2):
+        try:
+            if attempt > 0:
+                await db.rollback()
+
+            assistant_msg = ChatMessage(
+                session_id=session_id,
+                role=MessageRole.ASSISTANT,
+                content=content,
+            )
+            db.add(assistant_msg)
+            await db.flush()
+
+            if trigger_message_id and agent_activities:
+                for act in agent_activities:
+                    db.add(AgentActivity(
+                        session_id=session_id,
+                        trigger_message_id=trigger_message_id,
+                        response_message_id=assistant_msg.id,
+                        agent_slug=act["slug"],
+                        run_id=act["run_id"],
+                        content=act["content"],
+                        started_at=act["started_at"],
+                        finished_at=act.get("finished_at"),
+                    ))
+
+            await db.execute(
+                update(ChatSession)
+                .where(ChatSession.id == session_id)
+                .values(updated_at=datetime.now(timezone.utc))
+            )
+            await db.commit()
+            return
+        except Exception:
+            if attempt == 0:
+                logger.warning("Session may be poisoned, retrying after rollback")
+            else:
+                raise
 
 
 @router.post("")
@@ -94,7 +161,9 @@ async def send_message(
             content=body.message,
         )
         db.add(user_msg)
+        await db.flush()
         session_id = session.id
+        trigger_message_id = user_msg.id
         await db.commit()
     except HTTPException:
         raise
@@ -108,16 +177,38 @@ async def send_message(
 
     async def event_generator():
         collected = ""
+        activities: dict[str, dict] = {}
         try:
             yield {"event": "session", "data": json.dumps({"session_id": str(session_id)})}
-            async for chunk in run_agent_stream(
+            async for evt in run_agent_stream(
                 db, body.message,
                 agent_slug=body.agent_slug,
                 session_id=session_id,
                 user_id=user.id,
             ):
-                collected += chunk
-                yield {"event": "token", "data": json.dumps({"content": chunk})}
+                etype = evt["type"]
+                if etype == "token":
+                    collected += evt["content"]
+                    yield {"event": "token", "data": json.dumps({"content": evt["content"]})}
+                elif etype == "agent_start":
+                    activities[evt["run_id"]] = {
+                        "slug": evt["slug"],
+                        "run_id": evt["run_id"],
+                        "content": "",
+                        "started_at": datetime.now(timezone.utc),
+                        "finished_at": None,
+                    }
+                    yield {"event": "agent_start", "data": json.dumps({"run_id": evt["run_id"], "slug": evt["slug"]})}
+                elif etype == "agent_token":
+                    act = activities.get(evt["run_id"])
+                    if act:
+                        act["content"] += evt["content"]
+                    yield {"event": "agent_token", "data": json.dumps({"run_id": evt["run_id"], "content": evt["content"]})}
+                elif etype == "agent_done":
+                    act = activities.get(evt["run_id"])
+                    if act:
+                        act["finished_at"] = datetime.now(timezone.utc)
+                    yield {"event": "agent_done", "data": json.dumps({"run_id": evt["run_id"]})}
             yield {"event": "done", "data": json.dumps({"content": collected})}
         except Exception as exc:
             logger.exception("Agent streaming error")
@@ -133,28 +224,19 @@ async def send_message(
                 yield {"event": "error", "data": json.dumps({"detail": collected})}
         finally:
             content = collected or "No response generated."
-            for attempt in range(2):
-                try:
-                    if attempt > 0:
-                        await db.rollback()
-                    assistant_msg = ChatMessage(
-                        session_id=session_id,
-                        role=MessageRole.ASSISTANT,
-                        content=content,
+            activity_list = list(activities.values()) if activities else None
+            try:
+                await asyncio.shield(
+                    _persist_response(
+                        db, session_id, content,
+                        trigger_message_id=trigger_message_id,
+                        agent_activities=activity_list,
                     )
-                    db.add(assistant_msg)
-                    await db.execute(
-                        update(ChatSession)
-                        .where(ChatSession.id == session_id)
-                        .values(updated_at=datetime.now(timezone.utc))
-                    )
-                    await db.commit()
-                    break
-                except Exception:
-                    if attempt == 0:
-                        logger.warning("Session may be poisoned, retrying after rollback")
-                    else:
-                        logger.exception("Failed to persist assistant response")
+                )
+            except asyncio.CancelledError:
+                logger.debug("SSE cancelled during persist — shielded task still running")
+            except Exception:
+                logger.exception("Failed to persist assistant response")
 
     return EventSourceResponse(event_generator())
 
@@ -244,7 +326,30 @@ async def get_session_messages(
         .where(ChatMessage.session_id == session_id)
         .order_by(ChatMessage.created_at)
     )
-    return msgs.scalars().all()
+    messages = msgs.scalars().all()
+
+    acts_result = await db.execute(
+        select(AgentActivity)
+        .where(AgentActivity.session_id == session_id)
+        .order_by(AgentActivity.started_at)
+    )
+    activities = acts_result.scalars().all()
+
+    acts_by_response: dict[uuid.UUID, list[AgentActivity]] = {}
+    for act in activities:
+        acts_by_response.setdefault(act.response_message_id, []).append(act)
+
+    out: list[ChatMessageOut] = []
+    for msg in messages:
+        msg_acts = acts_by_response.get(msg.id, [])
+        out.append(ChatMessageOut(
+            id=msg.id,
+            role=msg.role.value if hasattr(msg.role, "value") else msg.role,
+            content=msg.content,
+            created_at=msg.created_at,
+            agent_activities=[AgentActivityOut.model_validate(a) for a in msg_acts],
+        ))
+    return out
 
 
 @router.post("/sessions/{session_id}/archive", response_model=ChatSessionOut)

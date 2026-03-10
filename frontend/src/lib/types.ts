@@ -304,11 +304,22 @@ export interface ChatSession {
   updated_at: string;
 }
 
+export interface AgentActivityRecord {
+  id: string;
+  trigger_message_id: string;
+  agent_slug: string;
+  run_id: string;
+  content: string;
+  started_at: string;
+  finished_at: string | null;
+}
+
 export interface ChatMessage {
   id: string;
   role: "user" | "assistant" | "tool";
   content: string;
   created_at: string;
+  agent_activities?: AgentActivityRecord[];
 }
 
 export interface CommitFileItem {
