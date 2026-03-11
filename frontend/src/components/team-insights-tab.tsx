@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback } from "react";
+import { useActiveRunTracking } from "@/hooks/use-active-run-tracking";
 import {
   AlertTriangle, AlertCircle, Info, CheckCircle2, Play, Loader2,
   ChevronDown, ChevronRight, X, Clock, TrendingUp,
@@ -310,8 +311,6 @@ export function TeamInsightsTab({ projectId, teamId }: { projectId: string; team
   const qc = useQueryClient();
   const [categoryFilter, setCategoryFilter] = useState("");
   const [severityFilter, setSeverityFilter] = useState("");
-  const [activeRunId, setActiveRunId] = useState<string | null>(null);
-
   const filters = {
     ...(categoryFilter && { category: categoryFilter }),
     ...(severityFilter && { severity: severityFilter }),
@@ -325,31 +324,24 @@ export function TeamInsightsTab({ projectId, teamId }: { projectId: string; team
 
   const lastRun = runs?.[0];
   const isRunning = lastRun?.status === "running" || triggerRun.isPending;
-
-  useEffect(() => {
-    if (lastRun?.status === "running" && !activeRunId) {
-      setActiveRunId(lastRun.id);
-    }
-  }, [lastRun, activeRunId]);
+  const { activeRunId, startTracking, stopTracking } = useActiveRunTracking(lastRun);
 
   const handleTriggerRun = useCallback(() => {
     triggerRun.mutate(undefined, {
-      onSuccess: (run) => {
-        setActiveRunId(run.id);
-      },
+      onSuccess: (run) => startTracking(run.id),
     });
-  }, [triggerRun]);
+  }, [triggerRun, startTracking]);
 
   const logUrl = activeRunId
     ? `${api.getApiBase()}/projects/${projectId}/teams/${teamId}/insights/runs/${activeRunId}/logs`
     : null;
 
   const handleLogsDone = useCallback(() => {
-    setActiveRunId(null);
+    stopTracking();
     refetchRuns();
     qc.invalidateQueries({ queryKey: queryKeys.teamInsights.findings(projectId, teamId) });
     qc.invalidateQueries({ queryKey: queryKeys.teamInsights.summary(projectId, teamId) });
-  }, [projectId, teamId, qc, refetchRuns]);
+  }, [stopTracking, projectId, teamId, qc, refetchRuns]);
 
   return (
     <div className="space-y-6">

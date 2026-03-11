@@ -149,6 +149,8 @@ async def send_message(
             session = result.scalar_one_or_none()
             if not session:
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+            if session.title == "New chat":
+                session.title = body.message[:100].strip() or "New chat"
         else:
             title = body.message[:100].strip() or "New chat"
             session = ChatSession(user_id=user.id, title=title, agent_id=agent_row.id)

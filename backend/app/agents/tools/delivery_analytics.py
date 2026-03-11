@@ -17,7 +17,7 @@ from app.services.delivery_metrics import (
     DeliveryFilters,
     get_velocity,
     get_throughput_trend,
-    get_iteration_detail,
+    get_iteration_detail as _iteration_detail,
     get_sprint_burndown as _burndown,
     get_cycle_time_distribution,
     get_wip_by_state,
@@ -49,6 +49,7 @@ DEFINITIONS = [
     ToolDefinition("get_active_sprints", "Active Sprints", "Currently active and next upcoming sprints with progress", CATEGORY),
     ToolDefinition("get_sprint_scope_change", "Sprint Scope Change", "Items added during a sprint after start — scope creep analysis", CATEGORY),
     ToolDefinition("get_sprint_carryover", "Sprint Carryover", "Incomplete items from a past sprint and their current state", CATEGORY),
+    ToolDefinition("get_iteration_detail", "Iteration Detail", "Quick stats for a single iteration: items, points, completion counts", CATEGORY),
     # C. Velocity and Throughput
     ToolDefinition("get_velocity_trend", "Velocity Trend", "Story points completed per iteration over last N sprints with rolling average", CATEGORY),
     ToolDefinition("get_delivery_throughput_trend", "Throughput Trend", "Daily items created vs completed over time", CATEGORY),
@@ -59,11 +60,15 @@ DEFINITIONS = [
     ToolDefinition("get_lead_time_stats", "Lead Time Stats", "Lead time analysis (created -> closed) with type breakdown", CATEGORY),
     ToolDefinition("get_wip_analysis", "WIP Analysis", "Current work-in-progress count by state, type, and assignee", CATEGORY),
     ToolDefinition("get_delivery_cumulative_flow", "Cumulative Flow", "Cumulative flow diagram data (daily items by state)", CATEGORY),
+    ToolDefinition("get_cycle_time_histogram", "Cycle Time Distribution", "Histogram of cycle times from hours to weeks", CATEGORY),
+    ToolDefinition("get_wip_snapshot", "WIP Snapshot", "Quick snapshot of work-in-progress items grouped by state", CATEGORY),
     # E. Backlog Health
     ToolDefinition("get_backlog_overview", "Backlog Overview", "Total open items, unestimated %, aging breakdown, priority distribution, health score", CATEGORY),
     ToolDefinition("get_stale_items", "Stale Items", "Work items not updated in N days, sorted by age", CATEGORY),
     ToolDefinition("get_backlog_composition", "Backlog Composition", "Breakdown by type, state, priority, assignee with unassigned/unestimated counts", CATEGORY),
     ToolDefinition("get_backlog_growth_trend", "Backlog Growth Trend", "Net backlog growth over time (created minus completed)", CATEGORY),
+    ToolDefinition("get_stale_backlog_summary", "Stale Backlog Summary", "Stale backlog items grouped by type — items not updated in N days", CATEGORY),
+    ToolDefinition("get_backlog_age_histogram", "Backlog Age Distribution", "Age distribution of open backlog items from days to months", CATEGORY),
     # F. Team Analytics
     ToolDefinition("get_team_delivery_overview", "Team Overview", "Team stats: members, velocity, active items, throughput, cycle time", CATEGORY),
     ToolDefinition("get_team_workload", "Team Workload", "Work distribution across team members — identifies imbalances", CATEGORY),
@@ -71,6 +76,7 @@ DEFINITIONS = [
     # G. Quality Metrics
     ToolDefinition("get_bug_metrics", "Bug Metrics", "Bug trend, resolution time, defect density, open bug count", CATEGORY),
     ToolDefinition("get_quality_summary", "Quality Summary", "Composite quality view: defect density, escaped defects, rework items", CATEGORY),
+    ToolDefinition("get_bug_trend_data", "Bug Trend", "Daily bugs created vs resolved over time", CATEGORY),
     # H. Code-Delivery Intersection
     ToolDefinition("get_code_delivery_intersection", "Code-Delivery Intersection", "Link coverage %, commits per story point, first-commit-to-resolution time", CATEGORY),
     ToolDefinition("get_work_item_linked_commits", "Work Item Linked Commits", "Commits linked to a specific work item", CATEGORY),
@@ -470,6 +476,31 @@ def _build_delivery_tools(db: AsyncSession) -> list:
             )
         return await _safe(db, _impl())
 
+    @tool
+    async def get_iteration_detail(iteration_name: str, project_name: Optional[str] = None) -> str:
+        """Quick stats for a single iteration: items, points, completion counts."""
+        async def _impl():
+            project_id = None
+            if project_name:
+                p = await _resolve_project(db, project_name)
+                if p:
+                    project_id = p.id
+            it = await _resolve_iteration(db, iteration_name, project_id)
+            if not it:
+                return f"Iteration '{iteration_name}' not found."
+            data = await _iteration_detail(db, it.id)
+            pct = round(data["completed_items"] / data["total_items"] * 100, 1) if data["total_items"] else 0
+            pct_sp = round(data["completed_points"] / data["total_points"] * 100, 1) if data["total_points"] else 0
+            return _kv_block({
+                "total_items": data["total_items"],
+                "completed_items": data["completed_items"],
+                "item_completion": f"{pct}%",
+                "total_points": data["total_points"],
+                "completed_points": data["completed_points"],
+                "points_completion": f"{pct_sp}%",
+            }, f"Iteration: {it.name}")
+        return await _safe(db, _impl())
+
     # ================================================================
     # C. Velocity and Throughput
     # ================================================================
@@ -840,6 +871,54 @@ def _build_delivery_tools(db: AsyncSession) -> list:
             return "\n".join(lines)
         return await _safe(db, _impl())
 
+    @tool
+    async def get_cycle_time_histogram(project_name: Optional[str] = None) -> str:
+        """Histogram of cycle times (activated -> resolved) from hours to weeks."""
+        async def _impl():
+            project_id = None
+            if project_name:
+                p = await _resolve_project(db, project_name)
+                if not p:
+                    return f"Project '{project_name}' not found."
+                project_id = p.id
+            else:
+                first = (await db.execute(select(Project).limit(1))).scalar_one_or_none()
+                if first:
+                    project_id = first.id
+                else:
+                    return "No projects found."
+            data = await get_cycle_time_distribution(db, project_id)
+            if not data or all(d["count"] == 0 for d in data):
+                return "No cycle time data available."
+            total = sum(d["count"] for d in data)
+            rows = [(d["range"], d["count"], f"{round(d['count'] / total * 100, 1)}%") for d in data if d["count"] > 0]
+            return "**Cycle Time Distribution**\n" + _table(["Range", "Count", "Pct"], rows)
+        return await _safe(db, _impl())
+
+    @tool
+    async def get_wip_snapshot(project_name: Optional[str] = None) -> str:
+        """Quick snapshot of work-in-progress items grouped by state."""
+        async def _impl():
+            project_id = None
+            if project_name:
+                p = await _resolve_project(db, project_name)
+                if not p:
+                    return f"Project '{project_name}' not found."
+                project_id = p.id
+            else:
+                first = (await db.execute(select(Project).limit(1))).scalar_one_or_none()
+                if first:
+                    project_id = first.id
+                else:
+                    return "No projects found."
+            data = await get_wip_by_state(db, project_id)
+            if not data:
+                return "No work in progress."
+            total = sum(d["count"] for d in data)
+            rows = [(d["state"], d["count"]) for d in data]
+            return f"**WIP Snapshot: {total} items**\n" + _table(["State", "Count"], rows)
+        return await _safe(db, _impl())
+
     # ================================================================
     # E. Backlog Health
     # ================================================================
@@ -992,6 +1071,54 @@ def _build_delivery_tools(db: AsyncSession) -> list:
                 "net_growth": f"{'+' if net > 0 else ''}{net}",
                 "avg_daily_net": round(net / max(len(data), 1), 1),
             }, "Backlog Growth Trend")
+        return await _safe(db, _impl())
+
+    @tool
+    async def get_stale_backlog_summary(project_name: Optional[str] = None, days: int = 30) -> str:
+        """Stale backlog items grouped by type — items not updated in N days."""
+        async def _impl():
+            project_id = None
+            if project_name:
+                p = await _resolve_project(db, project_name)
+                if not p:
+                    return f"Project '{project_name}' not found."
+                project_id = p.id
+            else:
+                first = (await db.execute(select(Project).limit(1))).scalar_one_or_none()
+                if first:
+                    project_id = first.id
+                else:
+                    return "No projects found."
+            data = await get_stale_backlog(db, project_id, stale_days=days)
+            if not data:
+                return f"No stale items (nothing untouched for {days}+ days)."
+            total = sum(d["count"] for d in data)
+            rows = [(d["type"], d["count"]) for d in data]
+            return f"**Stale Backlog ({days}+ days): {total} items**\n" + _table(["Type", "Count"], rows)
+        return await _safe(db, _impl())
+
+    @tool
+    async def get_backlog_age_histogram(project_name: Optional[str] = None) -> str:
+        """Age distribution of open backlog items from days to months."""
+        async def _impl():
+            project_id = None
+            if project_name:
+                p = await _resolve_project(db, project_name)
+                if not p:
+                    return f"Project '{project_name}' not found."
+                project_id = p.id
+            else:
+                first = (await db.execute(select(Project).limit(1))).scalar_one_or_none()
+                if first:
+                    project_id = first.id
+                else:
+                    return "No projects found."
+            data = await get_backlog_age_distribution(db, project_id)
+            if not data or all(d["count"] == 0 for d in data):
+                return "No open backlog items."
+            total = sum(d["count"] for d in data)
+            rows = [(d["range"], d["count"], f"{round(d['count'] / total * 100, 1)}%") for d in data if d["count"] > 0]
+            return "**Backlog Age Distribution**\n" + _table(["Age Range", "Count", "Pct"], rows)
         return await _safe(db, _impl())
 
     # ================================================================
@@ -1210,6 +1337,36 @@ def _build_delivery_tools(db: AsyncSession) -> list:
             }, "Quality Summary")
         return await _safe(db, _impl())
 
+    @tool
+    async def get_bug_trend_data(project_name: Optional[str] = None, days: int = 90) -> str:
+        """Daily bugs created vs resolved over time."""
+        async def _impl():
+            project_id = None
+            if project_name:
+                p = await _resolve_project(db, project_name)
+                if not p:
+                    return f"Project '{project_name}' not found."
+                project_id = p.id
+            else:
+                first = (await db.execute(select(Project).limit(1))).scalar_one_or_none()
+                if first:
+                    project_id = first.id
+                else:
+                    return "No projects found."
+            data = await get_bug_trend(db, project_id, days=days)
+            if not data:
+                return "No bug trend data available."
+            total_created = sum(d["created"] for d in data)
+            total_resolved = sum(d["resolved"] for d in data)
+            net = total_created - total_resolved
+            return _kv_block({
+                "period": f"Last {days} days ({len(data)} data points)",
+                "bugs_created": total_created,
+                "bugs_resolved": total_resolved,
+                "net_open": f"{'+' if net > 0 else ''}{net}",
+            }, "Bug Trend")
+        return await _safe(db, _impl())
+
     # ================================================================
     # H. Code-Delivery Intersection
     # ================================================================
@@ -1285,14 +1442,17 @@ def _build_delivery_tools(db: AsyncSession) -> list:
         find_work_item, find_iteration, find_team,
         get_sprint_overview, get_sprint_comparison, get_sprint_burndown,
         get_active_sprints, get_sprint_scope_change, get_sprint_carryover,
+        get_iteration_detail,
         get_velocity_trend, get_delivery_throughput_trend,
         get_velocity_forecast, get_team_velocity_comparison,
         get_cycle_time_stats, get_lead_time_stats,
         get_wip_analysis, get_delivery_cumulative_flow,
+        get_cycle_time_histogram, get_wip_snapshot,
         get_backlog_overview, get_stale_items,
         get_backlog_composition, get_backlog_growth_trend,
+        get_stale_backlog_summary, get_backlog_age_histogram,
         get_team_delivery_overview, get_team_workload, get_team_members_delivery,
-        get_bug_metrics, get_quality_summary,
+        get_bug_metrics, get_quality_summary, get_bug_trend_data,
         get_code_delivery_intersection, get_work_item_linked_commits,
     ]
 

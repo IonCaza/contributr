@@ -536,7 +536,7 @@ async def update_sast_settings(
 @repo_router.get("/report")
 async def download_repo_report(
     repo_id: uuid.UUID,
-    format: str = Query("json", regex="^(json|csv|pdf)$"),
+    format: str = Query("json", pattern="^(json|csv|pdf)$"),
     report_status: str | None = Query(None, alias="status"),
     token: str | None = Query(default=None),
     db: AsyncSession = Depends(get_db),
@@ -564,7 +564,7 @@ async def download_repo_report(
 @project_router.get("/report")
 async def download_project_report(
     project_id: uuid.UUID,
-    format: str = Query("json", regex="^(json|csv|pdf)$"),
+    format: str = Query("json", pattern="^(json|csv|pdf)$"),
     report_status: str | None = Query(None, alias="status"),
     token: str | None = Query(default=None),
     db: AsyncSession = Depends(get_db),

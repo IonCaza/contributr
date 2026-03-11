@@ -27,6 +27,16 @@ def create_refresh_token(subject: str) -> str:
     return jwt.encode({"sub": subject, "exp": expire, "type": "refresh"}, settings.jwt_secret, algorithm=ALGORITHM)
 
 
+def create_mfa_challenge_token(subject: str) -> str:
+    expire = datetime.now(timezone.utc) + timedelta(minutes=5)
+    return jwt.encode({"sub": subject, "exp": expire, "type": "mfa_challenge"}, settings.jwt_secret, algorithm=ALGORITHM)
+
+
+def create_mfa_setup_token(subject: str) -> str:
+    expire = datetime.now(timezone.utc) + timedelta(minutes=15)
+    return jwt.encode({"sub": subject, "exp": expire, "type": "mfa_setup"}, settings.jwt_secret, algorithm=ALGORITHM)
+
+
 def decode_token(token: str) -> dict | None:
     try:
         return jwt.decode(token, settings.jwt_secret, algorithms=[ALGORITHM])

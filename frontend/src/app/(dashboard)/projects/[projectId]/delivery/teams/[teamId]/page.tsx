@@ -1,6 +1,7 @@
 "use client";
 
-import { use, useState, useEffect, useMemo } from "react";
+import { use, useState, useMemo } from "react";
+import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import Link from "next/link";
 import {
   ArrowLeft, Loader2, Search, Users, CheckCircle2,
@@ -81,12 +82,7 @@ export default function TeamDetailPage({
   const [wiSearch, setWiSearch] = useState("");
   const [wiState, setWiState] = useState<string>("all");
   const [wiPage, setWiPage] = useState(1);
-  const [debouncedSearch, setDebouncedSearch] = useState("");
-
-  useEffect(() => {
-    const t = setTimeout(() => setDebouncedSearch(wiSearch), 300);
-    return () => clearTimeout(t);
-  }, [wiSearch]);
+  const debouncedSearch = useDebouncedValue(wiSearch);
 
   const { data: team, isLoading: teamLoading } = useTeamDetail(projectId, teamId);
 

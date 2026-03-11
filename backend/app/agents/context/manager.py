@@ -38,15 +38,15 @@ def get_context_window(provider: LlmProvider) -> int:
     return DEFAULT_CONTEXT_WINDOW
 
 
-def auto_summary_limit(context_window: int) -> int:
-    """Scale the summary token target to ~4% of the context window, clamped 500-8192."""
-    return max(500, min(int(context_window * 0.04), 8192))
+def auto_summary_limit(context_window: int, ratio: float = 0.04) -> int:
+    """Scale the summary token target to a fraction of the context window, clamped 500-8192."""
+    return max(500, min(int(context_window * ratio), 8192))
 
 
-def resolve_summary_limit(agent_config: AgentConfig, context_window: int) -> int:
+def resolve_summary_limit(agent_config: AgentConfig, context_window: int, ratio: float = 0.04) -> int:
     if agent_config.summary_token_limit and agent_config.summary_token_limit > 0:
         return agent_config.summary_token_limit
-    return auto_summary_limit(context_window)
+    return auto_summary_limit(context_window, ratio)
 
 
 def count_tokens(model: str, text: str) -> int:

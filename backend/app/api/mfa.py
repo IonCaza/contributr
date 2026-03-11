@@ -1,0 +1,172 @@
+from fastapi import APIRouter, Depends, HTTPException, status
+from pydantic import BaseModel
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.db.base import get_db
+from app.db.models import User
+from app.auth.dependencies import get_current_user, get_mfa_setup_user
+from app.auth.security import verify_password, create_access_token, create_refresh_token
+from app.services.mfa import (
+    generate_totp_secret,
+    get_totp_provisioning_uri,
+    generate_qr_code_base64,
+    verify_totp,
+    encrypt_totp_secret,
+    decrypt_totp_secret,
+    generate_email_otp,
+    store_email_otp,
+    verify_email_otp,
+    generate_recovery_codes,
+    hash_recovery_codes,
+)
+from app.services.email import send_templated_email
+
+router = APIRouter(prefix="/auth/mfa", tags=["mfa"])
+
+
+# ── Schemas ──────────────────────────────────────────────────────────────
+
+class TotpInitResponse(BaseModel):
+    secret: str
+    provisioning_uri: str
+    qr_code_base64: str
+
+
+class TotpConfirmRequest(BaseModel):
+    secret: str
+    code: str
+
+
+class EmailOtpConfirmRequest(BaseModel):
+    code: str
+
+
+class MfaSetupCompleteResponse(BaseModel):
+    recovery_codes: list[str]
+    mfa_method: str
+    access_token: str | None = None
+    refresh_token: str | None = None
+    token_type: str = "bearer"
+
+
+class PasswordConfirmRequest(BaseModel):
+    password: str
+
+
+class RecoveryCodesResponse(BaseModel):
+    recovery_codes: list[str]
+
+
+# ── TOTP Setup ───────────────────────────────────────────────────────────
+
+@router.post("/setup/totp/init", response_model=TotpInitResponse)
+async def totp_init(user: User = Depends(get_mfa_setup_user)):
+    secret = generate_totp_secret()
+    uri = get_totp_provisioning_uri(secret, user.email)
+    qr = generate_qr_code_base64(uri)
+    return TotpInitResponse(secret=secret, provisioning_uri=uri, qr_code_base64=qr)
+
+
+@router.post("/setup/totp/confirm", response_model=MfaSetupCompleteResponse)
+async def totp_confirm(
+    body: TotpConfirmRequest,
+    user: User = Depends(get_mfa_setup_user),
+    db: AsyncSession = Depends(get_db),
+):
+    if not verify_totp(body.secret, body.code):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid TOTP code")
+
+    codes = generate_recovery_codes()
+    user.totp_secret_encrypted = encrypt_totp_secret(body.secret)
+    user.mfa_enabled = True
+    user.mfa_method = "totp"
+    user.mfa_setup_complete = True
+    user.mfa_recovery_codes_encrypted = hash_recovery_codes(codes)
+    await db.commit()
+
+    return MfaSetupCompleteResponse(
+        recovery_codes=codes,
+        mfa_method="totp",
+        access_token=create_access_token(str(user.id)),
+        refresh_token=create_refresh_token(str(user.id)),
+    )
+
+
+# ── Email OTP Setup ─────────────────────────────────────────────────────
+
+@router.post("/setup/email/init", status_code=status.HTTP_200_OK)
+async def email_otp_init(
+    user: User = Depends(get_mfa_setup_user),
+    db: AsyncSession = Depends(get_db),
+):
+    code = generate_email_otp()
+    await store_email_otp(str(user.id), code)
+    try:
+        await send_templated_email(user.email, "otp_code", {"code": code, "username": user.username}, db)
+    except Exception:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Failed to send OTP email. Check SMTP configuration.")
+    return {"detail": "Verification code sent to your email"}
+
+
+@router.post("/setup/email/confirm", response_model=MfaSetupCompleteResponse)
+async def email_otp_confirm(
+    body: EmailOtpConfirmRequest,
+    user: User = Depends(get_mfa_setup_user),
+    db: AsyncSession = Depends(get_db),
+):
+    valid = await verify_email_otp(str(user.id), body.code)
+    if not valid:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid or expired verification code")
+
+    codes = generate_recovery_codes()
+    user.mfa_enabled = True
+    user.mfa_method = "email"
+    user.mfa_setup_complete = True
+    user.mfa_recovery_codes_encrypted = hash_recovery_codes(codes)
+    await db.commit()
+
+    return MfaSetupCompleteResponse(
+        recovery_codes=codes,
+        mfa_method="email",
+        access_token=create_access_token(str(user.id)),
+        refresh_token=create_refresh_token(str(user.id)),
+    )
+
+
+# ── Disable MFA ──────────────────────────────────────────────────────────
+
+@router.post("/disable", status_code=status.HTTP_200_OK)
+async def disable_mfa(
+    body: PasswordConfirmRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    if not verify_password(body.password, user.hashed_password):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid password")
+
+    user.mfa_enabled = False
+    user.mfa_method = None
+    user.totp_secret_encrypted = None
+    user.mfa_recovery_codes_encrypted = None
+    user.mfa_setup_complete = False
+    await db.commit()
+    return {"detail": "MFA disabled"}
+
+
+# ── Recovery Codes ───────────────────────────────────────────────────────
+
+@router.post("/recovery-codes", response_model=RecoveryCodesResponse)
+async def regenerate_recovery_codes(
+    body: PasswordConfirmRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    if not verify_password(body.password, user.hashed_password):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid password")
+    if not user.mfa_enabled:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="MFA is not enabled")
+
+    codes = generate_recovery_codes()
+    user.mfa_recovery_codes_encrypted = hash_recovery_codes(codes)
+    await db.commit()
+    return RecoveryCodesResponse(recovery_codes=codes)

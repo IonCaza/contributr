@@ -71,13 +71,13 @@ export function FeedbackWidget() {
       <PopoverTrigger asChild>
         <Button
           size="icon"
-          className="fixed top-4 right-4 z-50 h-10 w-10 rounded-full shadow-lg"
+          className="fixed bottom-4 right-4 z-50 h-10 w-10 rounded-full shadow-lg"
         >
           <MessageSquarePlus className="h-5 w-5" />
         </Button>
       </PopoverTrigger>
       <PopoverContent
-        side="bottom"
+        side="top"
         align="end"
         sideOffset={8}
         className="w-80"

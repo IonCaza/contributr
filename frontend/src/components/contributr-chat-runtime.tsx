@@ -50,6 +50,8 @@ interface ChildAgentContextValue {
   setActivityVisible: (v: boolean) => void;
   /** Clear live state (e.g. after streaming finishes or user dismisses). */
   clearLive: () => void;
+  /** Reset all activity state (live + historical + visibility). */
+  resetActivity: () => void;
   /** The user message text that triggered the current live run. */
   livePrompt: string;
 }
@@ -60,6 +62,7 @@ const ChildAgentContext = createContext<ChildAgentContextValue>({
   activityVisible: false,
   setActivityVisible: () => {},
   clearLive: () => {},
+  resetActivity: () => {},
   livePrompt: "",
 });
 
@@ -78,7 +81,7 @@ export type AgentEventCallback = (
 
 function makeChatModelAdapter(
   agentSlugRef: React.RefObject<string>,
-  sessionIdRef: React.RefObject<string | undefined>,
+  sessionIdRef: React.MutableRefObject<string | undefined>,
   onAgentEvent: React.RefObject<AgentEventCallback | undefined>,
   onRunStart: React.RefObject<((userText: string) => void) | undefined>,
 ): ChatModelAdapter {
@@ -134,7 +137,9 @@ function makeChatModelAdapter(
             try {
               const data = JSON.parse(line.slice(6));
 
-              if (currentEvent === "token" && data.content !== undefined) {
+              if (currentEvent === "session" && data.session_id) {
+                sessionIdRef.current = data.session_id;
+              } else if (currentEvent === "token" && data.content !== undefined) {
                 accumulated += data.content;
                 yield { content: [{ type: "text" as const, text: accumulated }] };
               } else if (
@@ -205,7 +210,10 @@ function useHistoryAdapter(
   return useMemo(
     () => ({
       async load() {
-        if (!remoteId) return ExportedMessageRepository.fromArray([]);
+        if (!remoteId) {
+          onActivitiesLoaded.current?.([]);
+          return ExportedMessageRepository.fromArray([]);
+        }
         const msgs = await api.getChatSessionMessages(remoteId);
 
         const groups = buildActivityGroups(msgs as any);
@@ -224,7 +232,9 @@ function useHistoryAdapter(
   );
 }
 
-function useThreadListAdapter(): unstable_RemoteThreadListAdapter {
+function useThreadListAdapter(
+  sessionIdRef: React.MutableRefObject<string | undefined>,
+): unstable_RemoteThreadListAdapter {
   return useMemo(
     () => ({
       async list() {
@@ -239,6 +249,7 @@ function useThreadListAdapter(): unstable_RemoteThreadListAdapter {
       },
       async initialize() {
         const session = await api.createChatSession();
+        sessionIdRef.current = session.id;
         return { remoteId: session.id, externalId: undefined };
       },
       async rename(remoteId: string, newTitle: string) {
@@ -253,11 +264,13 @@ function useThreadListAdapter(): unstable_RemoteThreadListAdapter {
       async delete(remoteId: string) {
         await api.deleteChatSession(remoteId);
       },
-      async generateTitle(_remoteId: string, messages: readonly any[]) {
+      async generateTitle(remoteId: string, messages: readonly any[]) {
         const firstUser = messages.find((m: any) => m.role === "user");
         const text =
           firstUser?.content?.find((c: any) => c.type === "text")?.text ?? "";
-        const title = text.slice(0, 80) || "New chat";
+        const title = text.slice(0, 100) || "New chat";
+
+        api.renameChatSession(remoteId, title).catch(() => {});
 
         const { createAssistantStream } = await import("assistant-stream");
         return createAssistantStream(async (controller) => {
@@ -275,18 +288,20 @@ function useThreadListAdapter(): unstable_RemoteThreadListAdapter {
         };
       },
     }),
-    [],
+    [sessionIdRef],
   );
 }
 
 function RuntimeHook({
   agentSlugRef,
+  sessionIdRef,
   onAgentEventRef,
   onActivitiesLoadedRef,
   onRunStartRef,
   onThreadSwitchRef,
 }: {
   agentSlugRef: React.RefObject<string>;
+  sessionIdRef: React.MutableRefObject<string | undefined>;
   onAgentEventRef: React.RefObject<AgentEventCallback | undefined>;
   onActivitiesLoadedRef: React.RefObject<((groups: ActivityGroup[]) => void) | undefined>;
   onRunStartRef: React.RefObject<((userText: string) => void) | undefined>;
@@ -296,15 +311,10 @@ function RuntimeHook({
     (s: { threadListItem: { remoteId?: string } }) =>
       s.threadListItem.remoteId,
   );
-  const sessionIdRef = useRef<string | undefined>(remoteId);
   sessionIdRef.current = remoteId;
 
-  const prevRemoteId = useRef(remoteId);
   useEffect(() => {
-    if (prevRemoteId.current !== remoteId) {
-      prevRemoteId.current = remoteId;
-      onThreadSwitchRef.current?.();
-    }
+    onThreadSwitchRef.current?.();
   }, [remoteId, onThreadSwitchRef]);
 
   const history = useHistoryAdapter(remoteId, onActivitiesLoadedRef);
@@ -323,6 +333,8 @@ export function ContributrChatRuntime({ children, agentSlug }: ContributrChatRun
   const agentSlugRef = useRef(agentSlug);
   agentSlugRef.current = agentSlug;
 
+  const sessionIdRef = useRef<string | undefined>(undefined);
+
   const [liveAgentMap, setLiveAgentMap] = useState<Map<string, ChildAgent>>(new Map());
   const [historicalActivities, setHistoricalActivities] = useState<ActivityGroup[]>([]);
   const [activityVisible, setActivityVisible] = useState(false);
@@ -333,6 +345,14 @@ export function ContributrChatRuntime({ children, agentSlug }: ContributrChatRun
     setLiveAgentMap(new Map());
     setLivePrompt("");
     activeCountRef.current = 0;
+  }, []);
+
+  const resetActivity = useCallback(() => {
+    setLiveAgentMap(new Map());
+    setLivePrompt("");
+    activeCountRef.current = 0;
+    setHistoricalActivities([]);
+    setActivityVisible(false);
   }, []);
 
   const onAgentEventRef = useRef<AgentEventCallback | undefined>(undefined);
@@ -394,14 +414,15 @@ export function ContributrChatRuntime({ children, agentSlug }: ContributrChatRun
       activityVisible,
       setActivityVisible,
       clearLive,
+      resetActivity,
       livePrompt,
     }),
-    [liveAgentMap, historicalActivities, activityVisible, clearLive, livePrompt],
+    [liveAgentMap, historicalActivities, activityVisible, clearLive, resetActivity, livePrompt],
   );
 
-  const threadListAdapter = useThreadListAdapter();
+  const threadListAdapter = useThreadListAdapter(sessionIdRef);
   const runtime = unstable_useRemoteThreadListRuntime({
-    runtimeHook: () => RuntimeHook({ agentSlugRef, onAgentEventRef, onActivitiesLoadedRef, onRunStartRef, onThreadSwitchRef }),
+    runtimeHook: () => RuntimeHook({ agentSlugRef, sessionIdRef, onAgentEventRef, onActivitiesLoadedRef, onRunStartRef, onThreadSwitchRef }),
     adapter: threadListAdapter,
   });
 

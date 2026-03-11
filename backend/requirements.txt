@@ -29,6 +29,9 @@ sse-starlette>=2.0
 setuptools>=75.0,<82
 semgrep>=1.60
 fpdf2>=2.8
+aiosmtplib>=3.0
+pyotp>=2.9
+qrcode[pil]>=8.0
 
 # Test dependencies
 pytest>=8.0

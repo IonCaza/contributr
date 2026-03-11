@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useMemo, useCallback, useEffect } from "react";
+import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import Link from "next/link";
 import {
   RefreshCw,
@@ -123,7 +124,7 @@ export function ProjectDeliveryTab({ projectId }: { projectId: string }) {
   const [typeFilter, setTypeFilter] = useState<string>("");
   const [stateFilter, setStateFilter] = useState<string>("");
   const [wiSearch, setWiSearch] = useState<string>("");
-  const [debouncedSearch, setDebouncedSearch] = useState<string>("");
+  const debouncedSearch = useDebouncedValue(wiSearch);
   const [page, setPage] = useState(1);
   const pageSize = 25;
   const [workItemsView, setWorkItemsView] = useState<"list" | "tree">("list");
@@ -218,14 +219,6 @@ export function ProjectDeliveryTab({ projectId }: { projectId: string }) {
       qc.invalidateQueries({ queryKey: ["delivery", projectId] });
     }
   }, [syncJobs, syncing, qc, projectId]);
-
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      setDebouncedSearch(wiSearch);
-      setPage(1);
-    }, 300);
-    return () => clearTimeout(timer);
-  }, [wiSearch]);
 
   const handleSync = useCallback(() => {
     syncMutation.mutate(undefined, {
@@ -820,7 +813,7 @@ export function ProjectDeliveryTab({ projectId }: { projectId: string }) {
               <Input
                 placeholder="Search ID or title..."
                 value={wiSearch}
-                onChange={(e) => setWiSearch(e.target.value)}
+                onChange={(e) => { setWiSearch(e.target.value); setPage(1); }}
                 className="w-52 pl-8 h-9"
               />
             </div>

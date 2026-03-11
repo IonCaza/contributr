@@ -1,4 +1,8 @@
 import type {
+  LoginResponse, MfaTotpInitResponse, MfaSetupCompleteResponse,
+  SmtpSettings, EmailTemplate, AuthSettingsConfig, RecoveryCodesResponse,
+  OidcProviderListItem, OidcProvider, OidcProviderCreate, OidcDiscoverResponse,
+  AuthProvidersResponse,
   TokenResponse, User, Project, ProjectDetail, ProjectStats,
   Repository, RepoStats, Contributor, ContributorStats, DailyStat,
   SSHKey, SyncJob, TrendData, Branch, PaginatedCommits, ContributorSummary,
@@ -18,6 +22,7 @@ import type {
   ContributorInsightRun, ContributorInsightFinding, ContributorInsightsSummary,
   TeamInsightRun, TeamInsightFinding, TeamInsightsSummary,
   SastScanRun, SastFinding, SastSummary, SastRuleProfile, SastIgnoredRule, SastSettings,
+  DepScanRun, DepFinding, DepSummary, DepSettings,
 } from "./types";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
@@ -129,14 +134,87 @@ export const api = {
   register: (data: { email: string; username: string; password: string; full_name?: string }) =>
     request<User>("/auth/register", { method: "POST", body: JSON.stringify(data) }),
   login: (data: { username: string; password: string }) =>
-    request<TokenResponse>("/auth/login", { method: "POST", body: JSON.stringify(data) }),
+    request<LoginResponse>("/auth/login", { method: "POST", body: JSON.stringify(data) }),
   refresh: (refresh_token: string) =>
     request<TokenResponse>(`/auth/refresh?refresh_token=${refresh_token}`, { method: "POST" }),
   me: () => request<User>("/auth/me"),
   listUsers: () => request<User[]>("/auth/users"),
   createUser: (data: { email: string; username: string; password: string; full_name?: string; is_admin?: boolean }) =>
     request<User>("/auth/users", { method: "POST", body: JSON.stringify(data) }),
+  updateUser: (id: string, data: { email?: string; username?: string; full_name?: string; is_admin?: boolean; is_active?: boolean; password?: string }) =>
+    request<User>(`/auth/users/${id}`, { method: "PUT", body: JSON.stringify(data) }),
+  resetUserMfa: (id: string) =>
+    request<User>(`/auth/users/${id}/mfa/reset`, { method: "POST" }),
   deleteUser: (id: string) => request<void>(`/auth/users/${id}`, { method: "DELETE" }),
+
+  // MFA
+  mfaVerify: (data: { mfa_token: string; code: string; method: string }) =>
+    request<TokenResponse>("/auth/mfa/verify", { method: "POST", body: JSON.stringify(data) }),
+  mfaSendEmailOtp: (data: { mfa_token: string }) =>
+    request<{ detail: string }>("/auth/mfa/send-email-otp", { method: "POST", body: JSON.stringify(data) }),
+  mfaTotpInit: (token?: string) => {
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    if (token) headers["Authorization"] = `Bearer ${token}`;
+    return request<MfaTotpInitResponse>("/auth/mfa/setup/totp/init", { method: "POST", headers });
+  },
+  mfaTotpConfirm: (data: { secret: string; code: string }, token?: string) => {
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    if (token) headers["Authorization"] = `Bearer ${token}`;
+    return request<MfaSetupCompleteResponse>("/auth/mfa/setup/totp/confirm", { method: "POST", body: JSON.stringify(data), headers });
+  },
+  mfaEmailInit: (token?: string) => {
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    if (token) headers["Authorization"] = `Bearer ${token}`;
+    return request<{ detail: string }>("/auth/mfa/setup/email/init", { method: "POST", headers });
+  },
+  mfaEmailConfirm: (data: { code: string }, token?: string) => {
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    if (token) headers["Authorization"] = `Bearer ${token}`;
+    return request<MfaSetupCompleteResponse>("/auth/mfa/setup/email/confirm", { method: "POST", body: JSON.stringify(data), headers });
+  },
+  mfaDisable: (data: { password: string }) =>
+    request<{ detail: string }>("/auth/mfa/disable", { method: "POST", body: JSON.stringify(data) }),
+  mfaRegenerateRecoveryCodes: (data: { password: string }) =>
+    request<RecoveryCodesResponse>("/auth/mfa/recovery-codes", { method: "POST", body: JSON.stringify(data) }),
+
+  // SMTP Settings
+  getSmtpSettings: () => request<SmtpSettings>("/settings/smtp"),
+  updateSmtpSettings: (data: Partial<SmtpSettings & { password: string }>) =>
+    request<SmtpSettings>("/settings/smtp", { method: "PUT", body: JSON.stringify(data) }),
+  testSmtp: (data?: { to?: string }) =>
+    request<{ detail: string }>("/settings/smtp/test", { method: "POST", body: JSON.stringify(data ?? {}) }),
+
+  // Email Templates
+  listEmailTemplates: () => request<EmailTemplate[]>("/settings/email-templates"),
+  getEmailTemplate: (slug: string) => request<EmailTemplate>(`/settings/email-templates/${slug}`),
+  updateEmailTemplate: (slug: string, data: { subject?: string; body_html?: string; body_text?: string }) =>
+    request<EmailTemplate>(`/settings/email-templates/${slug}`, { method: "PUT", body: JSON.stringify(data) }),
+  previewEmailTemplate: (slug: string, variables?: Record<string, string>) =>
+    request<{ subject: string; body_html: string }>(`/settings/email-templates/${slug}/preview`, { method: "POST", body: JSON.stringify({ variables }) }),
+
+  // Auth Settings
+  getAuthSettings: () => request<AuthSettingsConfig>("/settings/auth"),
+  updateAuthSettings: (data: Partial<AuthSettingsConfig>) =>
+    request<AuthSettingsConfig>("/settings/auth", { method: "PUT", body: JSON.stringify(data) }),
+
+  // Auth Providers (public)
+  getAuthProviders: () => request<AuthProvidersResponse>("/auth/providers"),
+
+  // OIDC Providers (admin)
+  listOidcProviders: () => request<OidcProviderListItem[]>("/settings/oidc-providers"),
+  getOidcProvider: (id: string) => request<OidcProvider>(`/settings/oidc-providers/${id}`),
+  createOidcProvider: (data: OidcProviderCreate) =>
+    request<OidcProvider>("/settings/oidc-providers", { method: "POST", body: JSON.stringify(data) }),
+  updateOidcProvider: (id: string, data: Partial<OidcProviderCreate>) =>
+    request<OidcProvider>(`/settings/oidc-providers/${id}`, { method: "PUT", body: JSON.stringify(data) }),
+  deleteOidcProvider: (id: string) =>
+    request<void>(`/settings/oidc-providers/${id}`, { method: "DELETE" }),
+  discoverOidcProvider: (id: string, discovery_url: string) =>
+    request<OidcDiscoverResponse>(`/settings/oidc-providers/${id}/discover`, { method: "POST", body: JSON.stringify({ discovery_url }) }),
+  discoverOidcNew: (discovery_url: string) =>
+    request<OidcDiscoverResponse>("/settings/oidc-providers/discover", { method: "POST", body: JSON.stringify({ discovery_url }) }),
+  testOidcProvider: (id: string) =>
+    request<Record<string, boolean | string>>(`/settings/oidc-providers/${id}/test`, { method: "POST" }),
 
   // Projects
   listProjects: () => request<Project[]>("/projects"),
@@ -276,7 +354,7 @@ export const api = {
     request<{ added: number }>("/file-exclusions/load-defaults", { method: "POST" }),
 
   getAiSettings: () => request<AiSettings>("/ai/settings"),
-  updateAiSettings: (data: { enabled?: boolean }) =>
+  updateAiSettings: (data: Partial<AiSettings>) =>
     request<AiSettings>("/ai/settings", { method: "PUT", body: JSON.stringify(data) }),
   getAiStatus: () => request<AiStatus>("/ai/settings/status"),
 
@@ -639,6 +717,48 @@ export const api = {
     `${API_BASE}/repositories/${repoId}/sast/report?format=${format}`,
   getProjectSastReportUrl: (projectId: string, format: string) =>
     `${API_BASE}/projects/${projectId}/sast/report?format=${format}`,
+
+  // Dependencies (SCA)
+  triggerDepScan: (repoId: string) =>
+    request<DepScanRun>(`/repositories/${repoId}/dependencies/scan`, { method: "POST", body: JSON.stringify({}) }),
+  listDepFindings: (repoId: string, params?: { severity?: string; ecosystem?: string; outdated?: boolean; vulnerable?: boolean; status?: string; file_path?: string }) =>
+    request<DepFinding[]>(`/repositories/${repoId}/dependencies/findings${buildQuery({
+      severity: params?.severity,
+      ecosystem: params?.ecosystem,
+      outdated: params?.outdated != null ? String(params.outdated) : undefined,
+      vulnerable: params?.vulnerable != null ? String(params.vulnerable) : undefined,
+      status: params?.status,
+      file_path: params?.file_path,
+    })}`),
+  getDepSummary: (repoId: string) =>
+    request<DepSummary>(`/repositories/${repoId}/dependencies/summary`),
+  listDepRuns: (repoId: string) =>
+    request<DepScanRun[]>(`/repositories/${repoId}/dependencies/runs`),
+  dismissDepFinding: (repoId: string, findingId: string) =>
+    request<DepFinding>(`/repositories/${repoId}/dependencies/findings/${findingId}/dismiss`, { method: "PATCH" }),
+
+  listProjectDepFindings: (projectId: string, params?: { severity?: string; ecosystem?: string; outdated?: boolean; vulnerable?: boolean; status?: string; file_path?: string }) =>
+    request<DepFinding[]>(`/projects/${projectId}/dependencies/findings${buildQuery({
+      severity: params?.severity,
+      ecosystem: params?.ecosystem,
+      outdated: params?.outdated != null ? String(params.outdated) : undefined,
+      vulnerable: params?.vulnerable != null ? String(params.vulnerable) : undefined,
+      status: params?.status,
+      file_path: params?.file_path,
+    })}`),
+  getProjectDepSummary: (projectId: string) =>
+    request<DepSummary>(`/projects/${projectId}/dependencies/summary`),
+  listProjectDepRuns: (projectId: string) =>
+    request<DepScanRun[]>(`/projects/${projectId}/dependencies/runs`),
+
+  getDepSettings: () => request<DepSettings>("/dependencies/settings"),
+  updateDepSettings: (data: { auto_dep_scan_on_sync: boolean }) =>
+    request<DepSettings>("/dependencies/settings", { method: "PUT", body: JSON.stringify(data) }),
+
+  getDepReportUrl: (repoId: string, format: string) =>
+    `${API_BASE}/repositories/${repoId}/dependencies/report?format=${format}`,
+  getProjectDepReportUrl: (projectId: string, format: string) =>
+    `${API_BASE}/projects/${projectId}/dependencies/report?format=${format}`,
 
   // Feedback
   listFeedback: (params?: { source?: string; status?: string; agent_slug?: string; category?: string; skip?: number; limit?: number }) => {

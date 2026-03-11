@@ -1,7 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
 import { Bot, ChevronDown, GripVertical, PanelRightOpen } from "lucide-react";
+import { useAuiState } from "@assistant-ui/react";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Thread } from "@/components/assistant-ui/thread";
@@ -10,6 +11,9 @@ import { ContributrChatRuntime, useChildAgentActivity } from "@/components/contr
 import { AgentActivityPanel } from "@/components/agent-activity-panel";
 import { useAgents } from "@/hooks/use-settings";
 import { cn } from "@/lib/utils";
+
+const AgentNameContext = createContext<string>("Contributr AI");
+export const useAgentName = () => useContext(AgentNameContext);
 
 interface ChatPanelProps {
   open: boolean;
@@ -21,10 +25,21 @@ const MAX_ACTIVITY_PCT = 70;
 const DEFAULT_ACTIVITY_PCT = 50;
 
 function ChatPanelInner() {
-  const { activityVisible, setActivityVisible } = useChildAgentActivity();
+  const { activityVisible, setActivityVisible, resetActivity } = useChildAgentActivity();
   const [activityPct, setActivityPct] = useState(DEFAULT_ACTIVITY_PCT);
   const containerRef = useRef<HTMLDivElement>(null);
   const dragging = useRef(false);
+
+  const mainThreadId = useAuiState(
+    (s: { threads?: { mainThreadId?: string } }) => s.threads?.mainThreadId,
+  );
+  const prevThreadId = useRef(mainThreadId);
+  useEffect(() => {
+    if (prevThreadId.current !== mainThreadId) {
+      prevThreadId.current = mainThreadId;
+      resetActivity();
+    }
+  }, [mainThreadId, resetActivity]);
 
   const toggleActivity = useCallback(() => {
     setActivityVisible(!activityVisible);
@@ -116,46 +131,51 @@ export function ChatPanel({ open, onClose }: ChatPanelProps) {
   const enabledAgents = agents.filter((a) => a.enabled);
   const [agentSlug, setAgentSlug] = useState("contribution-analyst");
 
+  const agentName =
+    enabledAgents.find((a) => a.slug === agentSlug)?.name ?? "Contributr AI";
+
   if (!open) return <div className="h-full bg-background" />;
 
   return (
     <ContributrChatRuntime agentSlug={agentSlug}>
-      <div className="flex h-full flex-col bg-background">
-        <div className="flex h-10 shrink-0 items-center justify-between border-b px-4">
-          <div className="flex items-center gap-2">
-            <Bot className="h-4 w-4 text-primary" />
-            {enabledAgents.length > 1 ? (
-              <Select value={agentSlug} onValueChange={setAgentSlug}>
-                <SelectTrigger className="h-7 w-auto border-0 bg-transparent py-0 px-1.5 text-sm font-semibold shadow-none focus:ring-0">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {enabledAgents.map((a) => (
-                    <SelectItem key={a.slug} value={a.slug}>
-                      {a.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            ) : (
-              <span className="text-sm font-semibold">
-                {enabledAgents[0]?.name || "Contributr AI"}
-              </span>
-            )}
+      <AgentNameContext.Provider value={agentName}>
+        <div className="flex h-full flex-col bg-background">
+          <div className="flex h-10 shrink-0 items-center justify-between border-b px-4">
+            <div className="flex items-center gap-2">
+              <Bot className="h-4 w-4 text-primary" />
+              {enabledAgents.length > 1 ? (
+                <Select value={agentSlug} onValueChange={setAgentSlug}>
+                  <SelectTrigger className="h-7 w-auto border-0 bg-transparent py-0 px-1.5 text-sm font-semibold shadow-none focus:ring-0">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {enabledAgents.map((a) => (
+                      <SelectItem key={a.slug} value={a.slug}>
+                        {a.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              ) : (
+                <span className="text-sm font-semibold">
+                  {enabledAgents[0]?.name || "Contributr AI"}
+                </span>
+              )}
+            </div>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7"
+              onClick={onClose}
+              title="Minimize"
+            >
+              <ChevronDown className="h-3.5 w-3.5" />
+            </Button>
           </div>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-7 w-7"
-            onClick={onClose}
-            title="Minimize"
-          >
-            <ChevronDown className="h-3.5 w-3.5" />
-          </Button>
-        </div>
 
-        <ChatPanelInner />
-      </div>
+          <ChatPanelInner />
+        </div>
+      </AgentNameContext.Provider>
     </ContributrChatRuntime>
   );
 }

@@ -62,6 +62,23 @@ export function useCreateUser() {
   });
 }
 
+export function useUpdateUser() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, data }: { id: string; data: Parameters<typeof api.updateUser>[1] }) =>
+      api.updateUser(id, data),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: queryKeys.users }); },
+  });
+}
+
+export function useResetUserMfa() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => api.resetUserMfa(id),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: queryKeys.users }); },
+  });
+}
+
 export function useDeleteUser() {
   const qc = useQueryClient();
   return useMutation({
@@ -256,5 +273,124 @@ export function useRegenerateKnowledgeGraph() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: queryKeys.knowledgeGraphs });
     },
+  });
+}
+
+// SMTP Settings
+export function useSmtpSettings() {
+  return useQuery({ queryKey: queryKeys.smtpSettings, queryFn: () => api.getSmtpSettings() });
+}
+
+export function useUpdateSmtpSettings() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (data: Parameters<typeof api.updateSmtpSettings>[0]) => api.updateSmtpSettings(data),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: queryKeys.smtpSettings }); },
+  });
+}
+
+export function useTestSmtp() {
+  return useMutation({ mutationFn: (data?: { to?: string }) => api.testSmtp(data) });
+}
+
+// Email Templates
+export function useEmailTemplates() {
+  return useQuery({ queryKey: queryKeys.emailTemplates, queryFn: () => api.listEmailTemplates() });
+}
+
+export function useUpdateEmailTemplate() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ slug, data }: { slug: string; data: { subject?: string; body_html?: string; body_text?: string } }) =>
+      api.updateEmailTemplate(slug, data),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: queryKeys.emailTemplates }); },
+  });
+}
+
+export function usePreviewEmailTemplate() {
+  return useMutation({
+    mutationFn: ({ slug, variables }: { slug: string; variables?: Record<string, string> }) =>
+      api.previewEmailTemplate(slug, variables),
+  });
+}
+
+// Auth Settings
+export function useAuthSettings() {
+  return useQuery({ queryKey: queryKeys.authSettings, queryFn: () => api.getAuthSettings() });
+}
+
+export function useUpdateAuthSettings() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (data: Parameters<typeof api.updateAuthSettings>[0]) => api.updateAuthSettings(data),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: queryKeys.authSettings }); },
+  });
+}
+
+// OIDC Providers
+export function useOidcProviders() {
+  return useQuery({ queryKey: queryKeys.oidcProviders, queryFn: () => api.listOidcProviders() });
+}
+
+export function useOidcProvider(id: string | null) {
+  return useQuery({
+    queryKey: queryKeys.oidcProviderDetail(id ?? ""),
+    queryFn: () => api.getOidcProvider(id!),
+    enabled: !!id,
+  });
+}
+
+export function useCreateOidcProvider() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (data: Parameters<typeof api.createOidcProvider>[0]) => api.createOidcProvider(data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: queryKeys.oidcProviders });
+      qc.invalidateQueries({ queryKey: queryKeys.authProviders });
+    },
+  });
+}
+
+export function useUpdateOidcProvider() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, data }: { id: string; data: Parameters<typeof api.updateOidcProvider>[1] }) =>
+      api.updateOidcProvider(id, data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: queryKeys.oidcProviders });
+      qc.invalidateQueries({ queryKey: queryKeys.authProviders });
+    },
+  });
+}
+
+export function useDeleteOidcProvider() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => api.deleteOidcProvider(id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: queryKeys.oidcProviders });
+      qc.invalidateQueries({ queryKey: queryKeys.authProviders });
+    },
+  });
+}
+
+export function useDiscoverOidc() {
+  return useMutation({
+    mutationFn: ({ id, discovery_url }: { id?: string; discovery_url: string }) =>
+      id ? api.discoverOidcProvider(id, discovery_url) : api.discoverOidcNew(discovery_url),
+  });
+}
+
+export function useTestOidcProvider() {
+  return useMutation({
+    mutationFn: (id: string) => api.testOidcProvider(id),
+  });
+}
+
+// Auth Providers (public, used on login page)
+export function useAuthProviders() {
+  return useQuery({
+    queryKey: queryKeys.authProviders,
+    queryFn: () => api.getAuthProviders(),
   });
 }

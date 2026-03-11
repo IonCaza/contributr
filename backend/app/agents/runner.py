@@ -14,6 +14,7 @@ from app.agents.llm.manager import build_llm_from_provider
 from app.agents.memory.cleanup import cleanup_checkpoint
 from app.agents.memory.extraction import extract_memories
 from app.agents.memory.tools import build_memory_tools
+from app.agents.settings_cache import get_memory_settings
 from app.agents.supervisor import build_delegation_tools
 from app.agents.registry import is_ai_enabled, get_agent_by_slug
 from app.agents.tools.chat_history import build_search_chat_history_tool
@@ -69,11 +70,13 @@ async def run_agent_stream(
     if not provider:
         raise RuntimeError("No LLM provider available — configure one in Settings > AI")
 
+    mem_settings = await get_memory_settings()
+
     extra_tools = []
     if session_id is not None:
         extra_tools.append(build_search_chat_history_tool(db, session_id))
         extra_tools.append(build_report_capability_gap_tool(session_id, agent_slug))
-    if user_id is not None:
+    if user_id is not None and mem_settings.memory_enabled:
         extra_tools.extend(build_memory_tools(user_id))
 
     is_supervisor = getattr(agent_config, "agent_type", "standard") == "supervisor"
@@ -132,6 +135,11 @@ async def run_agent_stream(
         elif kind == "on_chat_model_stream":
             chunk = event["data"]["chunk"]
             content = getattr(chunk, "content", "")
+            if isinstance(content, list):
+                content = "".join(
+                    c.get("text", "") if isinstance(c, dict) else str(c)
+                    for c in content
+                )
             if not isinstance(content, str) or not content:
                 continue
 
@@ -150,19 +158,32 @@ async def run_agent_stream(
                 yield {"type": "token", "content": content}
 
     if not collected:
-        result = await agent.ainvoke(
-            {"messages": [HumanMessage(content=user_input)]},
-            config=run_config,
-        )
-        last_msg = result["messages"][-1]
-        output = last_msg.content if hasattr(last_msg, "content") else "I wasn't able to generate a response."
-        yield {"type": "token", "content": output}
-        collected = output
+        try:
+            snapshot = await agent.aget_state(run_config)
+            if snapshot and snapshot.values:
+                msgs = snapshot.values.get("messages", [])
+                if msgs:
+                    last_msg = msgs[-1]
+                    raw = getattr(last_msg, "content", "")
+                    if isinstance(raw, list):
+                        raw = "".join(
+                            c.get("text", "") if isinstance(c, dict) else str(c)
+                            for c in raw
+                        )
+                    if raw:
+                        collected = raw
+                        yield {"type": "token", "content": collected}
+        except Exception:
+            logger.debug("Could not read checkpoint state for fallback")
+
+        if not collected:
+            collected = "I wasn't able to generate a response."
+            yield {"type": "token", "content": collected}
 
     llm = build_llm_from_provider(provider, streaming=False)
     await cleanup_checkpoint(agent, run_config, llm, agent_config, provider)
 
-    if user_id and collected:
+    if user_id and collected and mem_settings.memory_enabled and mem_settings.extraction_enabled:
         turn_msgs = [
             {"role": "user", "content": user_input},
             {"role": "assistant", "content": collected},

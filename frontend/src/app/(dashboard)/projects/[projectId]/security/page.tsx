@@ -1,6 +1,6 @@
 "use client";
 
-import { use, useState, useCallback, useEffect } from "react";
+import { use, useState, useCallback } from "react";
 import {
   ShieldAlert, ShieldCheck, AlertTriangle, AlertCircle, ChevronDown, ChevronRight,
   Play, Loader2, CheckCircle2, Info, FileCode, Bug, TrendingDown, EyeOff,
@@ -19,13 +19,17 @@ import {
 import {
   Collapsible, CollapsibleContent, CollapsibleTrigger,
 } from "@/components/ui/collapsible";
-import { useQueryClient } from "@tanstack/react-query";
 import {
   useProjectSastFindings,
   useProjectSastSummary,
   useProjectSastRuns,
+  useTriggerProjectSastScan,
+  useDismissProjectSastFinding,
+  useMarkProjectSastFalsePositive,
+  useAddProjectIgnoredRule,
 } from "@/hooks/use-sast";
-import { queryKeys } from "@/lib/query-keys";
+import { useProjectRepos } from "@/hooks/use-repos";
+import { useActiveRunTracking } from "@/hooks/use-active-run-tracking";
 import { api } from "@/lib/api-client";
 import { SyncLogViewer } from "@/components/sync-log-viewer";
 import { FindingsOverTimeChart } from "@/components/charts/findings-over-time-chart";
@@ -74,6 +78,7 @@ function SecurityScoreBanner({
   isLoading,
   lastRun,
   repos,
+  reposLoading,
   onScanRepo,
   scanningRepoId,
   projectId,
@@ -82,6 +87,7 @@ function SecurityScoreBanner({
   isLoading: boolean;
   lastRun: SastScanRun | undefined;
   repos: Repository[];
+  reposLoading: boolean;
   onScanRepo: (repoId: string) => void;
   scanningRepoId: string | null;
   projectId: string;
@@ -171,7 +177,7 @@ function SecurityScoreBanner({
               )}
             </Button>
           )}
-          {repos.length === 0 && isLoading && (
+          {repos.length === 0 && reposLoading && (
             <Skeleton className="h-9 w-24 rounded-md" />
           )}
           <DropdownMenu>
@@ -506,16 +512,11 @@ export default function SecurityPage({
   params: Promise<{ projectId: string }>;
 }) {
   const { projectId } = use(params);
-  const qc = useQueryClient();
   const [severityFilter, setSeverityFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
   const [scanningRepoId, setScanningRepoId] = useState<string | null>(null);
-  const [activeRunId, setActiveRunId] = useState<string | null>(null);
-  const [repos, setRepos] = useState<Repository[]>([]);
 
-  useEffect(() => {
-    api.listRepos(projectId).then(setRepos).catch(() => {});
-  }, [projectId]);
+  const { data: repos = [], isLoading: reposLoading } = useProjectRepos(projectId);
 
   const filters = {
     ...(severityFilter && { severity: severityFilter }),
@@ -527,61 +528,47 @@ export default function SecurityPage({
   const { data: runs, refetch: refetchRuns } = useProjectSastRuns(projectId);
 
   const lastRun = runs?.[0];
-  const isRunning = lastRun?.status === "running" || lastRun?.status === "queued";
+  const { activeRunId, startTracking, stopTracking } = useActiveRunTracking(lastRun);
 
-  useEffect(() => {
-    if (isRunning && lastRun && !activeRunId) {
-      setActiveRunId(lastRun.id);
-      setScanningRepoId(lastRun.repository_id);
-    }
-  }, [isRunning, lastRun, activeRunId]);
+  const scanMutation = useTriggerProjectSastScan(projectId);
+  const dismissMutation = useDismissProjectSastFinding(projectId);
+  const falsePositiveMutation = useMarkProjectSastFalsePositive(projectId);
+  const ignoreRuleMutation = useAddProjectIgnoredRule(projectId);
 
-  const handleScanRepo = useCallback(async (repoId: string) => {
+  const handleScanRepo = useCallback((repoId: string) => {
     if (scanningRepoId) return;
-    try {
-      setScanningRepoId(repoId);
-      const run = await api.triggerSastScan(repoId);
-      setActiveRunId(run.id);
-    } catch {
-      setScanningRepoId(null);
-    }
-  }, [scanningRepoId]);
+    setScanningRepoId(repoId);
+    scanMutation.mutate(repoId, {
+      onSuccess: (run) => startTracking(run.id),
+      onError: () => setScanningRepoId(null),
+    });
+  }, [scanningRepoId, scanMutation, startTracking]);
 
-  const handleDismiss = useCallback(async (findingId: string) => {
+  const handleDismiss = useCallback((findingId: string) => {
     const finding = findings?.find((f) => f.id === findingId);
     if (!finding) return;
-    await api.dismissSastFinding(finding.repository_id, findingId);
-    qc.invalidateQueries({ queryKey: queryKeys.sast.findings(projectId, "project") });
-    qc.invalidateQueries({ queryKey: queryKeys.sast.summary(projectId, "project") });
-  }, [findings, projectId, qc]);
+    dismissMutation.mutate({ repoId: finding.repository_id, findingId });
+  }, [findings, dismissMutation]);
 
-  const handleFalsePositive = useCallback(async (findingId: string) => {
+  const handleFalsePositive = useCallback((findingId: string) => {
     const finding = findings?.find((f) => f.id === findingId);
     if (!finding) return;
-    await api.markSastFalsePositive(finding.repository_id, findingId);
-    qc.invalidateQueries({ queryKey: queryKeys.sast.findings(projectId, "project") });
-    qc.invalidateQueries({ queryKey: queryKeys.sast.summary(projectId, "project") });
-  }, [findings, projectId, qc]);
+    falsePositiveMutation.mutate({ repoId: finding.repository_id, findingId });
+  }, [findings, falsePositiveMutation]);
 
   const logUrl = activeRunId && scanningRepoId
     ? `${api.getApiBase()}/repositories/${scanningRepoId}/sast/runs/${activeRunId}/logs`
     : null;
 
-  const handleIgnoreRule = useCallback(async (ruleId: string, repoId: string) => {
-    try {
-      await api.addRepoIgnoredRule(repoId, { rule_id: ruleId, reason: "Ignored from Security page" });
-      qc.invalidateQueries({ queryKey: queryKeys.sast.findings(projectId, "project") });
-      qc.invalidateQueries({ queryKey: queryKeys.sast.summary(projectId, "project") });
-    } catch { /* ignore conflict */ }
-  }, [projectId, qc]);
+  const handleIgnoreRule = useCallback((ruleId: string, repoId: string) => {
+    ignoreRuleMutation.mutate({ repoId, data: { rule_id: ruleId, reason: "Ignored from Security page" } });
+  }, [ignoreRuleMutation]);
 
   const handleLogsDone = useCallback(() => {
-    setActiveRunId(null);
+    stopTracking();
     setScanningRepoId(null);
     refetchRuns();
-    qc.invalidateQueries({ queryKey: queryKeys.sast.findings(projectId, "project") });
-    qc.invalidateQueries({ queryKey: queryKeys.sast.summary(projectId, "project") });
-  }, [projectId, qc, refetchRuns]);
+  }, [stopTracking, refetchRuns]);
 
   return (
     <div className="space-y-6">
@@ -590,6 +577,7 @@ export default function SecurityPage({
         isLoading={summaryLoading}
         lastRun={lastRun}
         repos={repos}
+        reposLoading={reposLoading}
         onScanRepo={handleScanRepo}
         scanningRepoId={scanningRepoId}
         projectId={projectId}

@@ -19,7 +19,6 @@ const NAV_ITEMS = [
   { href: "/projects", label: "Projects", icon: FolderGit2 },
   { href: "/contributors", label: "Contributors", icon: Users },
   { href: "/teams", label: "Teams", icon: Users2 },
-  { href: "/settings", label: "Settings", icon: Settings },
 ];
 
 interface SidebarNavProps {
@@ -125,6 +124,32 @@ export function SidebarNav({ aiEnabled, chatOpen, onChatToggle }: SidebarNavProp
               <span>AI Assistant</span>
             </Button>
           ))}
+        {(() => {
+          const active = pathname.startsWith("/settings");
+          const link = (
+            <Link
+              href="/settings"
+              className={cn(
+                "relative flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-all duration-150",
+                active
+                  ? "bg-sidebar-accent text-sidebar-accent-foreground"
+                  : "text-sidebar-foreground/70 hover:bg-sidebar-accent/50 hover:text-sidebar-accent-foreground",
+              )}
+            >
+              {active && (
+                <span className="absolute left-0 top-1/2 h-5 w-[3px] -translate-y-1/2 rounded-r-full bg-primary" />
+              )}
+              <Settings className="h-4 w-4 shrink-0" />
+              {!collapsed && <span>Settings</span>}
+            </Link>
+          );
+          return collapsed ? (
+            <Tooltip>
+              <TooltipTrigger asChild>{link}</TooltipTrigger>
+              <TooltipContent side="right">Settings</TooltipContent>
+            </Tooltip>
+          ) : link;
+        })()}
         <Button
           variant="ghost"
           size={collapsed ? "icon" : "default"}

@@ -1,20 +1,23 @@
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   AuiIf,
   ThreadListItemMorePrimitive,
   ThreadListItemPrimitive,
   ThreadListPrimitive,
+  useThreadListItemRuntime,
 } from "@assistant-ui/react";
 import {
   ArchiveIcon,
   ArchiveRestoreIcon,
   ChevronDownIcon,
   MoreHorizontalIcon,
+  PencilIcon,
   PlusIcon,
   TrashIcon,
 } from "lucide-react";
-import { type FC, useState } from "react";
+import { type FC, useRef, useState } from "react";
 
 export const ThreadList: FC = () => {
   return (
@@ -63,19 +66,53 @@ const ThreadListSkeleton: FC = () => {
 };
 
 const ThreadListItem: FC = () => {
+  const [editing, setEditing] = useState(false);
+
   return (
     <ThreadListItemPrimitive.Root className="aui-thread-list-item group flex h-9 items-center gap-2 rounded-lg transition-colors hover:bg-muted focus-visible:bg-muted focus-visible:outline-none data-active:bg-muted">
-      <ThreadListItemPrimitive.Trigger className="aui-thread-list-item-trigger flex h-full min-w-0 flex-1 items-center px-3 text-start text-sm">
-        <span className="aui-thread-list-item-title min-w-0 flex-1 truncate">
-          <ThreadListItemPrimitive.Title fallback="New Chat" />
-        </span>
-      </ThreadListItemPrimitive.Trigger>
-      <ThreadListItemMore />
+      {editing ? (
+        <RenameInput onDone={() => setEditing(false)} />
+      ) : (
+        <ThreadListItemPrimitive.Trigger className="aui-thread-list-item-trigger flex h-full min-w-0 flex-1 items-center px-3 text-start text-sm">
+          <span className="aui-thread-list-item-title min-w-0 flex-1 truncate">
+            <ThreadListItemPrimitive.Title fallback="New Chat" />
+          </span>
+        </ThreadListItemPrimitive.Trigger>
+      )}
+      <ThreadListItemMore onRename={() => setEditing(true)} />
     </ThreadListItemPrimitive.Root>
   );
 };
 
-const ThreadListItemMore: FC = () => {
+const RenameInput: FC<{ onDone: () => void }> = ({ onDone }) => {
+  const runtime = useThreadListItemRuntime();
+  const title = runtime.getState().title ?? "";
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  const commit = async () => {
+    const value = inputRef.current?.value.trim();
+    if (value && value !== title) {
+      await runtime.rename(value);
+    }
+    onDone();
+  };
+
+  return (
+    <Input
+      ref={inputRef}
+      defaultValue={title}
+      autoFocus
+      className="mx-2 h-6 flex-1 text-sm"
+      onBlur={commit}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") commit();
+        if (e.key === "Escape") onDone();
+      }}
+    />
+  );
+};
+
+const ThreadListItemMore: FC<{ onRename?: () => void }> = ({ onRename }) => {
   return (
     <ThreadListItemMorePrimitive.Root>
       <ThreadListItemMorePrimitive.Trigger asChild>
@@ -93,6 +130,13 @@ const ThreadListItemMore: FC = () => {
         align="start"
         className="aui-thread-list-item-more-content z-50 min-w-32 overflow-hidden rounded-md border bg-popover p-1 text-popover-foreground shadow-md"
       >
+        <ThreadListItemMorePrimitive.Item
+          className="aui-thread-list-item-more-item flex cursor-pointer select-none items-center gap-2 rounded-sm px-2 py-1.5 text-sm outline-none hover:bg-accent hover:text-accent-foreground focus:bg-accent focus:text-accent-foreground"
+          onClick={onRename}
+        >
+          <PencilIcon className="size-4" />
+          Rename
+        </ThreadListItemMorePrimitive.Item>
         <ThreadListItemPrimitive.Archive asChild>
           <ThreadListItemMorePrimitive.Item className="aui-thread-list-item-more-item flex cursor-pointer select-none items-center gap-2 rounded-sm px-2 py-1.5 text-sm outline-none hover:bg-accent hover:text-accent-foreground focus:bg-accent focus:text-accent-foreground">
             <ArchiveIcon className="size-4" />

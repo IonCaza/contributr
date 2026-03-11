@@ -10,7 +10,7 @@ export function QueryProvider({ children }: { children: React.ReactNode }) {
       {children}
       <ReactQueryDevtools
         initialIsOpen={false}
-        buttonPosition="bottom-right"
+        buttonPosition="top-right"
       />
     </QueryClientProvider>
   );

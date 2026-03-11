@@ -29,6 +29,7 @@ import {
 import {
   ArrowDownIcon,
   ArrowUpIcon,
+  BotIcon,
   CheckIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
@@ -41,6 +42,7 @@ import {
   ThumbsDownIcon,
 } from "lucide-react";
 import { type FC, useState } from "react";
+import { useAgentName } from "@/components/chat-panel";
 
 export const Thread: FC = () => {
   return (
@@ -204,11 +206,17 @@ const MessageError: FC = () => {
 };
 
 const AssistantMessage: FC = () => {
+  const agentName = useAgentName();
+
   return (
     <MessagePrimitive.Root
       className="aui-assistant-message-root fade-in slide-in-from-bottom-1 relative mx-auto w-full max-w-(--thread-max-width) animate-in py-3 duration-150"
       data-role="assistant"
     >
+      <div className="ml-2 mb-1 flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+        <BotIcon className="size-3.5" />
+        {agentName}
+      </div>
       <div className="aui-assistant-message-content wrap-break-word px-2 text-foreground leading-relaxed">
         <MessagePrimitive.Parts
           components={{

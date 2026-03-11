@@ -5,12 +5,143 @@ export interface User {
   full_name: string | null;
   is_admin: boolean;
   is_active: boolean;
+  auth_provider: string;
+  mfa_enabled: boolean;
+  mfa_method: string | null;
+  mfa_setup_complete: boolean;
+  mfa_setup_required: boolean;
 }
 
 export interface TokenResponse {
   access_token: string;
   refresh_token: string;
   token_type: string;
+}
+
+export interface MfaChallengeResponse {
+  requires_mfa: true;
+  mfa_token: string;
+  mfa_method: string | null;
+}
+
+export interface MfaSetupRequiredResponse {
+  requires_mfa_setup: true;
+  mfa_setup_token: string;
+}
+
+export type LoginResponse = TokenResponse | MfaChallengeResponse | MfaSetupRequiredResponse;
+
+export interface MfaTotpInitResponse {
+  secret: string;
+  provisioning_uri: string;
+  qr_code_base64: string;
+}
+
+export interface MfaSetupCompleteResponse {
+  recovery_codes: string[];
+  mfa_method: string;
+  access_token: string | null;
+  refresh_token: string | null;
+  token_type: string;
+}
+
+export interface SmtpSettings {
+  host: string;
+  port: number;
+  username: string;
+  has_password: boolean;
+  from_email: string;
+  from_name: string;
+  use_tls: boolean;
+  enabled: boolean;
+}
+
+export interface EmailTemplate {
+  id: string;
+  slug: string;
+  name: string;
+  subject: string;
+  body_html: string;
+  body_text: string;
+  variables: Record<string, { description: string; sample: string }>;
+  is_builtin: boolean;
+}
+
+export interface AuthSettingsConfig {
+  force_mfa_local_auth: boolean;
+  local_login_enabled: boolean;
+}
+
+export interface OidcProviderListItem {
+  id: string;
+  slug: string;
+  name: string;
+  provider_type: string;
+  enabled: boolean;
+}
+
+export interface ClaimMapping {
+  email: string;
+  name: string;
+  groups: string;
+  admin_groups: string[];
+}
+
+export interface OidcProvider {
+  id: string;
+  slug: string;
+  name: string;
+  provider_type: string;
+  client_id: string;
+  has_client_secret: boolean;
+  discovery_url: string | null;
+  authorization_url: string;
+  token_url: string;
+  userinfo_url: string | null;
+  jwks_url: string;
+  scopes: string;
+  claim_mapping: ClaimMapping;
+  auto_provision: boolean;
+  enabled: boolean;
+}
+
+export interface OidcProviderCreate {
+  name: string;
+  provider_type: string;
+  client_id: string;
+  client_secret?: string;
+  discovery_url?: string;
+  authorization_url?: string;
+  token_url?: string;
+  userinfo_url?: string;
+  jwks_url?: string;
+  scopes?: string;
+  claim_mapping?: Partial<ClaimMapping>;
+  auto_provision?: boolean;
+  enabled?: boolean;
+}
+
+export interface OidcDiscoverResponse {
+  authorization_endpoint: string;
+  token_endpoint: string;
+  userinfo_endpoint: string | null;
+  jwks_uri: string;
+  issuer: string;
+}
+
+export interface OidcProviderPublicItem {
+  slug: string;
+  name: string;
+  provider_type: string;
+}
+
+export interface AuthProvidersResponse {
+  local_login_enabled: boolean;
+  oidc_providers: OidcProviderPublicItem[];
+}
+
+export interface RecoveryCodesResponse {
+  recovery_codes: string[];
 }
 
 export interface Project {
@@ -209,11 +340,21 @@ export interface PaginatedCommits {
 
 export interface AiSettings {
   enabled: boolean;
+  memory_enabled: boolean;
+  memory_embedding_provider_id: string | null;
+  extraction_enabled: boolean;
+  extraction_provider_id: string | null;
+  extraction_enable_inserts: boolean;
+  extraction_enable_updates: boolean;
+  extraction_enable_deletes: boolean;
+  cleanup_threshold_ratio: number;
+  summary_token_ratio: number;
 }
 
 export interface AiStatus {
   enabled: boolean;
   configured: boolean;
+  memory_configured: boolean;
 }
 
 export interface LlmProvider {
@@ -924,6 +1065,69 @@ export interface SastIgnoredRule {
 
 export interface SastSettings {
   auto_sast_on_sync: boolean;
+}
+
+// ── Dependency Scanning (SCA) ───────────────────────────────────────
+
+export interface DepScanRun {
+  id: string;
+  repository_id: string;
+  project_id: string;
+  status: string;
+  started_at: string | null;
+  finished_at: string | null;
+  findings_count: number;
+  vulnerable_count: number;
+  outdated_count: number;
+  error_message: string | null;
+  created_at: string;
+}
+
+export interface DepFinding {
+  id: string;
+  scan_run_id: string;
+  repository_id: string;
+  project_id: string;
+  file_path: string;
+  file_type: string;
+  ecosystem: string;
+  package_name: string;
+  current_version: string | null;
+  latest_version: string | null;
+  is_outdated: boolean;
+  is_vulnerable: boolean;
+  is_direct: boolean;
+  severity: string;
+  vulnerabilities: Array<{
+    id: string;
+    summary: string;
+    severity: string;
+    fixed_version: string | null;
+    url: string;
+  }> | null;
+  license: string | null;
+  status: string;
+  first_detected_at: string;
+  last_detected_at: string;
+  dismissed_at: string | null;
+  dismissed_by_id: string | null;
+}
+
+export interface DepSummary {
+  total_packages: number;
+  vulnerable: number;
+  outdated: number;
+  up_to_date: number;
+  severity_critical: number;
+  severity_high: number;
+  severity_medium: number;
+  severity_low: number;
+  by_ecosystem: Record<string, number>;
+  by_file: Record<string, number>;
+}
+
+export interface DepSettings {
+  auto_dep_scan_on_sync: boolean;
 }
 
 export interface FeedbackItem {

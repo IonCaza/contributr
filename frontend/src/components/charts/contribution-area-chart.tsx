@@ -1,5 +1,6 @@
 "use client";
 
+import { useMemo } from "react";
 import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip } from "recharts";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
@@ -16,10 +17,26 @@ const COLORS = {
   commits: "var(--chart-1)",
 };
 
+function aggregateByDate(data: DataPoint[]): DataPoint[] {
+  const map = new Map<string, DataPoint>();
+  for (const d of data) {
+    const existing = map.get(d.date);
+    if (existing) {
+      existing.lines_added += d.lines_added;
+      existing.lines_deleted += d.lines_deleted;
+      existing.commits += d.commits;
+    } else {
+      map.set(d.date, { ...d });
+    }
+  }
+  return Array.from(map.values());
+}
+
 export function ContributionAreaChart({ data, title, seriesNames }: { data: DataPoint[]; title?: string; seriesNames?: { added?: string; deleted?: string } }) {
+  const aggregated = useMemo(() => aggregateByDate(data), [data]);
   const addedLabel = seriesNames?.added ?? "Lines added";
   const deletedLabel = seriesNames?.deleted ?? "Lines deleted";
-  const hideSeries2 = data.every((d) => d.lines_deleted === 0);
+  const hideSeries2 = aggregated.every((d) => d.lines_deleted === 0);
   return (
     <Card>
       {title && (
@@ -30,7 +47,7 @@ export function ContributionAreaChart({ data, title, seriesNames }: { data: Data
       <CardContent className={title ? "" : "pt-6"}>
         <div className="h-72">
           <ResponsiveContainer width="100%" height="100%">
-            <AreaChart data={data} margin={{ top: 5, right: 10, left: 0, bottom: 5 }}>
+            <AreaChart data={aggregated} margin={{ top: 5, right: 10, left: 0, bottom: 5 }}>
               <defs>
                 <linearGradient id="addedGrad" x1="0" y1="0" x2="0" y2="1">
                   <stop offset="0%" stopColor={COLORS.added} stopOpacity={0.4} />

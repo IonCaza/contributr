@@ -1,6 +1,7 @@
 "use client";
 
-import { Line, LineChart, CartesianGrid, XAxis, YAxis, ReferenceLine } from "recharts";
+import { useMemo } from "react";
+import { Line, LineChart, CartesianGrid, XAxis, YAxis, ReferenceLine, Label } from "recharts";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   ChartContainer,
@@ -29,6 +30,13 @@ export function SprintBurndownChart({
   data: BurndownPoint[];
   title?: string;
 }) {
+  const todayStr = useMemo(() => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  }, []);
+
+  const showToday = data.length >= 2 && todayStr >= data[0].date && todayStr <= data[data.length - 1].date;
+
   if (!data.length) return null;
 
   return (
@@ -43,6 +51,22 @@ export function SprintBurndownChart({
             <XAxis dataKey="date" tickLine={false} axisLine={false} />
             <YAxis tickLine={false} axisLine={false} />
             <ReferenceLine y={0} stroke="var(--border)" />
+            {showToday && (
+              <ReferenceLine
+                x={todayStr}
+                stroke="var(--primary)"
+                strokeDasharray="4 3"
+                strokeWidth={1.5}
+              >
+                <Label
+                  value="Today"
+                  position="top"
+                  fill="var(--primary)"
+                  fontSize={11}
+                  fontWeight={600}
+                />
+              </ReferenceLine>
+            )}
             <ChartTooltip content={<ChartTooltipContent />} />
             <ChartLegend content={<ChartLegendContent />} />
             <Line

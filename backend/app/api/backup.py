@@ -14,14 +14,19 @@ from app.db.models import (
     Repository, PullRequest, Review, SSHCredential, SyncJob,
     DailyContributorStats, CommitFile, FileExclusionPattern,
     PlatformCredential, AiSettings, LlmProvider,
-    AgentConfig, AgentToolAssignment,
+    AgentConfig, AgentToolAssignment, SupervisorMember,
     KnowledgeGraph, AgentKnowledgeGraphAssignment,
     ChatSession, ChatMessage,
     Team, TeamMember, Iteration,
-    WorkItem, WorkItemRelation, WorkItemCommit,
+    WorkItem, WorkItemRelation, WorkItemCommit, WorkItemActivity,
     DailyDeliveryStats, DeliverySyncJob, CustomFieldConfig,
     InsightRun, InsightFinding,
     ContributorInsightRun, ContributorInsightFinding,
+    TeamInsightRun, TeamInsightFinding,
+    SastScanRun, SastFinding, SastRuleProfile, SastIgnoredRule,
+    DepScanRun, DependencyFinding,
+    AgentActivity, Feedback,
+    SmtpSettings, EmailTemplate, AuthSettings, OidcProvider,
 )
 from app.db.models.project import Project, project_contributors
 from app.db.models.branch import commit_branches
@@ -29,7 +34,8 @@ from app.auth.dependencies import get_current_user
 
 router = APIRouter(prefix="/backup", tags=["backup"])
 
-DUMP_VERSION = 1
+DUMP_VERSION = 2
+ACCEPTED_VERSIONS = {1, 2}
 CHUNK_SIZE = 500
 
 TABLE_MODELS = [
@@ -40,6 +46,11 @@ TABLE_MODELS = [
     ("file_exclusion_patterns", FileExclusionPattern),
     ("llm_providers", LlmProvider),
     ("knowledge_graphs", KnowledgeGraph),
+    ("smtp_settings", SmtpSettings),
+    ("auth_settings", AuthSettings),
+    ("email_templates", EmailTemplate),
+    ("oidc_providers", OidcProvider),
+    ("sast_rule_profiles", SastRuleProfile),
     # Level 1 (depend on roots)
     ("platform_credentials", PlatformCredential),
     ("ssh_credentials", SSHCredential),
@@ -64,6 +75,11 @@ TABLE_MODELS = [
     ("team_members", TeamMember),
     ("agent_tool_assignments", AgentToolAssignment),
     ("agent_knowledge_graph_assignments", AgentKnowledgeGraphAssignment),
+    ("supervisor_members", SupervisorMember),
+    ("team_insight_runs", TeamInsightRun),
+    ("sast_scan_runs", SastScanRun),
+    ("sast_ignored_rules", SastIgnoredRule),
+    ("dep_scan_runs", DepScanRun),
     # Level 5 (depend on level 4)
     ("commit_files", CommitFile),
     ("reviews", Review),
@@ -71,11 +87,18 @@ TABLE_MODELS = [
     ("chat_sessions", ChatSession),
     ("insight_findings", InsightFinding),
     ("contributor_insight_findings", ContributorInsightFinding),
+    ("team_insight_findings", TeamInsightFinding),
+    ("sast_findings", SastFinding),
+    ("dependency_findings", DependencyFinding),
     # Level 6 (depend on level 5)
     ("work_item_relations", WorkItemRelation),
     ("work_item_commits", WorkItemCommit),
     ("daily_delivery_stats", DailyDeliveryStats),
     ("chat_messages", ChatMessage),
+    ("work_item_activities", WorkItemActivity),
+    # Level 7 (depend on level 6)
+    ("agent_activities", AgentActivity),
+    ("feedback", Feedback),
 ]
 
 ASSOC_TABLES = [
@@ -168,8 +191,8 @@ async def import_backup(
     except json.JSONDecodeError:
         raise HTTPException(status_code=400, detail="Invalid JSON file")
 
-    if data.get("version") != DUMP_VERSION:
-        raise HTTPException(status_code=400, detail=f"Unsupported backup version (expected {DUMP_VERSION})")
+    if data.get("version") not in ACCEPTED_VERSIONS:
+        raise HTTPException(status_code=400, detail=f"Unsupported backup version {data.get('version')} (accepted: {sorted(ACCEPTED_VERSIONS)})")
 
     tables = data.get("tables", {})
     counts: dict[str, dict] = {}

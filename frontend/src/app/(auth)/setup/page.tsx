@@ -23,8 +23,9 @@ export default function SetupPage() {
     setLoading(true);
     try {
       await api.register(form);
-      await login(form.username, form.password);
-      router.push("/dashboard");
+      const result = await login(form.username, form.password);
+      if (result === "ok") router.push("/dashboard");
+      else if (result === "mfa_setup_required") router.push("/mfa-setup");
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Registration failed");
     } finally {

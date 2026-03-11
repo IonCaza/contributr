@@ -1,6 +1,8 @@
 "use client";
 
 import { useState, useMemo, useEffect } from "react";
+import { useDebouncedValue } from "@/hooks/use-debounced-value";
+import { useActiveRunTracking } from "@/hooks/use-active-run-tracking";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import { useQueryClient } from "@tanstack/react-query";
@@ -8,7 +10,7 @@ import {
   RefreshCw, AlertCircle, CheckCircle2, Clock, Loader2, XCircle, Ban, Search,
   ArrowUpDown, ChevronDown, ChevronRight, FileCode2, Flame, GitBranch,
   GitCommitHorizontal, ShieldAlert, ShieldCheck, AlertTriangle, Info, Play,
-  EyeOff, ExternalLink, Download, Bug, TrendingDown,
+  EyeOff, ExternalLink, Download, Bug, TrendingDown, Package, ArrowUpCircle,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -41,10 +43,11 @@ import { SyncLogViewer, ViewLogsButton } from "@/components/sync-log-viewer";
 import { queryKeys } from "@/lib/query-keys";
 import { useRepo, useRepoStats, useSyncJobs, useRepoBranches, useRepoContributors, useFileTree, useRepoCommits, useSyncRepo, useCancelSync } from "@/hooks/use-repos";
 import { useSastSummary, useSastFindings, useSastRuns } from "@/hooks/use-sast";
+import { useDepSummary, useDepFindings, useDepRuns } from "@/hooks/use-dependencies";
 import { useDailyStats } from "@/hooks/use-daily-stats";
 import { useIterations } from "@/hooks/use-delivery";
 import { api } from "@/lib/api-client";
-import type { ContributorSummary, SastFinding, SastSummary as SastSummaryType } from "@/lib/types";
+import type { ContributorSummary, SastFinding, SastSummary as SastSummaryType, DepFinding, DepSummary as DepSummaryType } from "@/lib/types";
 
 const STATUS_ICON: Record<string, React.ReactNode> = {
   completed: <CheckCircle2 className="h-4 w-4 text-emerald-500" />,
@@ -73,19 +76,14 @@ export default function RepoDetailPage() {
   const [showInactive, setShowInactive] = useState(false);
   const [drillDown, setDrillDown] = useState<{ title: string; metric: string } | null>(null);
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
-  const [filesBranch, setFilesBranch] = useState<string | undefined>(undefined);
+  const [filesBranchOverride, setFilesBranchOverride] = useState<string | null>(null);
   const [activeJobId, setActiveJobId] = useState<string | null>(null);
   const [syncing, setSyncing] = useState(false);
   const [commitPage, setCommitPage] = useState(1);
   const [commitSearch, setCommitSearch] = useState("");
-  const [debouncedSearch, setDebouncedSearch] = useState("");
+  const debouncedSearch = useDebouncedValue(commitSearch);
   const [activeTab, setActiveTab] = useState<string>("commits");
   const [commitBranch, setCommitBranch] = useState<string | undefined>(undefined);
-
-  useEffect(() => {
-    const timer = setTimeout(() => setDebouncedSearch(commitSearch), 300);
-    return () => clearTimeout(timer);
-  }, [commitSearch]);
 
   const { data: iterations = [] } = useIterations(projectId);
 
@@ -114,6 +112,7 @@ export default function RepoDetailPage() {
   const { data: syncJobs = [] } = useSyncJobs(repoId, activeJobId);
   const { data: branches = [] } = useRepoBranches(repoId);
   const { data: contributors = [] } = useRepoContributors(repoId, branchParam);
+  const filesBranch = filesBranchOverride ?? repo?.default_branch ?? undefined;
   const { data: fileTree = [] } = useFileTree(repoId, filesBranch);
 
   const commitFilters = useMemo(() => ({
@@ -126,12 +125,6 @@ export default function RepoDetailPage() {
 
   const syncMutation = useSyncRepo();
   const cancelMutation = useCancelSync(repoId);
-
-  useEffect(() => {
-    if (repo && filesBranch === undefined) {
-      setFilesBranch(repo.default_branch || undefined);
-    }
-  }, [repo, filesBranch]);
 
   useEffect(() => {
     if (!activeJobId) return;
@@ -445,6 +438,7 @@ export default function RepoDetailPage() {
             <TabsTrigger value="files" className="gap-2"><FileCode2 className="h-4 w-4" /> Files</TabsTrigger>
             <TabsTrigger value="hotspots" className="gap-2"><Flame className="h-4 w-4" /> Hotspots</TabsTrigger>
             <TabsTrigger value="security" className="gap-2"><ShieldAlert className="h-4 w-4" /> Security</TabsTrigger>
+            <TabsTrigger value="dependencies" className="gap-2"><Package className="h-4 w-4" /> Dependencies</TabsTrigger>
           </TabsList>
 
           {activeTab === "commits" && branches.length > 0 && (
@@ -463,7 +457,7 @@ export default function RepoDetailPage() {
           )}
 
           {activeTab === "hotspots" && branches.length > 0 && (
-            <Select value={filesBranch ?? "__all__"} onValueChange={(v) => { setFilesBranch(v === "__all__" ? undefined : v); }}>
+            <Select value={filesBranch ?? "__all__"} onValueChange={(v) => { setFilesBranchOverride(v === "__all__" ? null : v); }}>
               <SelectTrigger className="w-48 h-9">
                 <GitBranch className="h-3.5 w-3.5 mr-1.5 text-muted-foreground" />
                 <SelectValue />
@@ -522,6 +516,10 @@ export default function RepoDetailPage() {
 
         <TabsContent value="security">
           <RepoSecuritySection repoId={repoId} />
+        </TabsContent>
+
+        <TabsContent value="dependencies">
+          <RepoDependenciesSection repoId={repoId} />
         </TabsContent>
       </Tabs>
 
@@ -671,28 +669,21 @@ function RepoSecuritySection({ repoId }: { repoId: string }) {
   const { data: summary } = useSastSummary(repoId);
   const { data: findings, isLoading } = useSastFindings(repoId);
   const { data: runs } = useSastRuns(repoId);
-  const [scanningRunId, setScanningRunId] = useState<string | null>(null);
   const [severityFilter, setSeverityFilter] = useState("");
 
   const lastRun = runs?.[0];
-  const isRunActive = lastRun?.status === "running" || lastRun?.status === "queued";
-
-  useEffect(() => {
-    if (isRunActive && lastRun && !scanningRunId) {
-      setScanningRunId(lastRun.id);
-    }
-  }, [isRunActive, lastRun, scanningRunId]);
+  const { activeRunId: scanningRunId, startTracking: startScanTracking, stopTracking: stopScanTracking } = useActiveRunTracking(lastRun);
 
   async function handleScan() {
     if (scanningRunId) return;
     try {
       const run = await api.triggerSastScan(repoId);
-      setScanningRunId(run.id);
+      startScanTracking(run.id);
     } catch { /* ignore */ }
   }
 
   function handleScanDone() {
-    setScanningRunId(null);
+    stopScanTracking();
     qc.invalidateQueries({ queryKey: queryKeys.sast.findings(repoId, "repo") });
     qc.invalidateQueries({ queryKey: queryKeys.sast.summary(repoId, "repo") });
     qc.invalidateQueries({ queryKey: queryKeys.sast.runs(repoId, "repo") });
@@ -910,6 +901,308 @@ function RepoSecuritySection({ repoId }: { repoId: string }) {
                     <TableCell className="max-w-xs truncate text-destructive">{run.error_message || "-"}</TableCell>
                     <TableCell>
                       <ViewLogsButton logUrl={`${api.getApiBase()}/repositories/${repoId}/sast/runs/${run.id}/logs`} />
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </Card>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Repo Dependencies Section
+// ---------------------------------------------------------------------------
+
+const DEP_ECOSYSTEM_COLORS: Record<string, string> = {
+  PyPI: "bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-300",
+  npm: "bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-300",
+  Go: "bg-cyan-100 text-cyan-800 dark:bg-cyan-900/40 dark:text-cyan-300",
+  "crates.io": "bg-orange-100 text-orange-800 dark:bg-orange-900/40 dark:text-orange-300",
+  Docker: "bg-sky-100 text-sky-800 dark:bg-sky-900/40 dark:text-sky-300",
+  Maven: "bg-purple-100 text-purple-800 dark:bg-purple-900/40 dark:text-purple-300",
+  NuGet: "bg-indigo-100 text-indigo-800 dark:bg-indigo-900/40 dark:text-indigo-300",
+  RubyGems: "bg-pink-100 text-pink-800 dark:bg-pink-900/40 dark:text-pink-300",
+};
+
+function RepoDependenciesSection({ repoId }: { repoId: string }) {
+  const qc = useQueryClient();
+  const { data: summary } = useDepSummary(repoId);
+  const { data: findings, isLoading } = useDepFindings(repoId);
+  const { data: runs } = useDepRuns(repoId);
+  const [viewFilter, setViewFilter] = useState<"all" | "vulnerable" | "outdated">("all");
+
+  const lastRun = runs?.[0];
+  const { activeRunId: scanningRunId, startTracking: startDepTracking, stopTracking: stopDepTracking } = useActiveRunTracking(lastRun);
+
+  async function handleScan() {
+    if (scanningRunId) return;
+    try {
+      const run = await api.triggerDepScan(repoId);
+      startDepTracking(run.id);
+    } catch { /* ignore */ }
+  }
+
+  function handleScanDone() {
+    stopDepTracking();
+    qc.invalidateQueries({ queryKey: queryKeys.dependencies.findings(repoId, "repo") });
+    qc.invalidateQueries({ queryKey: queryKeys.dependencies.summary(repoId, "repo") });
+    qc.invalidateQueries({ queryKey: queryKeys.dependencies.runs(repoId, "repo") });
+  }
+
+  async function handleDismiss(findingId: string) {
+    await api.dismissDepFinding(repoId, findingId);
+    qc.invalidateQueries({ queryKey: queryKeys.dependencies.findings(repoId, "repo") });
+    qc.invalidateQueries({ queryKey: queryKeys.dependencies.summary(repoId, "repo") });
+  }
+
+  function handleReportDownload(format: string) {
+    const token = api.getAuthToken();
+    const baseUrl = api.getDepReportUrl(repoId, format);
+    const url = token ? `${baseUrl}&token=${encodeURIComponent(token)}` : baseUrl;
+    window.open(url, "_blank");
+  }
+
+  const score = summary && summary.total_packages > 0
+    ? Math.round((summary.up_to_date / summary.total_packages) * 100)
+    : null;
+  const scoreColor = score === null ? "bg-muted" : score >= 80 ? "bg-emerald-500" : score >= 50 ? "bg-amber-500" : "bg-red-500";
+
+  const filteredFindings = findings?.filter((f) => {
+    if (viewFilter === "vulnerable") return f.is_vulnerable;
+    if (viewFilter === "outdated") return f.is_outdated;
+    return true;
+  });
+
+  const byFile = new Map<string, DepFinding[]>();
+  (filteredFindings || []).forEach((f) => {
+    const list = byFile.get(f.file_path) || [];
+    list.push(f);
+    byFile.set(f.file_path, list);
+  });
+
+  return (
+    <div className="space-y-4">
+      {/* Score banner + actions */}
+      <Card>
+        <CardContent className="flex items-center justify-between py-4 px-6 gap-4">
+          <div className="flex items-center gap-4">
+            <div className={`h-12 w-12 rounded-full ${scoreColor} flex items-center justify-center`}>
+              <span className="text-white font-bold text-lg">{score ?? "?"}</span>
+            </div>
+            <div>
+              <p className="font-semibold text-lg">Dependency Health</p>
+              <p className="text-sm text-muted-foreground">
+                {lastRun ? `Last scan: ${formatRelative(lastRun.created_at)}` : "No scans yet"}
+              </p>
+            </div>
+            {score !== null && (
+              <div className="hidden sm:flex items-center gap-1 ml-4">
+                <div className="h-2 w-48 rounded-full bg-muted overflow-hidden">
+                  <div className={`h-full rounded-full transition-all ${scoreColor}`} style={{ width: `${score}%` }} />
+                </div>
+                <span className="text-xs text-muted-foreground ml-1">{score}% healthy</span>
+              </div>
+            )}
+          </div>
+          <div className="flex items-center gap-2">
+            <Button size="sm" onClick={handleScan} disabled={!!scanningRunId}>
+              {scanningRunId ? (
+                <><Loader2 className="h-4 w-4 animate-spin mr-1" />Scanning...</>
+              ) : (
+                <><Play className="h-4 w-4 mr-1" />Run Scan</>
+              )}
+            </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="outline" size="sm"><Download className="h-4 w-4 mr-1" /> Report</Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem onClick={() => handleReportDownload("json")}>Download JSON</DropdownMenuItem>
+                <DropdownMenuItem onClick={() => handleReportDownload("csv")}>Download CSV</DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Scan log viewer */}
+      {scanningRunId && (
+        <SyncLogViewer
+          logUrl={`${api.getApiBase()}/repositories/${repoId}/dependencies/runs/${scanningRunId}/logs`}
+          compact
+          title="Dependency Scan Logs"
+          onDone={handleScanDone}
+        />
+      )}
+
+      {/* Summary cards */}
+      {summary && (
+        <div className="grid gap-4 grid-cols-2 md:grid-cols-4">
+          <Card>
+            <CardContent className="flex items-center gap-3 py-4 px-4">
+              <Package className="h-7 w-7 text-muted-foreground" />
+              <div>
+                <p className="text-2xl font-bold">{summary.total_packages}</p>
+                <p className="text-xs text-muted-foreground">Total Packages</p>
+              </div>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardContent className="flex items-center gap-3 py-4 px-4">
+              <ShieldAlert className="h-7 w-7 text-red-500" />
+              <div>
+                <p className="text-2xl font-bold text-red-600">{summary.vulnerable}</p>
+                <p className="text-xs text-muted-foreground">Vulnerable</p>
+              </div>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardContent className="flex items-center gap-3 py-4 px-4">
+              <ArrowUpCircle className="h-7 w-7 text-amber-500" />
+              <div>
+                <p className="text-2xl font-bold text-amber-600">{summary.outdated}</p>
+                <p className="text-xs text-muted-foreground">Outdated</p>
+              </div>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardContent className="flex items-center gap-3 py-4 px-4">
+              <CheckCircle2 className="h-7 w-7 text-emerald-500" />
+              <div>
+                <p className="text-2xl font-bold text-emerald-600">{summary.up_to_date}</p>
+                <p className="text-xs text-muted-foreground">Up to Date</p>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      )}
+
+      {/* View filter */}
+      <div className="flex items-center gap-1 rounded-lg bg-muted p-1 w-fit">
+        {([
+          { v: "all" as const, l: "All" },
+          { v: "vulnerable" as const, l: "Vulnerable" },
+          { v: "outdated" as const, l: "Outdated" },
+        ]).map((s) => (
+          <button
+            key={s.v}
+            onClick={() => setViewFilter(s.v)}
+            className={`px-2.5 py-1 text-xs font-medium rounded-md transition-colors ${
+              viewFilter === s.v ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            {s.l}
+          </button>
+        ))}
+      </div>
+
+      {/* Findings grouped by file */}
+      {isLoading ? (
+        <div className="flex items-center justify-center py-12">
+          <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+        </div>
+      ) : byFile.size > 0 ? (
+        <div className="space-y-4">
+          {Array.from(byFile.entries()).map(([filePath, deps]) => (
+            <Card key={filePath}>
+              <CardHeader className="py-3 px-4">
+                <CardTitle className="text-sm font-medium font-mono flex items-center gap-2">
+                  <FileCode2 className="h-4 w-4 text-muted-foreground" />
+                  {filePath}
+                  <Badge variant="outline" className={`text-xs ml-2 ${DEP_ECOSYSTEM_COLORS[deps[0]?.ecosystem] || ""}`}>
+                    {deps[0]?.ecosystem}
+                  </Badge>
+                  <span className="text-muted-foreground font-normal ml-auto">{deps.length} packages</span>
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="pt-0 px-4 pb-3">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Package</TableHead>
+                      <TableHead>Current</TableHead>
+                      <TableHead>Latest</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead className="w-16"></TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {deps.map((d) => (
+                      <TableRow key={d.id}>
+                        <TableCell className="font-medium">{d.package_name}</TableCell>
+                        <TableCell className="font-mono text-xs">{d.current_version || "—"}</TableCell>
+                        <TableCell className="font-mono text-xs">{d.latest_version || "—"}</TableCell>
+                        <TableCell>
+                          {d.is_vulnerable ? (
+                            <Badge variant="destructive" className="text-xs">
+                              {(d.vulnerabilities?.length || 0)} vuln{(d.vulnerabilities?.length || 0) !== 1 ? "s" : ""}
+                            </Badge>
+                          ) : d.is_outdated ? (
+                            <Badge variant="secondary" className="text-xs">outdated</Badge>
+                          ) : (
+                            <Badge variant="outline" className="text-xs text-emerald-600">up to date</Badge>
+                          )}
+                        </TableCell>
+                        <TableCell>
+                          <Button variant="ghost" size="sm" onClick={() => handleDismiss(d.id)}>
+                            <EyeOff className="h-3.5 w-3.5" />
+                          </Button>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+      ) : (
+        <Card>
+          <CardContent className="flex flex-col items-center justify-center py-12 text-muted-foreground">
+            <Package className="h-10 w-10 mb-2 text-emerald-500" />
+            <p className="font-medium">No dependency findings</p>
+            <p className="text-sm mt-1">
+              {runs?.length ? "No dependency issues found." : "Run a scan to analyze dependencies."}
+            </p>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Scan history */}
+      {runs && runs.length > 0 && (
+        <div>
+          <h2 className="mb-3 text-xl font-semibold">Scan History</h2>
+          <Card>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Status</TableHead>
+                  <TableHead>Started</TableHead>
+                  <TableHead>Packages</TableHead>
+                  <TableHead>Vulnerable</TableHead>
+                  <TableHead>Outdated</TableHead>
+                  <TableHead>Error</TableHead>
+                  <TableHead className="w-16"></TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {runs.slice(0, 10).map((run) => (
+                  <TableRow key={run.id}>
+                    <TableCell className="flex items-center gap-2">
+                      {SCAN_STATUS_ICON[run.status] || null}
+                      <span className="capitalize">{run.status}</span>
+                    </TableCell>
+                    <TableCell>{run.created_at ? new Date(run.created_at).toLocaleString() : "-"}</TableCell>
+                    <TableCell>{run.findings_count}</TableCell>
+                    <TableCell>{run.vulnerable_count}</TableCell>
+                    <TableCell>{run.outdated_count}</TableCell>
+                    <TableCell className="max-w-xs truncate text-destructive">{run.error_message || "-"}</TableCell>
+                    <TableCell>
+                      <ViewLogsButton logUrl={`${api.getApiBase()}/repositories/${repoId}/dependencies/runs/${run.id}/logs`} />
                     </TableCell>
                   </TableRow>
                 ))}

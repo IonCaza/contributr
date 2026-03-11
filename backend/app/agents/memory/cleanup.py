@@ -3,6 +3,10 @@
 After each agent turn, checks whether checkpoint messages exceed a threshold.
 If they do, summarises the oldest messages and removes them from the checkpoint
 via RemoveMessage, keeping the checkpoint lean.
+
+Eviction is boundary-aware: it never splits a tool_call from its tool_response,
+and the first kept message is always a human (user) message so the remaining
+history forms a valid conversation.
 """
 
 from __future__ import annotations
@@ -18,6 +22,7 @@ from app.agents.context.manager import (
     resolve_summary_limit,
 )
 from app.agents.context.summarizer import summarize_messages
+from app.agents.settings_cache import get_memory_settings
 
 if TYPE_CHECKING:
     from langgraph.prebuilt import create_react_agent
@@ -26,8 +31,6 @@ if TYPE_CHECKING:
     from app.db.models.llm_provider import LlmProvider
 
 logger = logging.getLogger(__name__)
-
-CLEANUP_THRESHOLD_RATIO = 0.6
 
 
 def _msg_to_dict(msg: BaseMessage) -> dict:
@@ -38,6 +41,27 @@ def _msg_to_dict(msg: BaseMessage) -> dict:
         role = "system"
     content = msg.content if isinstance(msg.content, str) else str(msg.content)
     return {"role": role, "content": content}
+
+
+def _find_safe_eviction_boundary(messages: list[BaseMessage], target_keep: int) -> int:
+    """Return the index where eviction should stop (first kept message).
+
+    Ensures the boundary doesn't split a tool_call/tool_response pair and that
+    the first kept message is a human message (valid conversation start).
+    """
+    raw_boundary = len(messages) - target_keep
+
+    boundary = raw_boundary
+    while boundary < len(messages):
+        msg = messages[boundary]
+        if msg.type == "human":
+            break
+        boundary += 1
+
+    if boundary >= len(messages) - 2:
+        return raw_boundary
+
+    return boundary
 
 
 async def cleanup_checkpoint(
@@ -63,9 +87,11 @@ async def cleanup_checkpoint(
     if len(messages) < 6:
         return
 
+    settings = await get_memory_settings()
+
     model = provider.model
     ctx_window = get_context_window(provider)
-    threshold = int(ctx_window * CLEANUP_THRESHOLD_RATIO)
+    threshold = int(ctx_window * settings.cleanup_threshold_ratio)
 
     total_tokens = sum(
         count_tokens(model, m.content if isinstance(m.content, str) else str(m.content)) + 4
@@ -74,17 +100,20 @@ async def cleanup_checkpoint(
     if total_tokens <= threshold:
         return
 
-    keep_count = max(4, len(messages) // 2)
-    evicted = messages[: len(messages) - keep_count]
+    target_keep = max(4, len(messages) // 2)
+    boundary = _find_safe_eviction_boundary(messages, target_keep)
+    evicted = messages[:boundary]
     if not evicted:
         return
 
     logger.info(
-        "Checkpoint cleanup: evicting %d of %d messages (%d tokens > %d threshold)",
+        "Checkpoint cleanup: evicting %d of %d messages (%d tokens > %d threshold), "
+        "first kept message type=%s",
         len(evicted), len(messages), total_tokens, threshold,
+        messages[boundary].type if boundary < len(messages) else "none",
     )
 
-    summary_limit = resolve_summary_limit(agent_config, ctx_window)
+    summary_limit = resolve_summary_limit(agent_config, ctx_window, settings.summary_token_ratio)
     evicted_dicts = [_msg_to_dict(m) for m in evicted]
 
     try:

@@ -46,6 +46,7 @@ async def init_memory_pool(
         min_size=2,
         max_size=10,
         kwargs={"autocommit": True, "row_factory": dict_row},
+        open=False,
     )
     await _pool.open()
 

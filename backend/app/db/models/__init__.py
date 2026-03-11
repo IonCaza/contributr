@@ -28,9 +28,14 @@ from app.db.models.insight import InsightRun, InsightFinding
 from app.db.models.contributor_insight import ContributorInsightRun, ContributorInsightFinding
 from app.db.models.team_insight import TeamInsightRun, TeamInsightFinding
 from app.db.models.sast import SastScanRun, SastFinding, SastRuleProfile, SastIgnoredRule
+from app.db.models.dependency import DepScanRun, DependencyFinding
 from app.db.models.work_item_activity import WorkItemActivity
 from app.db.models.agent_activity import AgentActivity
 from app.db.models.feedback import Feedback, FeedbackSource, FeedbackStatus
+from app.db.models.smtp_settings import SmtpSettings
+from app.db.models.email_template import EmailTemplate
+from app.db.models.auth_settings import AuthSettings
+from app.db.models.oidc_provider import OidcProvider
 
 __all__ = [
     "User",
@@ -77,9 +82,15 @@ __all__ = [
     "SastFinding",
     "SastRuleProfile",
     "SastIgnoredRule",
+    "DepScanRun",
+    "DependencyFinding",
     "WorkItemActivity",
     "AgentActivity",
     "Feedback",
     "FeedbackSource",
     "FeedbackStatus",
+    "SmtpSettings",
+    "EmailTemplate",
+    "AuthSettings",
+    "OidcProvider",
 ]

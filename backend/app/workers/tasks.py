@@ -269,6 +269,22 @@ async def _run_sync(repo_id: str, job_id: str) -> None:
                 except Exception:
                     logger.warning("Auto SAST scan trigger failed", exc_info=True)
 
+            if settings.auto_dep_scan_on_sync:
+                try:
+                    from app.db.models.dependency import DepScanRun, DepScanStatus
+                    dep_run = DepScanRun(
+                        repository_id=repo.id,
+                        project_id=repo.project_id,
+                        status=DepScanStatus.QUEUED,
+                    )
+                    db.add(dep_run)
+                    await db.commit()
+                    await db.refresh(dep_run)
+                    run_dependency_scan.delay(str(dep_run.id), str(repo.id))
+                    slog.info("dep_scan", "Dependency scan queued automatically")
+                except Exception:
+                    logger.warning("Auto dependency scan trigger failed", exc_info=True)
+
             slog.complete()
 
         except SyncCancelled:
@@ -721,4 +737,87 @@ async def _run_sast_scan(scan_id: str, repository_id: str) -> None:
 def run_sast_scan(scan_id: str, repository_id: str) -> dict:
     logger.info("Celery task run_sast_scan: scan=%s repo=%s", scan_id, repository_id)
     asyncio.run(_run_sast_scan(scan_id, repository_id))
+    return {"scan_id": scan_id, "repository_id": repository_id}
+
+
+# ---------------------------------------------------------------------------
+# Dependency scan
+# ---------------------------------------------------------------------------
+
+async def _run_dependency_scan(scan_id: str, repository_id: str) -> None:
+    from app.db.models.dependency import DepScanRun, DepScanStatus
+    from app.services.dependency_scanner import scan_repository_dependencies
+    from app.services.sync_logger import SyncLogger
+
+    slog = SyncLogger(f"dep-{scan_id}")
+
+    Session = _get_session()
+    async with Session() as db:
+        scan_run = await db.get(DepScanRun, uuid.UUID(scan_id))
+        if not scan_run:
+            logger.error("DepScanRun %s not found", scan_id)
+            slog.error("init", f"DepScanRun {scan_id} not found")
+            slog.fail("Scan run not found")
+            slog.close()
+            return
+
+        try:
+            scan_run.status = DepScanStatus.RUNNING
+            scan_run.started_at = datetime.now(timezone.utc)
+            await db.commit()
+
+            repo = await db.get(Repository, uuid.UUID(repository_id))
+            if not repo:
+                raise FileNotFoundError(f"Repository {repository_id} not found")
+
+            slog.info("init", f"Starting dependency scan for repository {repo.name}")
+
+            count = await scan_repository_dependencies(db, repo, scan_run, slog=slog)
+
+            scan_run.status = DepScanStatus.COMPLETED
+            scan_run.finished_at = datetime.now(timezone.utc)
+            await db.commit()
+
+            slog.info("done", f"Dependency scan complete: {count} findings")
+            slog.complete()
+
+        except Exception as e:
+            logger.exception("DepScanRun %s failed: %s", scan_id, e)
+            slog.fail(str(e)[:500])
+            await db.rollback()
+            scan_run = await db.get(DepScanRun, uuid.UUID(scan_id))
+            if scan_run:
+                scan_run.status = DepScanStatus.FAILED
+                scan_run.error_message = str(e)[:2000]
+                scan_run.finished_at = datetime.now(timezone.utc)
+                await db.commit()
+        finally:
+            slog.close()
+
+
+async def _mark_dep_scan_failed(scan_id: str, error: str) -> None:
+    from app.db.models.dependency import DepScanRun, DepScanStatus
+    Session = _get_session()
+    async with Session() as db:
+        scan_run = await db.get(DepScanRun, uuid.UUID(scan_id))
+        if scan_run and scan_run.status in (DepScanStatus.QUEUED, DepScanStatus.RUNNING):
+            scan_run.status = DepScanStatus.FAILED
+            scan_run.error_message = f"Task failed unexpectedly: {error[:2000]}"
+            scan_run.finished_at = datetime.now(timezone.utc)
+            await db.commit()
+
+
+class _DepScanTask(celery.Task):
+    def on_failure(self, exc, task_id, args, kwargs, einfo):
+        if args:
+            try:
+                asyncio.run(_mark_dep_scan_failed(args[0], str(exc)))
+            except Exception:
+                logger.exception("on_failure hook could not mark dep scan as failed")
+
+
+@celery.task(name="run_dependency_scan", base=_DepScanTask)
+def run_dependency_scan(scan_id: str, repository_id: str) -> dict:
+    logger.info("Celery task run_dependency_scan: scan=%s repo=%s", scan_id, repository_id)
+    asyncio.run(_run_dependency_scan(scan_id, repository_id))
     return {"scan_id": scan_id, "repository_id": repository_id}

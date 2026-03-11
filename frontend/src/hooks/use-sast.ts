@@ -91,6 +91,52 @@ export function useProjectSastRuns(projectId: string) {
   });
 }
 
+export function useTriggerProjectSastScan(projectId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (repoId: string) => api.triggerSastScan(repoId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: queryKeys.sast.runs(projectId, "project") });
+    },
+  });
+}
+
+export function useDismissProjectSastFinding(projectId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ repoId, findingId }: { repoId: string; findingId: string }) =>
+      api.dismissSastFinding(repoId, findingId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: queryKeys.sast.findings(projectId, "project") });
+      qc.invalidateQueries({ queryKey: queryKeys.sast.summary(projectId, "project") });
+    },
+  });
+}
+
+export function useMarkProjectSastFalsePositive(projectId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ repoId, findingId }: { repoId: string; findingId: string }) =>
+      api.markSastFalsePositive(repoId, findingId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: queryKeys.sast.findings(projectId, "project") });
+      qc.invalidateQueries({ queryKey: queryKeys.sast.summary(projectId, "project") });
+    },
+  });
+}
+
+export function useAddProjectIgnoredRule(projectId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ repoId, data }: { repoId: string; data: { rule_id: string; reason?: string } }) =>
+      api.addRepoIgnoredRule(repoId, data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: queryKeys.sast.findings(projectId, "project") });
+      qc.invalidateQueries({ queryKey: queryKeys.sast.summary(projectId, "project") });
+    },
+  });
+}
+
 // ── Rule Profiles ───────────────────────────────────────────────────
 
 export function useSastProfiles() {

@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useRef } from "react";
-import { Key, Users, Plus, Trash2, Copy, Check, Download, Upload, Database, Loader2, CheckCircle2, AlertCircle, Bot, Eye, EyeOff, FileX2, ShieldCheck, ShieldAlert, Play, Pencil, Cpu, Wrench, Star, ListFilter, Search, RefreshCw, CalendarRange, MessageSquareWarning } from "lucide-react";
+import { useState, useRef, useEffect, useMemo } from "react";
+import { Key, Users, Plus, Trash2, Copy, Check, Download, Upload, Database, Loader2, CheckCircle2, AlertCircle, Bot, Eye, EyeOff, FileX2, ShieldCheck, ShieldAlert, Play, Pencil, Cpu, Wrench, Star, ListFilter, Search, RefreshCw, CalendarRange, MessageSquareWarning, Lock, Bell, Send, Smartphone, Mail, Globe, Shield, Zap, ExternalLink, ChevronRight, Brain, ChevronDown, Info } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -11,26 +11,32 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
+import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { useAuth } from "@/lib/auth-context";
 import { api } from "@/lib/api-client";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { ConfirmDialog } from "@/components/confirm-dialog";
-import type { LlmProvider, AgentConfig, KnowledgeGraph, DiscoveredField, SastRuleProfile } from "@/lib/types";
+import type { LlmProvider, AgentConfig, KnowledgeGraph, DiscoveredField, SastRuleProfile, EmailTemplate, OidcProvider, OidcProviderCreate } from "@/lib/types";
 import { useProjects } from "@/hooks/use-projects";
 import { useCustomFields, useDiscoverCustomFields, useBulkUpsertCustomFields, useDeleteCustomField } from "@/hooks/use-custom-fields";
 import { KnowledgeGraphEditor } from "@/components/knowledge-graph-editor";
 import {
   useSSHKeys, useCreateSSHKey, useDeleteSSHKey,
   usePlatformCredentials, useCreatePlatformCredential, useDeletePlatformCredential, useTestPlatformCredential,
-  useUsers, useCreateUser, useDeleteUser,
+  useUsers, useCreateUser, useUpdateUser, useResetUserMfa, useDeleteUser,
   useFileExclusions, useCreateFileExclusion, useUpdateFileExclusion, useDeleteFileExclusion, useLoadDefaultExclusions,
   useAiSettings, useUpdateAiSettings,
   useLlmProviders, useCreateLlmProvider, useUpdateLlmProvider, useDeleteLlmProvider,
   useAgents, useCreateAgent, useUpdateAgent, useDeleteAgent,
   useAiTools,
   useKnowledgeGraphs, useKnowledgeGraph, useCreateKnowledgeGraph, useUpdateKnowledgeGraph, useDeleteKnowledgeGraph, useRegenerateKnowledgeGraph,
+  useSmtpSettings, useUpdateSmtpSettings, useTestSmtp,
+  useEmailTemplates, useUpdateEmailTemplate, usePreviewEmailTemplate,
+  useAuthSettings, useUpdateAuthSettings,
+  useOidcProviders, useOidcProvider, useCreateOidcProvider, useUpdateOidcProvider, useDeleteOidcProvider,
+  useDiscoverOidc, useTestOidcProvider,
 } from "@/hooks/use-settings";
 import {
   useSastProfiles, useCreateSastProfile, useUpdateSastProfile, useDeleteSastProfile,
@@ -39,6 +45,7 @@ import {
 } from "@/hooks/use-sast";
 import { useFeedback, useUpdateFeedback, useDeleteFeedback } from "@/hooks/use-feedback";
 import type { FeedbackItem } from "@/lib/types";
+import { MfaSetupDialog } from "@/components/mfa-setup-dialog";
 
 function CreateKnowledgeGraphDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
   const [form, setForm] = useState({ name: "", description: "", generation_mode: "schema_and_entities" });
@@ -116,6 +123,809 @@ const WELL_KNOWN_RULESETS = [
   { id: "p/go", label: "Go", desc: "Go security rules" },
   { id: "p/docker", label: "Docker", desc: "Dockerfile misconfigurations" },
 ];
+
+function OidcProviderDialog({ open, onOpenChange, editId }: { open: boolean; onOpenChange: (open: boolean) => void; editId: string | null }) {
+  const { data: existing } = useOidcProvider(editId);
+  const createProvider = useCreateOidcProvider();
+  const updateProvider = useUpdateOidcProvider();
+  const discoverOidc = useDiscoverOidc();
+  const testProvider = useTestOidcProvider();
+
+  const [step, setStep] = useState(0);
+  const [providerType, setProviderType] = useState<string>("keycloak");
+  const [form, setForm] = useState({
+    name: "",
+    client_id: "",
+    client_secret: "",
+    discovery_url: "",
+    authorization_url: "",
+    token_url: "",
+    userinfo_url: "",
+    jwks_url: "",
+    scopes: "openid profile email",
+    email_claim: "email",
+    name_claim: "name",
+    groups_claim: "groups",
+    admin_groups: "",
+    auto_provision: true,
+    enabled: false,
+    realm_url: "",
+    tenant_id: "",
+  });
+  const [discoverError, setDiscoverError] = useState("");
+  const [testResult, setTestResult] = useState<Record<string, boolean | string> | null>(null);
+
+  useEffect(() => {
+    if (editId && existing) {
+      setProviderType(existing.provider_type);
+      setForm({
+        name: existing.name,
+        client_id: existing.client_id,
+        client_secret: "",
+        discovery_url: existing.discovery_url ?? "",
+        authorization_url: existing.authorization_url,
+        token_url: existing.token_url,
+        userinfo_url: existing.userinfo_url ?? "",
+        jwks_url: existing.jwks_url,
+        scopes: existing.scopes,
+        email_claim: existing.claim_mapping?.email ?? "email",
+        name_claim: existing.claim_mapping?.name ?? "name",
+        groups_claim: existing.claim_mapping?.groups ?? "groups",
+        admin_groups: (existing.claim_mapping?.admin_groups ?? []).join(", "),
+        auto_provision: existing.auto_provision,
+        enabled: existing.enabled,
+        realm_url: "",
+        tenant_id: "",
+      });
+      setStep(1);
+    } else {
+      setStep(0);
+      setForm({
+        name: "", client_id: "", client_secret: "", discovery_url: "", authorization_url: "",
+        token_url: "", userinfo_url: "", jwks_url: "", scopes: "openid profile email",
+        email_claim: "email", name_claim: "name", groups_claim: "groups", admin_groups: "",
+        auto_provision: true, enabled: false, realm_url: "", tenant_id: "",
+      });
+      setProviderType("keycloak");
+    }
+    setDiscoverError("");
+    setTestResult(null);
+  }, [editId, existing, open]);
+
+  async function handleDiscover() {
+    setDiscoverError("");
+    let url = form.discovery_url;
+    if (!url && providerType === "keycloak" && form.realm_url) {
+      url = `${form.realm_url.replace(/\/$/, "")}/.well-known/openid-configuration`;
+    }
+    if (!url && providerType === "azure_entra" && form.tenant_id) {
+      url = `https://login.microsoftonline.com/${form.tenant_id}/v2.0/.well-known/openid-configuration`;
+    }
+    if (!url) { setDiscoverError("Provide a discovery URL"); return; }
+    try {
+      const result = await discoverOidc.mutateAsync({ id: editId ?? undefined, discovery_url: url });
+      setForm(prev => ({
+        ...prev,
+        discovery_url: url,
+        authorization_url: result.authorization_endpoint,
+        token_url: result.token_endpoint,
+        userinfo_url: result.userinfo_endpoint ?? "",
+        jwks_url: result.jwks_uri,
+      }));
+    } catch (err: unknown) {
+      setDiscoverError(err instanceof Error ? err.message : "Discovery failed");
+    }
+  }
+
+  async function handleSave() {
+    const data: OidcProviderCreate = {
+      name: form.name,
+      provider_type: providerType,
+      client_id: form.client_id,
+      client_secret: form.client_secret || undefined,
+      discovery_url: form.discovery_url || undefined,
+      authorization_url: form.authorization_url,
+      token_url: form.token_url,
+      userinfo_url: form.userinfo_url || undefined,
+      jwks_url: form.jwks_url,
+      scopes: form.scopes,
+      claim_mapping: {
+        email: form.email_claim,
+        name: form.name_claim,
+        groups: form.groups_claim,
+        admin_groups: form.admin_groups ? form.admin_groups.split(",").map(s => s.trim()).filter(Boolean) : [],
+      },
+      auto_provision: form.auto_provision,
+      enabled: form.enabled,
+    };
+    if (editId) {
+      await updateProvider.mutateAsync({ id: editId, data });
+    } else {
+      await createProvider.mutateAsync(data);
+    }
+    onOpenChange(false);
+  }
+
+  const providerTypes = [
+    { value: "keycloak", label: "Keycloak", desc: "Open-source IAM with realm-based multi-tenancy", icon: <Shield className="h-6 w-6" /> },
+    { value: "azure_entra", label: "Azure Entra ID", desc: "Microsoft cloud identity (formerly Azure AD)", icon: <Globe className="h-6 w-6" /> },
+    { value: "generic_oidc", label: "Generic OIDC", desc: "Any OpenID Connect compliant provider", icon: <Key className="h-6 w-6" /> },
+  ];
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>{editId ? "Edit Provider" : "Add Identity Provider"}</DialogTitle>
+        </DialogHeader>
+
+        {step === 0 && !editId && (
+          <div className="space-y-3">
+            <p className="text-sm text-muted-foreground">Choose a provider type:</p>
+            {providerTypes.map(pt => (
+              <button
+                key={pt.value}
+                onClick={() => { setProviderType(pt.value); setStep(1); }}
+                className={`flex w-full items-start gap-3 rounded-lg border p-4 text-left transition-colors hover:bg-accent ${providerType === pt.value ? "border-primary bg-accent" : ""}`}
+              >
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-muted">{pt.icon}</div>
+                <div>
+                  <p className="text-sm font-medium">{pt.label}</p>
+                  <p className="text-xs text-muted-foreground">{pt.desc}</p>
+                </div>
+              </button>
+            ))}
+          </div>
+        )}
+
+        {step === 1 && (
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label>Display Name</Label>
+              <Input value={form.name} onChange={e => setForm(p => ({ ...p, name: e.target.value }))} placeholder="e.g. Corporate Keycloak" />
+            </div>
+
+            {providerType === "keycloak" && (
+              <div className="space-y-2">
+                <Label>Keycloak Realm URL</Label>
+                <Input value={form.realm_url} onChange={e => setForm(p => ({ ...p, realm_url: e.target.value }))} placeholder="https://keycloak.example.com/realms/myrealm" />
+                <p className="text-xs text-muted-foreground">Discovery URL will be derived from this.</p>
+              </div>
+            )}
+
+            {providerType === "azure_entra" && (
+              <div className="space-y-2">
+                <Label>Tenant ID</Label>
+                <Input value={form.tenant_id} onChange={e => setForm(p => ({ ...p, tenant_id: e.target.value }))} placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" />
+                <p className="text-xs text-muted-foreground">Discovery URL will be derived from this.</p>
+              </div>
+            )}
+
+            <div className="space-y-2">
+              <Label>Discovery URL</Label>
+              <div className="flex gap-2">
+                <Input value={form.discovery_url} onChange={e => setForm(p => ({ ...p, discovery_url: e.target.value }))} placeholder=".well-known/openid-configuration URL" className="flex-1" />
+                <Button variant="outline" size="sm" onClick={handleDiscover} disabled={discoverOidc.isPending}>
+                  {discoverOidc.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Zap className="h-4 w-4" />}
+                  <span className="ml-1">Discover</span>
+                </Button>
+              </div>
+              {discoverError && <p className="text-xs text-destructive">{discoverError}</p>}
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-2">
+                <Label>Client ID</Label>
+                <Input value={form.client_id} onChange={e => setForm(p => ({ ...p, client_id: e.target.value }))} />
+              </div>
+              <div className="space-y-2">
+                <Label>Client Secret</Label>
+                <Input type="password" value={form.client_secret} onChange={e => setForm(p => ({ ...p, client_secret: e.target.value }))} placeholder={editId ? "(unchanged)" : ""} />
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <Label>Authorization URL</Label>
+              <Input value={form.authorization_url} onChange={e => setForm(p => ({ ...p, authorization_url: e.target.value }))} />
+            </div>
+            <div className="space-y-2">
+              <Label>Token URL</Label>
+              <Input value={form.token_url} onChange={e => setForm(p => ({ ...p, token_url: e.target.value }))} />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-2">
+                <Label>UserInfo URL</Label>
+                <Input value={form.userinfo_url} onChange={e => setForm(p => ({ ...p, userinfo_url: e.target.value }))} />
+              </div>
+              <div className="space-y-2">
+                <Label>JWKS URL</Label>
+                <Input value={form.jwks_url} onChange={e => setForm(p => ({ ...p, jwks_url: e.target.value }))} />
+              </div>
+            </div>
+
+            <div className="flex justify-between pt-2">
+              {!editId && <Button variant="ghost" onClick={() => setStep(0)}>Back</Button>}
+              {editId && <div />}
+              <Button onClick={() => setStep(2)}>Next</Button>
+            </div>
+          </div>
+        )}
+
+        {step === 2 && (
+          <div className="space-y-4">
+            <p className="text-sm font-medium">Advanced Settings</p>
+
+            <div className="space-y-2">
+              <Label>Scopes</Label>
+              <Input value={form.scopes} onChange={e => setForm(p => ({ ...p, scopes: e.target.value }))} />
+            </div>
+
+            <div className="grid grid-cols-3 gap-3">
+              <div className="space-y-2">
+                <Label>Email claim</Label>
+                <Input value={form.email_claim} onChange={e => setForm(p => ({ ...p, email_claim: e.target.value }))} />
+              </div>
+              <div className="space-y-2">
+                <Label>Name claim</Label>
+                <Input value={form.name_claim} onChange={e => setForm(p => ({ ...p, name_claim: e.target.value }))} />
+              </div>
+              <div className="space-y-2">
+                <Label>Groups claim</Label>
+                <Input value={form.groups_claim} onChange={e => setForm(p => ({ ...p, groups_claim: e.target.value }))} />
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <Label>Admin group names</Label>
+              <Input value={form.admin_groups} onChange={e => setForm(p => ({ ...p, admin_groups: e.target.value }))} placeholder="admin, super-admin" />
+              <p className="text-xs text-muted-foreground">Comma-separated group values that grant admin access.</p>
+            </div>
+
+            <div className="flex items-center justify-between rounded-lg border p-3">
+              <div>
+                <p className="text-sm font-medium">Auto-provision users</p>
+                <p className="text-xs text-muted-foreground">Create accounts on first OIDC login</p>
+              </div>
+              <Switch checked={form.auto_provision} onCheckedChange={v => setForm(p => ({ ...p, auto_provision: v }))} />
+            </div>
+
+            <div className="flex items-center justify-between rounded-lg border p-3">
+              <div>
+                <p className="text-sm font-medium">Enabled</p>
+                <p className="text-xs text-muted-foreground">Show on the login page</p>
+              </div>
+              <Switch checked={form.enabled} onCheckedChange={v => setForm(p => ({ ...p, enabled: v }))} />
+            </div>
+
+            {editId && (
+              <div className="pt-1">
+                <Button variant="outline" size="sm" className="gap-1.5" onClick={() => testProvider.mutate(editId)} disabled={testProvider.isPending}>
+                  {testProvider.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}
+                  Test Connection
+                </Button>
+                {testProvider.data && (
+                  <div className="mt-2 space-y-1 text-xs">
+                    {Object.entries(testProvider.data).filter(([k]) => !k.endsWith("_error")).map(([k, v]) => (
+                      <div key={k} className="flex items-center gap-1.5">
+                        {v === true ? <CheckCircle2 className="h-3.5 w-3.5 text-green-500" /> : <AlertCircle className="h-3.5 w-3.5 text-destructive" />}
+                        <span className="capitalize">{k}</span>
+                        {v !== true && <span className="text-destructive ml-1">({String(testProvider.data?.[`${k}_error`] ?? "failed")})</span>}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            <div className="flex justify-between pt-2">
+              <Button variant="ghost" onClick={() => setStep(1)}>Back</Button>
+              <Button onClick={handleSave} disabled={createProvider.isPending || updateProvider.isPending || !form.name || !form.client_id}>
+                {(createProvider.isPending || updateProvider.isPending) ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                {editId ? "Save Changes" : "Create Provider"}
+              </Button>
+            </div>
+          </div>
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function AuthSettingsSection() {
+  const { data: authSettings } = useAuthSettings();
+  const updateAuth = useUpdateAuthSettings();
+  const { data: oidcProviders } = useOidcProviders();
+  const deleteProvider = useDeleteOidcProvider();
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [editId, setEditId] = useState<string | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
+
+  function typeLabel(t: string) {
+    if (t === "keycloak") return "Keycloak";
+    if (t === "azure_entra") return "Azure Entra ID";
+    return "Generic OIDC";
+  }
+
+  return (
+    <div className="space-y-4">
+      <Card>
+        <CardHeader>
+          <CardTitle>Multi-Factor Authentication Policy</CardTitle>
+          <CardDescription>Configure MFA enforcement for local authentication users.</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="flex items-center justify-between rounded-lg border p-4">
+            <div className="space-y-0.5">
+              <p className="text-sm font-medium">Force MFA for all local users</p>
+              <p className="text-xs text-muted-foreground">When enabled, users authenticating with local credentials will be required to set up MFA after their next login.</p>
+            </div>
+            <Switch
+              checked={authSettings?.force_mfa_local_auth ?? false}
+              onCheckedChange={(checked) => updateAuth.mutate({ force_mfa_local_auth: checked })}
+              disabled={updateAuth.isPending}
+            />
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Local Authentication</CardTitle>
+          <CardDescription>Username and password login stored in the application database.</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="flex items-center justify-between rounded-lg border p-4">
+            <div className="space-y-0.5">
+              <p className="text-sm font-medium">Enable local login</p>
+              <p className="text-xs text-muted-foreground">When disabled, only admin accounts can use local login as a fallback.</p>
+            </div>
+            <Switch
+              checked={authSettings?.local_login_enabled ?? true}
+              onCheckedChange={(checked) => updateAuth.mutate({ local_login_enabled: checked })}
+              disabled={updateAuth.isPending}
+            />
+          </div>
+          {authSettings && !authSettings.local_login_enabled && (
+            <div className="mt-3 flex items-start gap-2 rounded-md bg-amber-500/10 p-3 text-xs text-amber-700 dark:text-amber-400">
+              <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+              <span>Local login is disabled. Only admin accounts can sign in with username/password. Make sure at least one OIDC provider is enabled.</span>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader className="flex flex-row items-center justify-between">
+          <div>
+            <CardTitle>Identity Providers (OIDC)</CardTitle>
+            <CardDescription>Configure external identity providers for single sign-on.</CardDescription>
+          </div>
+          <Button size="sm" className="gap-1.5" onClick={() => { setEditId(null); setDialogOpen(true); }}>
+            <Plus className="h-4 w-4" /> Add Provider
+          </Button>
+        </CardHeader>
+        <CardContent>
+          {oidcProviders && oidcProviders.length > 0 ? (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Name</TableHead>
+                  <TableHead>Type</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead className="text-right">Actions</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {oidcProviders.map(p => (
+                  <TableRow key={p.id}>
+                    <TableCell className="font-medium">{p.name}</TableCell>
+                    <TableCell className="text-muted-foreground">{typeLabel(p.provider_type)}</TableCell>
+                    <TableCell>
+                      <Badge variant={p.enabled ? "default" : "secondary"}>{p.enabled ? "Enabled" : "Disabled"}</Badge>
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <div className="flex items-center justify-end gap-1">
+                        <Button variant="ghost" size="icon" onClick={() => { setEditId(p.id); setDialogOpen(true); }}>
+                          <Pencil className="h-4 w-4" />
+                        </Button>
+                        <Button variant="ghost" size="icon" onClick={() => setDeleteTarget(p.id)}>
+                          <Trash2 className="h-4 w-4 text-destructive" />
+                        </Button>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          ) : (
+            <div className="rounded-lg border border-dashed p-8 text-center">
+              <Globe className="mx-auto h-8 w-8 text-muted-foreground/50" />
+              <p className="mt-2 text-sm text-muted-foreground">No identity providers configured.</p>
+              <p className="text-xs text-muted-foreground">Add a Keycloak, Azure Entra ID, or generic OIDC provider to enable single sign-on.</p>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      <OidcProviderDialog open={dialogOpen} onOpenChange={setDialogOpen} editId={editId} />
+
+      <ConfirmDialog
+        open={!!deleteTarget}
+        onOpenChange={(open) => { if (!open) setDeleteTarget(null); }}
+        title="Delete Identity Provider"
+        description="This will remove the provider and unlink any users provisioned through it. This cannot be undone."
+        onConfirm={() => { if (deleteTarget) { deleteProvider.mutate(deleteTarget); setDeleteTarget(null); } }}
+        variant="destructive"
+      />
+    </div>
+  );
+}
+
+function NotificationsSettingsSection() {
+  const { data: smtp } = useSmtpSettings();
+  const updateSmtp = useUpdateSmtpSettings();
+  const testSmtp = useTestSmtp();
+  const { data: templates = [] } = useEmailTemplates();
+  const updateTemplate = useUpdateEmailTemplate();
+  const previewTemplate = usePreviewEmailTemplate();
+
+  const [smtpForm, setSmtpForm] = useState<{
+    host: string; port: string; username: string; password: string;
+    from_email: string; from_name: string; use_tls: boolean; enabled: boolean;
+  }>({ host: "", port: "587", username: "", password: "", from_email: "", from_name: "Contributr", use_tls: true, enabled: false });
+  const [smtpDirty, setSmtpDirty] = useState(false);
+  const [editTemplate, setEditTemplate] = useState<EmailTemplate | null>(null);
+  const [tplSubject, setTplSubject] = useState("");
+  const [tplHtml, setTplHtml] = useState("");
+  const [tplText, setTplText] = useState("");
+  const [previewHtml, setPreviewHtml] = useState<string | null>(null);
+
+  // Sync SMTP form when data loads
+  const smtpLoaded = useRef(false);
+  if (smtp && !smtpLoaded.current) {
+    smtpLoaded.current = true;
+    setSmtpForm({
+      host: smtp.host, port: String(smtp.port), username: smtp.username, password: "",
+      from_email: smtp.from_email, from_name: smtp.from_name, use_tls: smtp.use_tls, enabled: smtp.enabled,
+    });
+  }
+
+  function handleSmtpField(field: string, value: string | boolean) {
+    setSmtpForm((f) => ({ ...f, [field]: value }));
+    setSmtpDirty(true);
+  }
+
+  async function handleSmtpSave() {
+    const data: Record<string, unknown> = {
+      host: smtpForm.host,
+      port: parseInt(smtpForm.port) || 587,
+      username: smtpForm.username,
+      from_email: smtpForm.from_email,
+      from_name: smtpForm.from_name,
+      use_tls: smtpForm.use_tls,
+      enabled: smtpForm.enabled,
+    };
+    if (smtpForm.password) data.password = smtpForm.password;
+    await updateSmtp.mutateAsync(data as Parameters<typeof updateSmtp.mutateAsync>[0]);
+    setSmtpDirty(false);
+    smtpLoaded.current = false;
+  }
+
+  function openTemplateEditor(tpl: EmailTemplate) {
+    setEditTemplate(tpl);
+    setTplSubject(tpl.subject);
+    setTplHtml(tpl.body_html);
+    setTplText(tpl.body_text);
+    setPreviewHtml(null);
+  }
+
+  async function handleTemplateSave() {
+    if (!editTemplate) return;
+    await updateTemplate.mutateAsync({ slug: editTemplate.slug, data: { subject: tplSubject, body_html: tplHtml, body_text: tplText } });
+    setEditTemplate(null);
+  }
+
+  async function handleTemplatePreview() {
+    if (!editTemplate) return;
+    const result = await previewTemplate.mutateAsync({ slug: editTemplate.slug });
+    setPreviewHtml(result.body_html);
+  }
+
+  return (
+    <div className="space-y-4">
+      <Card>
+        <CardHeader>
+          <CardTitle>SMTP Configuration</CardTitle>
+          <CardDescription>Configure outbound email for notifications, OTP codes, and alerts.</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="space-y-2">
+              <Label>SMTP Host</Label>
+              <Input value={smtpForm.host} onChange={(e) => handleSmtpField("host", e.target.value)} placeholder="smtp.example.com" />
+            </div>
+            <div className="space-y-2">
+              <Label>Port</Label>
+              <Input value={smtpForm.port} onChange={(e) => handleSmtpField("port", e.target.value)} placeholder="587" />
+            </div>
+            <div className="space-y-2">
+              <Label>Username</Label>
+              <Input value={smtpForm.username} onChange={(e) => handleSmtpField("username", e.target.value)} placeholder="user@example.com" />
+            </div>
+            <div className="space-y-2">
+              <Label>Password</Label>
+              <Input type="password" value={smtpForm.password} onChange={(e) => handleSmtpField("password", e.target.value)} placeholder={smtp?.has_password ? "••••••••" : "Enter password"} />
+            </div>
+            <div className="space-y-2">
+              <Label>From Email</Label>
+              <Input value={smtpForm.from_email} onChange={(e) => handleSmtpField("from_email", e.target.value)} placeholder="noreply@example.com" />
+            </div>
+            <div className="space-y-2">
+              <Label>From Name</Label>
+              <Input value={smtpForm.from_name} onChange={(e) => handleSmtpField("from_name", e.target.value)} placeholder="Contributr" />
+            </div>
+          </div>
+          <div className="flex items-center gap-6">
+            <label className="flex items-center gap-2 text-sm">
+              <Switch checked={smtpForm.use_tls} onCheckedChange={(v) => handleSmtpField("use_tls", v)} />
+              Use TLS
+            </label>
+            <label className="flex items-center gap-2 text-sm">
+              <Switch checked={smtpForm.enabled} onCheckedChange={(v) => handleSmtpField("enabled", v)} />
+              Enabled
+            </label>
+          </div>
+          <div className="flex gap-2">
+            <Button onClick={handleSmtpSave} disabled={!smtpDirty && !updateSmtp.isPending}>
+              {updateSmtp.isPending ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Saving...</> : "Save"}
+            </Button>
+            <Button
+              variant="outline"
+              onClick={() => testSmtp.mutate({})}
+              disabled={testSmtp.isPending || !smtp?.enabled}
+            >
+              {testSmtp.isPending
+                ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Sending...</>
+                : testSmtp.isSuccess
+                  ? <><CheckCircle2 className="mr-2 h-4 w-4 text-green-500" /> Sent</>
+                  : <><Send className="mr-2 h-4 w-4" /> Test Connection</>}
+            </Button>
+          </div>
+          {testSmtp.isError && (
+            <div className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">
+              {testSmtp.error instanceof Error ? testSmtp.error.message : "Test failed"}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Email Templates</CardTitle>
+          <CardDescription>Manage Jinja2 email templates used for notifications and OTP codes.</CardDescription>
+        </CardHeader>
+        <CardContent>
+          {templates.length === 0 ? (
+            <p className="text-sm text-muted-foreground py-4 text-center">No email templates configured.</p>
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Slug</TableHead>
+                  <TableHead>Name</TableHead>
+                  <TableHead>Subject</TableHead>
+                  <TableHead className="w-[80px]">Actions</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {templates.map((tpl) => (
+                  <TableRow key={tpl.slug}>
+                    <TableCell><code className="text-xs">{tpl.slug}</code></TableCell>
+                    <TableCell>{tpl.name}</TableCell>
+                    <TableCell className="text-sm text-muted-foreground max-w-[200px] truncate">{tpl.subject}</TableCell>
+                    <TableCell>
+                      <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openTemplateEditor(tpl)}>
+                        <Pencil className="h-3.5 w-3.5" />
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          )}
+        </CardContent>
+      </Card>
+
+      <Dialog open={!!editTemplate} onOpenChange={(v) => { if (!v) setEditTemplate(null); }}>
+        <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Edit Template: {editTemplate?.name}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label>Subject</Label>
+              <Input value={tplSubject} onChange={(e) => setTplSubject(e.target.value)} />
+            </div>
+            <div className="space-y-2">
+              <Label>HTML Body</Label>
+              <Textarea value={tplHtml} onChange={(e) => setTplHtml(e.target.value)} rows={10} className="font-mono text-xs" />
+            </div>
+            <div className="space-y-2">
+              <Label>Plain Text Body</Label>
+              <Textarea value={tplText} onChange={(e) => setTplText(e.target.value)} rows={4} className="font-mono text-xs" />
+            </div>
+            {editTemplate?.variables && Object.keys(editTemplate.variables).length > 0 && (
+              <div className="space-y-1">
+                <Label className="text-xs text-muted-foreground">Available variables</Label>
+                <div className="flex flex-wrap gap-1.5">
+                  {Object.entries(editTemplate.variables).map(([k, v]) => (
+                    <Badge key={k} variant="outline" className="text-xs font-mono">
+                      {"{{ " + k + " }}"} <span className="ml-1 font-sans text-muted-foreground">— {v.description}</span>
+                    </Badge>
+                  ))}
+                </div>
+              </div>
+            )}
+            <div className="flex gap-2">
+              <Button onClick={handleTemplateSave} disabled={updateTemplate.isPending}>
+                {updateTemplate.isPending ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Saving...</> : "Save"}
+              </Button>
+              <Button variant="outline" onClick={handleTemplatePreview} disabled={previewTemplate.isPending}>
+                {previewTemplate.isPending ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Previewing...</> : <><Eye className="mr-2 h-4 w-4" /> Preview</>}
+              </Button>
+            </div>
+            {previewHtml && (
+              <div className="space-y-2">
+                <Label className="text-xs text-muted-foreground">Preview (with sample data)</Label>
+                <div className="rounded-lg border bg-white p-4" dangerouslySetInnerHTML={{ __html: previewHtml }} />
+              </div>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
+function UserSecuritySection() {
+  const { user, refresh } = useAuth();
+  const [mfaSetupOpen, setMfaSetupOpen] = useState(false);
+  const [disablePassword, setDisablePassword] = useState("");
+  const [disableError, setDisableError] = useState("");
+  const [disabling, setDisabling] = useState(false);
+  const [regenPassword, setRegenPassword] = useState("");
+  const [regenError, setRegenError] = useState("");
+  const [regenerating, setRegenerating] = useState(false);
+  const [recoveryCodes, setRecoveryCodes] = useState<string[] | null>(null);
+  const [copied, setCopied] = useState(false);
+
+  async function handleDisable() {
+    setDisableError("");
+    setDisabling(true);
+    try {
+      await api.mfaDisable({ password: disablePassword });
+      setDisablePassword("");
+      await refresh();
+    } catch (err: unknown) {
+      setDisableError(err instanceof Error ? err.message : "Failed to disable MFA");
+    } finally {
+      setDisabling(false);
+    }
+  }
+
+  async function handleRegenerate() {
+    setRegenError("");
+    setRegenerating(true);
+    try {
+      const res = await api.mfaRegenerateRecoveryCodes({ password: regenPassword });
+      setRecoveryCodes(res.recovery_codes);
+      setRegenPassword("");
+    } catch (err: unknown) {
+      setRegenError(err instanceof Error ? err.message : "Failed to regenerate codes");
+    } finally {
+      setRegenerating(false);
+    }
+  }
+
+  return (
+    <div className="space-y-4">
+      <Card>
+        <CardHeader>
+          <CardTitle>Two-Factor Authentication</CardTitle>
+          <CardDescription>Add an extra layer of security to your account.</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="flex items-center justify-between rounded-lg border p-4">
+            <div className="flex items-center gap-3">
+              <div className={`flex h-9 w-9 items-center justify-center rounded-full ${user?.mfa_enabled ? "bg-green-100 dark:bg-green-900/30" : "bg-muted"}`}>
+                {user?.mfa_method === "totp"
+                  ? <Smartphone className={`h-4 w-4 ${user?.mfa_enabled ? "text-green-600 dark:text-green-400" : "text-muted-foreground"}`} />
+                  : user?.mfa_method === "email"
+                    ? <Mail className={`h-4 w-4 ${user?.mfa_enabled ? "text-green-600 dark:text-green-400" : "text-muted-foreground"}`} />
+                    : <ShieldCheck className="h-4 w-4 text-muted-foreground" />}
+              </div>
+              <div>
+                <p className="text-sm font-medium">
+                  {user?.mfa_enabled
+                    ? `MFA enabled via ${user.mfa_method === "totp" ? "authenticator app" : "email"}`
+                    : "MFA is not enabled"}
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  {user?.mfa_enabled
+                    ? "Your account is secured with two-factor authentication"
+                    : "Enable MFA to add an extra layer of security"}
+                </p>
+              </div>
+            </div>
+            {user?.mfa_enabled ? (
+              <Badge variant="secondary" className="bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400">Enabled</Badge>
+            ) : (
+              <Button size="sm" onClick={() => setMfaSetupOpen(true)}>Set up MFA</Button>
+            )}
+          </div>
+
+          {user?.mfa_enabled && (
+            <div className="space-y-3">
+              <div className="rounded-lg border p-4 space-y-3">
+                <p className="text-sm font-medium">Disable MFA</p>
+                <p className="text-xs text-muted-foreground">Enter your password to disable two-factor authentication.</p>
+                {disableError && <div className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">{disableError}</div>}
+                <div className="flex gap-2">
+                  <Input type="password" placeholder="Your password" value={disablePassword} onChange={(e) => setDisablePassword(e.target.value)} className="max-w-xs" />
+                  <Button variant="destructive" size="sm" onClick={handleDisable} disabled={disabling || !disablePassword}>
+                    {disabling ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                    Disable
+                  </Button>
+                </div>
+              </div>
+
+              <div className="rounded-lg border p-4 space-y-3">
+                <p className="text-sm font-medium">Recovery Codes</p>
+                <p className="text-xs text-muted-foreground">Generate new recovery codes. This will invalidate any existing codes.</p>
+                {regenError && <div className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">{regenError}</div>}
+                <div className="flex gap-2">
+                  <Input type="password" placeholder="Your password" value={regenPassword} onChange={(e) => setRegenPassword(e.target.value)} className="max-w-xs" />
+                  <Button variant="outline" size="sm" onClick={handleRegenerate} disabled={regenerating || !regenPassword}>
+                    {regenerating ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                    Regenerate
+                  </Button>
+                </div>
+                {recoveryCodes && (
+                  <div className="space-y-2">
+                    <div className="grid grid-cols-2 gap-2 rounded-lg bg-muted/50 p-4">
+                      {recoveryCodes.map((c, i) => (
+                        <code key={i} className="text-center font-mono text-sm">{c}</code>
+                      ))}
+                    </div>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => { navigator.clipboard.writeText(recoveryCodes.join("\n")); setCopied(true); setTimeout(() => setCopied(false), 2000); }}
+                    >
+                      {copied ? <><Check className="mr-1.5 h-3.5 w-3.5" /> Copied</> : <><Copy className="mr-1.5 h-3.5 w-3.5" /> Copy</>}
+                    </Button>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      <MfaSetupDialog
+        open={mfaSetupOpen}
+        onOpenChange={setMfaSetupOpen}
+        dismissible
+        onComplete={async (at, rt) => {
+          localStorage.setItem("access_token", at);
+          localStorage.setItem("refresh_token", rt);
+          await refresh();
+          setMfaSetupOpen(false);
+        }}
+      />
+    </div>
+  );
+}
 
 function SastSettingsSection() {
   const { data: profiles = [] } = useSastProfiles();
@@ -422,6 +1232,8 @@ export default function SettingsPage() {
 
   const { data: users = [], isLoading: usersLoading } = useUsers();
   const createUser = useCreateUser();
+  const updateUser = useUpdateUser();
+  const resetUserMfa = useResetUserMfa();
   const deleteUser = useDeleteUser();
 
   const { data: exclusions = [] } = useFileExclusions();
@@ -444,6 +1256,44 @@ export default function SettingsPage() {
   const deleteAgent = useDeleteAgent();
 
   const { data: aiTools = [] } = useAiTools();
+  const [toolSearch, setToolSearch] = useState("");
+  const [collapsedCategories, setCollapsedCategories] = useState<Set<string>>(new Set());
+
+  const CATEGORY_LABELS: Record<string, string> = {
+    contribution_analytics: "Contribution Analytics",
+    delivery_analytics: "Delivery Analytics",
+    code_access: "Code Access",
+    sast_analytics: "SAST Analytics",
+    sql_query: "SQL Query",
+  };
+
+  const CATEGORY_COLORS: Record<string, string> = {
+    contribution_analytics: "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200",
+    delivery_analytics: "bg-emerald-100 text-emerald-800 dark:bg-emerald-900 dark:text-emerald-200",
+    code_access: "bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-200",
+    sast_analytics: "bg-rose-100 text-rose-800 dark:bg-rose-900 dark:text-rose-200",
+    sql_query: "bg-violet-100 text-violet-800 dark:bg-violet-900 dark:text-violet-200",
+  };
+
+  const groupedTools = useMemo(() => {
+    const q = toolSearch.toLowerCase().trim();
+    const filtered = q
+      ? aiTools.filter((t) => t.name.toLowerCase().includes(q) || t.description.toLowerCase().includes(q) || t.slug.toLowerCase().includes(q))
+      : aiTools;
+    const groups: Record<string, typeof filtered> = {};
+    for (const tool of filtered) {
+      const cat = tool.category || "other";
+      if (!groups[cat]) groups[cat] = [];
+      groups[cat].push(tool);
+    }
+    return Object.entries(groups).sort(([a], [b]) => a.localeCompare(b));
+  }, [aiTools, toolSearch]);
+
+  const toolCategoryIndex = useMemo(() => {
+    const idx: Record<string, string> = {};
+    for (const t of aiTools) idx[t.slug] = t.category;
+    return idx;
+  }, [aiTools]);
 
   const { data: knowledgeGraphs = [] } = useKnowledgeGraphs();
   const updateKG = useUpdateKnowledgeGraph();
@@ -461,6 +1311,11 @@ export default function SettingsPage() {
 
   const [userOpen, setUserOpen] = useState(false);
   const [userForm, setUserForm] = useState({ email: "", username: "", password: "", full_name: "", is_admin: false });
+  const [editUserOpen, setEditUserOpen] = useState(false);
+  const [editUserId, setEditUserId] = useState<string | null>(null);
+  const [editUserForm, setEditUserForm] = useState({ email: "", username: "", full_name: "", is_admin: false, is_active: true, password: "" });
+  const [mfaEnrollUserId, setMfaEnrollUserId] = useState<string | null>(null);
+  const [resetMfaUserId, setResetMfaUserId] = useState<string | null>(null);
 
   const [newPattern, setNewPattern] = useState("");
   const [newDesc, setNewDesc] = useState("");
@@ -646,6 +1501,8 @@ export default function SettingsPage() {
       setEditAgentSlug(null);
       setAgentForm({ slug: "", name: "", description: "", agent_type: "standard", llm_provider_id: "", system_prompt: "", max_iterations: "10", summary_token_limit: "", enabled: true, tool_slugs: [], knowledge_graph_ids: [], member_agent_ids: [] });
     }
+    setToolSearch("");
+    setCollapsedCategories(new Set());
     setAgentOpen(true);
   }
 
@@ -722,12 +1579,15 @@ export default function SettingsPage() {
         <p className="text-muted-foreground">Manage SSH keys, user accounts, and backups</p>
       </div>
 
-      <Tabs defaultValue="ssh-keys">
-        <TabsList>
+      <Tabs defaultValue="ssh-keys" orientation="vertical" className="gap-6 items-start">
+        <TabsList variant="line" className="w-48 shrink-0 sticky top-4 gap-0.5">
           <TabsTrigger value="ssh-keys" className="gap-2"><Key className="h-4 w-4" /> SSH Keys</TabsTrigger>
           <TabsTrigger value="platform-tokens" className="gap-2"><ShieldCheck className="h-4 w-4" /> Platform Tokens</TabsTrigger>
           {user?.is_admin && <TabsTrigger value="users" className="gap-2"><Users className="h-4 w-4" /> Users</TabsTrigger>}
           {user?.is_admin && <TabsTrigger value="ai" className="gap-2"><Bot className="h-4 w-4" /> AI</TabsTrigger>}
+          {user?.is_admin && <TabsTrigger value="auth-settings" className="gap-2"><Lock className="h-4 w-4" /> Auth</TabsTrigger>}
+          {user?.is_admin && <TabsTrigger value="notifications" className="gap-2"><Bell className="h-4 w-4" /> Notifications</TabsTrigger>}
+          <TabsTrigger value="security" className="gap-2"><ShieldCheck className="h-4 w-4" /> Security</TabsTrigger>
           <TabsTrigger value="file-exclusions" className="gap-2"><FileX2 className="h-4 w-4" /> File Exclusions</TabsTrigger>
           <TabsTrigger value="custom-fields" className="gap-2"><ListFilter className="h-4 w-4" /> Custom Fields</TabsTrigger>
           <TabsTrigger value="delivery" className="gap-2"><CalendarRange className="h-4 w-4" /> Delivery</TabsTrigger>
@@ -736,7 +1596,7 @@ export default function SettingsPage() {
           <TabsTrigger value="backup" className="gap-2"><Database className="h-4 w-4" /> Backup</TabsTrigger>
         </TabsList>
 
-        <TabsContent value="ssh-keys" className="space-y-4">
+        <TabsContent value="ssh-keys" className="min-w-0 space-y-4">
           <div className="flex items-center justify-between">
             <p className="text-sm text-muted-foreground">Generate SSH keys for repository access. Register the public key as a deploy key in your Git provider.</p>
             <Dialog open={keyOpen} onOpenChange={setKeyOpen}>
@@ -833,7 +1693,7 @@ export default function SettingsPage() {
           </Card>
         </TabsContent>
 
-        <TabsContent value="platform-tokens" className="space-y-4">
+        <TabsContent value="platform-tokens" className="min-w-0 space-y-4">
           <div className="flex items-center justify-between">
             <p className="text-sm text-muted-foreground">Configure API tokens (PATs) for GitHub, GitLab, or Azure DevOps to fetch PR, review, and comment data. Assign tokens to projects.</p>
             <Dialog open={credOpen} onOpenChange={setCredOpen}>
@@ -935,9 +1795,9 @@ export default function SettingsPage() {
         </TabsContent>
 
         {user?.is_admin && (
-          <TabsContent value="users" className="space-y-4">
+          <TabsContent value="users" className="min-w-0 space-y-4">
             <div className="flex items-center justify-between">
-              <p className="text-sm text-muted-foreground">Manage user accounts. Only admins can add or remove users.</p>
+              <p className="text-sm text-muted-foreground">Manage user accounts, roles, MFA enrollment, and access.</p>
               <Dialog open={userOpen} onOpenChange={setUserOpen}>
                 <DialogTrigger asChild>
                   <Button size="sm"><Plus className="mr-2 h-4 w-4" /> Add User</Button>
@@ -980,37 +1840,220 @@ export default function SettingsPage() {
                     <TableHead>Username</TableHead>
                     <TableHead>Email</TableHead>
                     <TableHead>Name</TableHead>
+                    <TableHead>Provider</TableHead>
+                    <TableHead>MFA</TableHead>
                     <TableHead>Role</TableHead>
-                    <TableHead className="w-20" />
+                    <TableHead>Status</TableHead>
+                    <TableHead className="w-32" />
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {users.map((u) => (
-                    <TableRow key={u.id}>
+                    <TableRow key={u.id} className={!u.is_active ? "opacity-50" : undefined}>
                       <TableCell className="font-medium">{u.username}</TableCell>
-                      <TableCell>{u.email}</TableCell>
+                      <TableCell className="text-muted-foreground">{u.email}</TableCell>
                       <TableCell>{u.full_name || "-"}</TableCell>
+                      <TableCell>
+                        <Badge variant="outline" className="text-[10px]">
+                          {u.auth_provider === "oidc" ? "OIDC" : "Local"}
+                        </Badge>
+                      </TableCell>
+                      <TableCell>
+                        {u.mfa_enabled ? (
+                          <TooltipProvider>
+                            <Tooltip>
+                              <TooltipTrigger>
+                                <Badge variant="default" className="gap-1 text-[10px]">
+                                  <ShieldCheck className="h-3 w-3" /> {u.mfa_method === "totp" ? "TOTP" : "Email"}
+                                </Badge>
+                              </TooltipTrigger>
+                              <TooltipContent>MFA enrolled via {u.mfa_method === "totp" ? "authenticator app" : "email OTP"}</TooltipContent>
+                            </Tooltip>
+                          </TooltipProvider>
+                        ) : (
+                          <Badge variant="secondary" className="text-[10px]">Off</Badge>
+                        )}
+                      </TableCell>
                       <TableCell>
                         <Badge variant={u.is_admin ? "default" : "secondary"}>
                           {u.is_admin ? "Admin" : "Viewer"}
                         </Badge>
                       </TableCell>
                       <TableCell>
-                        {u.id !== user?.id && (
-                          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setDeleteUserId(u.id)}>
-                            <Trash2 className="h-3 w-3 text-destructive" />
-                          </Button>
+                        {u.is_active ? (
+                          <Badge variant="outline" className="border-green-500/40 text-green-600 text-[10px]">Active</Badge>
+                        ) : (
+                          <Badge variant="outline" className="border-red-500/40 text-red-500 text-[10px]">Disabled</Badge>
                         )}
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex items-center justify-end gap-1">
+                          <TooltipProvider>
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-7 w-7"
+                                  onClick={() => {
+                                    setEditUserId(u.id);
+                                    setEditUserForm({
+                                      email: u.email,
+                                      username: u.username,
+                                      full_name: u.full_name || "",
+                                      is_admin: u.is_admin,
+                                      is_active: u.is_active,
+                                      password: "",
+                                    });
+                                    setEditUserOpen(true);
+                                  }}
+                                >
+                                  <Pencil className="h-3 w-3" />
+                                </Button>
+                              </TooltipTrigger>
+                              <TooltipContent>Edit user</TooltipContent>
+                            </Tooltip>
+                          </TooltipProvider>
+
+                          {u.auth_provider === "local" && (
+                            <TooltipProvider>
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  {u.mfa_enabled ? (
+                                    <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setResetMfaUserId(u.id)}>
+                                      <ShieldAlert className="h-3 w-3 text-amber-500" />
+                                    </Button>
+                                  ) : (
+                                    <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setMfaEnrollUserId(u.id)}>
+                                      <ShieldCheck className="h-3 w-3 text-muted-foreground" />
+                                    </Button>
+                                  )}
+                                </TooltipTrigger>
+                                <TooltipContent>{u.mfa_enabled ? "Reset MFA" : "Enroll MFA"}</TooltipContent>
+                              </Tooltip>
+                            </TooltipProvider>
+                          )}
+
+                          {u.id !== user?.id && (
+                            <TooltipProvider>
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setDeleteUserId(u.id)}>
+                                    <Trash2 className="h-3 w-3 text-destructive" />
+                                  </Button>
+                                </TooltipTrigger>
+                                <TooltipContent>Delete user</TooltipContent>
+                              </Tooltip>
+                            </TooltipProvider>
+                          )}
+                        </div>
                       </TableCell>
                     </TableRow>
                   ))}
                 </TableBody>
               </Table>
             </Card>
+
+            {/* Edit User Dialog */}
+            <Dialog open={editUserOpen} onOpenChange={(open) => { setEditUserOpen(open); if (!open) setEditUserId(null); }}>
+              <DialogContent>
+                <DialogHeader><DialogTitle>Edit User</DialogTitle></DialogHeader>
+                <form
+                  onSubmit={async (e) => {
+                    e.preventDefault();
+                    if (!editUserId) return;
+                    const data: Record<string, unknown> = {};
+                    const original = users.find((u) => u.id === editUserId);
+                    if (editUserForm.email !== original?.email) data.email = editUserForm.email;
+                    if (editUserForm.username !== original?.username) data.username = editUserForm.username;
+                    if (editUserForm.full_name !== (original?.full_name || "")) data.full_name = editUserForm.full_name || null;
+                    if (editUserForm.is_admin !== original?.is_admin) data.is_admin = editUserForm.is_admin;
+                    if (editUserForm.is_active !== original?.is_active) data.is_active = editUserForm.is_active;
+                    if (editUserForm.password) data.password = editUserForm.password;
+                    await updateUser.mutateAsync({ id: editUserId, data });
+                    setEditUserOpen(false);
+                    setEditUserId(null);
+                  }}
+                  className="space-y-4"
+                >
+                  <div className="space-y-2">
+                    <Label>Full name</Label>
+                    <Input value={editUserForm.full_name} onChange={(e) => setEditUserForm((f) => ({ ...f, full_name: e.target.value }))} />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Email</Label>
+                    <Input type="email" value={editUserForm.email} onChange={(e) => setEditUserForm((f) => ({ ...f, email: e.target.value }))} required />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Username</Label>
+                    <Input value={editUserForm.username} onChange={(e) => setEditUserForm((f) => ({ ...f, username: e.target.value }))} required />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>New password</Label>
+                    <Input type="password" value={editUserForm.password} onChange={(e) => setEditUserForm((f) => ({ ...f, password: e.target.value }))} placeholder="Leave blank to keep current" />
+                  </div>
+                  <div className="flex items-center gap-4">
+                    <div className="flex items-center gap-2">
+                      <Switch checked={editUserForm.is_admin} onCheckedChange={(v) => setEditUserForm((f) => ({ ...f, is_admin: v }))} id="edit_is_admin" />
+                      <Label htmlFor="edit_is_admin">Admin</Label>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Switch checked={editUserForm.is_active} onCheckedChange={(v) => setEditUserForm((f) => ({ ...f, is_active: v }))} id="edit_is_active" />
+                      <Label htmlFor="edit_is_active">Active</Label>
+                    </div>
+                  </div>
+                  <Button type="submit" className="w-full" disabled={updateUser.isPending}>
+                    {updateUser.isPending ? "Saving..." : "Save Changes"}
+                  </Button>
+                </form>
+              </DialogContent>
+            </Dialog>
+
+            {/* MFA Enroll -- for own account, open the shared MfaSetupDialog directly; for others, show info dialog */}
+            {mfaEnrollUserId && mfaEnrollUserId === user?.id && (
+              <MfaSetupDialog
+                open={true}
+                onOpenChange={() => setMfaEnrollUserId(null)}
+                dismissible={true}
+                onComplete={(accessToken, refreshToken) => {
+                  if (typeof window !== "undefined") {
+                    localStorage.setItem("access_token", accessToken);
+                    localStorage.setItem("refresh_token", refreshToken);
+                  }
+                  setMfaEnrollUserId(null);
+                }}
+              />
+            )}
+            <Dialog open={!!mfaEnrollUserId && mfaEnrollUserId !== user?.id} onOpenChange={(open) => { if (!open) setMfaEnrollUserId(null); }}>
+              <DialogContent className="max-w-md">
+                <DialogHeader><DialogTitle>Enroll MFA</DialogTitle></DialogHeader>
+                <div className="space-y-4">
+                  <p className="text-sm text-muted-foreground">
+                    MFA can only be enrolled by the user themselves. To prompt this user to set up MFA:
+                  </p>
+                  <ul className="list-disc space-y-1 pl-5 text-sm text-muted-foreground">
+                    <li>Enable <strong>Force MFA for all local users</strong> in the Auth settings tab</li>
+                    <li>The user will be required to set up MFA on their next login</li>
+                  </ul>
+                  <Button className="w-full" onClick={() => setMfaEnrollUserId(null)}>Got it</Button>
+                </div>
+              </DialogContent>
+            </Dialog>
+
+            {/* Reset MFA Confirm Dialog */}
+            <ConfirmDialog
+              open={!!resetMfaUserId}
+              onOpenChange={(open) => { if (!open) setResetMfaUserId(null); }}
+              title="Reset MFA"
+              description="This will disable MFA for this user and remove their authenticator and recovery codes. They will need to enroll again if MFA is required."
+              confirmLabel="Reset MFA"
+              onConfirm={() => { if (resetMfaUserId) { resetUserMfa.mutate(resetMfaUserId); setResetMfaUserId(null); } }}
+              variant="destructive"
+            />
           </TabsContent>
         )}
         {user?.is_admin && (
-          <TabsContent value="ai" className="space-y-6">
+          <TabsContent value="ai" className="min-w-0 space-y-6">
             <p className="text-sm text-muted-foreground">
               Configure LLM providers, agents, and their tools. Enable or disable the AI subsystem globally.
             </p>
@@ -1076,8 +2119,8 @@ export default function SettingsPage() {
                         </TableCell>
                         <TableCell><Badge variant="outline" className="text-[10px] uppercase">{p.provider_type}</Badge></TableCell>
                         <TableCell><Badge variant={p.model_type === "embedding" ? "secondary" : "outline"} className="text-[10px] uppercase">{p.model_type || "chat"}</Badge></TableCell>
-                        <TableCell className="font-mono text-sm">{p.model}</TableCell>
-                        <TableCell className="text-sm text-muted-foreground">{p.base_url || "-"}</TableCell>
+                        <TableCell className="max-w-[140px] truncate font-mono text-sm">{p.model}</TableCell>
+                        <TableCell className="max-w-[200px] truncate text-sm text-muted-foreground">{p.base_url || "-"}</TableCell>
                         <TableCell>
                           <Badge variant={p.has_api_key ? "default" : "secondary"} className="text-[10px]">
                             {p.has_api_key ? "Set" : "None"}
@@ -1186,6 +2229,163 @@ export default function SettingsPage() {
                 </form>
               </DialogContent>
             </Dialog>
+
+            {/* Memory Section */}
+            {aiSettingsData && (
+              <Card>
+                <CardHeader className="pb-3">
+                  <CardTitle className="flex items-center gap-2 text-base"><Brain className="h-4 w-4" /> Memory</CardTitle>
+                  <CardDescription>Configure long-term memory, background extraction, and context management.</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-6">
+                  {/* Master toggle */}
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-sm font-medium">Enable long-term memory</p>
+                      <p className="text-xs text-muted-foreground">Vector-backed memory with save/search tools and background extraction</p>
+                    </div>
+                    <Switch
+                      checked={aiSettingsData.memory_enabled}
+                      onCheckedChange={(checked) => updateAiSettings.mutate({ memory_enabled: checked })}
+                    />
+                  </div>
+
+                  {aiSettingsData.memory_enabled && (
+                    <>
+                      {/* Embedding provider */}
+                      <div className="space-y-2">
+                        <Label>Embedding Provider</Label>
+                        <Select
+                          value={aiSettingsData.memory_embedding_provider_id ?? "none"}
+                          onValueChange={(v) => updateAiSettings.mutate({ memory_embedding_provider_id: v === "none" ? null : v })}
+                        >
+                          <SelectTrigger><SelectValue placeholder="Select embedding provider" /></SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="none">Not configured</SelectItem>
+                            {llmProviders.filter((p) => p.model_type === "embedding").map((p) => (
+                              <SelectItem key={p.id} value={p.id}>{p.name} — {p.model}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        <p className="text-xs text-muted-foreground">Embedding model used to index and search long-term memories</p>
+                      </div>
+
+                      {/* Background Extraction */}
+                      <details className="group rounded-md border px-3 py-2">
+                        <summary className="flex cursor-pointer items-center gap-2 text-sm font-medium [&::-webkit-details-marker]:hidden">
+                          <ChevronDown className="h-3.5 w-3.5 transition-transform group-open:rotate-180" />
+                          Background Extraction
+                        </summary>
+                        <div className="mt-3 space-y-4 pb-1">
+                          <div className="flex items-center justify-between">
+                            <div>
+                              <p className="text-sm">Auto-extract memories from conversations</p>
+                              <p className="text-xs text-muted-foreground">Uses LangMem to identify facts, preferences, and patterns</p>
+                            </div>
+                            <Switch
+                              checked={aiSettingsData.extraction_enabled}
+                              onCheckedChange={(checked) => updateAiSettings.mutate({ extraction_enabled: checked })}
+                            />
+                          </div>
+
+                          {aiSettingsData.extraction_enabled && (
+                            <>
+                              <div className="space-y-2">
+                                <Label>Extraction Model</Label>
+                                <Select
+                                  value={aiSettingsData.extraction_provider_id ?? "none"}
+                                  onValueChange={(v) => updateAiSettings.mutate({ extraction_provider_id: v === "none" ? null : v })}
+                                >
+                                  <SelectTrigger><SelectValue placeholder="Select extraction model" /></SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem value="none">Not configured</SelectItem>
+                                    {llmProviders.filter((p) => p.model_type === "chat").map((p) => (
+                                      <SelectItem key={p.id} value={p.id}>{p.name} — {p.model}</SelectItem>
+                                    ))}
+                                  </SelectContent>
+                                </Select>
+                                <p className="text-xs text-muted-foreground">Chat model used by LangMem to extract and organise memories</p>
+                              </div>
+
+                              <div className="space-y-2">
+                                <Label className="text-xs font-medium text-muted-foreground">Extraction Behavior</Label>
+                                <div className="space-y-2">
+                                  <label className="flex items-center gap-2 text-sm">
+                                    <input
+                                      type="checkbox"
+                                      checked={aiSettingsData.extraction_enable_inserts}
+                                      onChange={(e) => updateAiSettings.mutate({ extraction_enable_inserts: e.target.checked })}
+                                    />
+                                    Allow creating new memories
+                                  </label>
+                                  <label className="flex items-center gap-2 text-sm">
+                                    <input
+                                      type="checkbox"
+                                      checked={aiSettingsData.extraction_enable_updates}
+                                      onChange={(e) => updateAiSettings.mutate({ extraction_enable_updates: e.target.checked })}
+                                    />
+                                    Allow updating existing memories
+                                  </label>
+                                  <label className="flex items-center gap-2 text-sm">
+                                    <input
+                                      type="checkbox"
+                                      checked={aiSettingsData.extraction_enable_deletes}
+                                      onChange={(e) => updateAiSettings.mutate({ extraction_enable_deletes: e.target.checked })}
+                                    />
+                                    Allow deleting contradicted memories
+                                  </label>
+                                </div>
+                              </div>
+                            </>
+                          )}
+                        </div>
+                      </details>
+
+                      {/* Context Management (Advanced) */}
+                      <details className="group rounded-md border px-3 py-2">
+                        <summary className="flex cursor-pointer items-center gap-2 text-sm font-medium [&::-webkit-details-marker]:hidden">
+                          <ChevronDown className="h-3.5 w-3.5 transition-transform group-open:rotate-180" />
+                          Advanced: Context Management
+                        </summary>
+                        <div className="mt-3 space-y-5 pb-1">
+                          <div className="space-y-2">
+                            <div className="flex items-center justify-between">
+                              <Label>Cleanup Threshold</Label>
+                              <span className="text-xs tabular-nums text-muted-foreground">{Math.round(aiSettingsData.cleanup_threshold_ratio * 100)}%</span>
+                            </div>
+                            <Slider
+                              min={30} max={90} step={5}
+                              value={[Math.round(aiSettingsData.cleanup_threshold_ratio * 100)]}
+                              onValueCommit={([v]) => updateAiSettings.mutate({ cleanup_threshold_ratio: v / 100 })}
+                            />
+                            <p className="text-xs text-muted-foreground">Evict old messages when checkpoint exceeds this % of context window</p>
+                          </div>
+
+                          <div className="space-y-2">
+                            <div className="flex items-center justify-between">
+                              <Label>Summary Size</Label>
+                              <span className="text-xs tabular-nums text-muted-foreground">{Math.round(aiSettingsData.summary_token_ratio * 100)}%</span>
+                            </div>
+                            <Slider
+                              min={1} max={10} step={1}
+                              value={[Math.round(aiSettingsData.summary_token_ratio * 100)]}
+                              onValueCommit={([v]) => updateAiSettings.mutate({ summary_token_ratio: v / 100 })}
+                            />
+                            <p className="text-xs text-muted-foreground">Rolling summary size as a fraction of context window</p>
+                          </div>
+                        </div>
+                      </details>
+
+                      {/* Info callout */}
+                      <div className="flex gap-2 rounded-md border border-blue-200 bg-blue-50 p-3 text-xs text-blue-800 dark:border-blue-900 dark:bg-blue-950/40 dark:text-blue-300">
+                        <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                        <span>Memory requires an embedding provider. Add one in LLM Providers above with type set to &quot;Embedding&quot;. Changes to embedding provider or the memory toggle require a server restart to take effect.</span>
+                      </div>
+                    </>
+                  )}
+                </CardContent>
+              </Card>
+            )}
 
             {/* Knowledge Graphs Section */}
             <Card>
@@ -1308,7 +2508,25 @@ export default function SettingsPage() {
                           <TableCell>
                             {isSupervisor
                               ? <Badge variant="outline" className="text-[10px]">{(a.member_agent_ids || []).length} agents</Badge>
-                              : <Badge variant="outline" className="text-[10px]">{a.tool_slugs.length} tools</Badge>
+                              : (() => {
+                                  const cats: Record<string, number> = {};
+                                  for (const s of a.tool_slugs) {
+                                    const cat = toolCategoryIndex[s];
+                                    if (cat) cats[cat] = (cats[cat] || 0) + 1;
+                                  }
+                                  const entries = Object.entries(cats).sort(([, a], [, b]) => b - a);
+                                  return entries.length > 0 ? (
+                                    <div className="flex flex-wrap gap-1">
+                                      {entries.map(([cat, count]) => (
+                                        <Badge key={cat} className={`text-[10px] ${CATEGORY_COLORS[cat] || ""}`}>
+                                          {(CATEGORY_LABELS[cat] || cat).replace(/ Analytics| Access/, "")} {count}
+                                        </Badge>
+                                      ))}
+                                    </div>
+                                  ) : (
+                                    <Badge variant="outline" className="text-[10px]">{a.tool_slugs.length || "All"} tools</Badge>
+                                  );
+                                })()
                             }
                           </TableCell>
                           <TableCell>
@@ -1448,21 +2666,89 @@ export default function SettingsPage() {
                     <div className="space-y-2">
                       <Label className="flex items-center gap-2"><Wrench className="h-3.5 w-3.5" /> Assigned Tools</Label>
                       <p className="text-xs text-muted-foreground">Select which tools this agent can use. If none are selected, the agent will have access to all tools.</p>
-                      <div className="grid gap-2 sm:grid-cols-2 mt-2">
-                        {aiTools.map((t) => (
-                          <label key={t.slug} className="flex items-start gap-2 rounded-md border p-2 cursor-pointer hover:bg-muted/50">
-                            <input
-                              type="checkbox"
-                              checked={agentForm.tool_slugs.includes(t.slug)}
-                              onChange={() => toggleToolSlug(t.slug)}
-                              className="mt-0.5"
-                            />
-                            <div className="min-w-0">
-                              <p className="text-sm font-medium leading-tight">{t.name}</p>
-                              <p className="text-xs text-muted-foreground truncate">{t.description}</p>
+
+                      <div className="relative">
+                        <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+                        <Input
+                          placeholder="Search tools by name or description…"
+                          value={toolSearch}
+                          onChange={(e) => setToolSearch(e.target.value)}
+                          className="pl-9 h-9"
+                        />
+                      </div>
+
+                      <div className="flex items-center justify-between text-xs text-muted-foreground">
+                        <span>{agentForm.tool_slugs.length} of {aiTools.length} tools selected</span>
+                        <div className="flex gap-2">
+                          <button type="button" className="hover:underline" onClick={() => setAgentForm((f) => ({ ...f, tool_slugs: aiTools.map((t) => t.slug) }))}>Select all</button>
+                          <span>&middot;</span>
+                          <button type="button" className="hover:underline" onClick={() => setAgentForm((f) => ({ ...f, tool_slugs: [] }))}>Clear</button>
+                        </div>
+                      </div>
+
+                      <div className="space-y-2 max-h-80 overflow-y-auto rounded-md border p-2">
+                        {groupedTools.map(([category, tools]) => {
+                          const isCollapsed = collapsedCategories.has(category);
+                          const selectedInGroup = tools.filter((t) => agentForm.tool_slugs.includes(t.slug)).length;
+                          const allSelected = selectedInGroup === tools.length;
+                          const categorySlugs = tools.map((t) => t.slug);
+                          return (
+                            <div key={category}>
+                              <div className="flex items-center gap-2 sticky top-0 bg-background z-10 py-1">
+                                <button
+                                  type="button"
+                                  className="flex items-center gap-1 text-sm font-medium hover:text-foreground transition-colors"
+                                  onClick={() => setCollapsedCategories((prev) => {
+                                    const next = new Set(prev);
+                                    isCollapsed ? next.delete(category) : next.add(category);
+                                    return next;
+                                  })}
+                                >
+                                  <ChevronRight className={`h-3.5 w-3.5 transition-transform ${isCollapsed ? "" : "rotate-90"}`} />
+                                  <Badge className={`text-[10px] font-medium ${CATEGORY_COLORS[category] || "bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-200"}`}>
+                                    {CATEGORY_LABELS[category] || category}
+                                  </Badge>
+                                </button>
+                                <span className="text-[10px] text-muted-foreground">{selectedInGroup}/{tools.length}</span>
+                                <button
+                                  type="button"
+                                  className="text-[10px] text-muted-foreground hover:underline ml-auto"
+                                  onClick={() => {
+                                    setAgentForm((f) => ({
+                                      ...f,
+                                      tool_slugs: allSelected
+                                        ? f.tool_slugs.filter((s) => !categorySlugs.includes(s))
+                                        : [...new Set([...f.tool_slugs, ...categorySlugs])],
+                                    }));
+                                  }}
+                                >
+                                  {allSelected ? "deselect all" : "select all"}
+                                </button>
+                              </div>
+                              {!isCollapsed && (
+                                <div className="grid gap-1.5 sm:grid-cols-2 pl-5 mt-1">
+                                  {tools.map((t) => (
+                                    <label key={t.slug} className="flex items-start gap-2 rounded-md border p-2 cursor-pointer hover:bg-muted/50">
+                                      <input
+                                        type="checkbox"
+                                        checked={agentForm.tool_slugs.includes(t.slug)}
+                                        onChange={() => toggleToolSlug(t.slug)}
+                                        className="mt-0.5"
+                                      />
+                                      <div className="min-w-0">
+                                        <p className="text-sm font-medium leading-tight">{t.name}</p>
+                                        <p className="text-xs text-muted-foreground truncate">{t.description}</p>
+                                      </div>
+                                    </label>
+                                  ))}
+                                </div>
+                              )}
                             </div>
-                          </label>
-                        ))}
+                          );
+                        })}
+                        {groupedTools.length === 0 && (
+                          <p className="text-sm text-muted-foreground text-center py-4">No tools match &ldquo;{toolSearch}&rdquo;</p>
+                        )}
                       </div>
                     </div>
                   )}
@@ -1510,7 +2796,7 @@ export default function SettingsPage() {
             </Dialog>
           </TabsContent>
         )}
-        <TabsContent value="file-exclusions" className="space-y-4">
+        <TabsContent value="file-exclusions" className="min-w-0 space-y-4">
           <p className="text-sm text-muted-foreground">
             Exclude files matching these patterns from line-count metrics during sync.
             Binary files, data files, and lock files can heavily skew contribution statistics.
@@ -1625,7 +2911,7 @@ export default function SettingsPage() {
           )}
         </TabsContent>
 
-        <TabsContent value="custom-fields" className="space-y-4">
+        <TabsContent value="custom-fields" className="min-w-0 space-y-4">
           <p className="text-sm text-muted-foreground">
             Configure which custom fields to import from Azure DevOps during work item sync.
             Discovered fields are stored per-project and included in the <code className="rounded bg-muted px-1 py-0.5 text-xs">custom_fields</code> column on each work item.
@@ -1805,7 +3091,7 @@ export default function SettingsPage() {
           )}
         </TabsContent>
 
-        <TabsContent value="delivery" className="space-y-4">
+        <TabsContent value="delivery" className="min-w-0 space-y-4">
           <Card>
             <CardHeader>
               <CardTitle className="text-base">Sprint Visibility</CardTitle>
@@ -1835,11 +3121,27 @@ export default function SettingsPage() {
           </Card>
         </TabsContent>
 
-        <TabsContent value="sast" className="space-y-4">
+        <TabsContent value="sast" className="min-w-0 space-y-4">
           <SastSettingsSection />
         </TabsContent>
 
-        <TabsContent value="backup" className="space-y-4">
+        {user?.is_admin && (
+          <TabsContent value="auth-settings" className="min-w-0 space-y-4">
+            <AuthSettingsSection />
+          </TabsContent>
+        )}
+
+        {user?.is_admin && (
+          <TabsContent value="notifications" className="min-w-0 space-y-4">
+            <NotificationsSettingsSection />
+          </TabsContent>
+        )}
+
+        <TabsContent value="security" className="min-w-0 space-y-4">
+          <UserSecuritySection />
+        </TabsContent>
+
+        <TabsContent value="backup" className="min-w-0 space-y-4">
           <div className="grid gap-4 md:grid-cols-2">
             <Card>
               <CardHeader>
@@ -1926,7 +3228,7 @@ export default function SettingsPage() {
           )}
         </TabsContent>
 
-        <TabsContent value="feedback" className="space-y-4">
+        <TabsContent value="feedback" className="min-w-0 space-y-4">
           <Card>
             <CardHeader>
               <CardTitle>Feedback & Capability Gaps</CardTitle>

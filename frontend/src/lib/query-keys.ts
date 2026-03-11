@@ -8,6 +8,7 @@ export const queryKeys = {
     prStats: (id: string) => ["projects", id, "prStats"] as const,
   },
   repos: {
+    list: (projectId: string) => ["projects", projectId, "repos"] as const,
     detail: (id: string) => ["repos", id] as const,
     stats: (id: string, filters?: { branches?: string[]; from?: string; to?: string }) => ["repos", id, "stats", filters] as const,
     syncJobs: (id: string) => ["repos", id, "syncJobs"] as const,
@@ -110,6 +111,12 @@ export const queryKeys = {
     summary: (projectId: string, teamId: string) => ["teamInsights", projectId, teamId, "summary"] as const,
     runs: (projectId: string, teamId: string) => ["teamInsights", projectId, teamId, "runs"] as const,
   },
+  dependencies: {
+    findings: (id: string, scope: "repo" | "project", filters?: Record<string, unknown>) => ["dependencies", scope, id, "findings", filters] as const,
+    summary: (id: string, scope: "repo" | "project") => ["dependencies", scope, id, "summary"] as const,
+    runs: (id: string, scope: "repo" | "project") => ["dependencies", scope, id, "runs"] as const,
+    settings: ["dependencies", "settings"] as const,
+  },
   sast: {
     findings: (id: string, scope: "repo" | "project", filters?: Record<string, unknown>) => ["sast", scope, id, "findings", filters] as const,
     summary: (id: string, scope: "repo" | "project") => ["sast", scope, id, "summary"] as const,
@@ -122,4 +129,11 @@ export const queryKeys = {
     all: (filters?: Record<string, unknown>) => ["feedback", filters] as const,
     detail: (id: string) => ["feedback", id] as const,
   },
+  smtpSettings: ["smtpSettings"] as const,
+  emailTemplates: ["emailTemplates"] as const,
+  emailTemplateDetail: (slug: string) => ["emailTemplates", slug] as const,
+  authSettings: ["authSettings"] as const,
+  oidcProviders: ["oidcProviders"] as const,
+  oidcProviderDetail: (id: string) => ["oidcProviders", id] as const,
+  authProviders: ["authProviders"] as const,
 };

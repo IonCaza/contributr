@@ -1,6 +1,7 @@
 "use client";
 
-import { use, useState, useCallback, useEffect } from "react";
+import { use, useState, useCallback } from "react";
+import { useActiveRunTracking } from "@/hooks/use-active-run-tracking";
 import {
   AlertTriangle, AlertCircle, Info, CheckCircle2, Play, Loader2, TrendingUp,
 } from "lucide-react";
@@ -286,8 +287,6 @@ export default function InsightsPage({
   const qc = useQueryClient();
   const [categoryFilter, setCategoryFilter] = useState("");
   const [severityFilter, setSeverityFilter] = useState("");
-  const [activeRunId, setActiveRunId] = useState<string | null>(null);
-
   const filters = {
     ...(categoryFilter && { category: categoryFilter }),
     ...(severityFilter && { severity: severityFilter }),
@@ -301,31 +300,24 @@ export default function InsightsPage({
 
   const lastRun = runs?.[0];
   const isRunning = lastRun?.status === "running" || triggerRun.isPending;
-
-  useEffect(() => {
-    if (lastRun?.status === "running" && !activeRunId) {
-      setActiveRunId(lastRun.id);
-    }
-  }, [lastRun, activeRunId]);
+  const { activeRunId, startTracking, stopTracking } = useActiveRunTracking(lastRun);
 
   const handleTriggerRun = useCallback(() => {
     triggerRun.mutate(undefined, {
-      onSuccess: (run) => {
-        setActiveRunId(run.id);
-      },
+      onSuccess: (run) => startTracking(run.id),
     });
-  }, [triggerRun]);
+  }, [triggerRun, startTracking]);
 
   const logUrl = activeRunId
     ? `${api.getApiBase()}/projects/${projectId}/insights/runs/${activeRunId}/logs`
     : null;
 
   const handleLogsDone = useCallback(() => {
-    setActiveRunId(null);
+    stopTracking();
     refetchRuns();
     qc.invalidateQueries({ queryKey: ["insights", projectId, "findings"] });
     qc.invalidateQueries({ queryKey: queryKeys.insights.summary(projectId) });
-  }, [projectId, qc, refetchRuns]);
+  }, [stopTracking, projectId, qc, refetchRuns]);
 
   return (
     <div className="space-y-6">

@@ -68,7 +68,7 @@ def make_state_modifier(
             keep_tokens += tok
 
         result: list[BaseMessage] = [SystemMessage(content=system_prompt)]
-        if summary and len(keep) < len(messages):
+        if summary:
             result.append(
                 SystemMessage(content=f"Previous conversation context:\n{summary}")
             )

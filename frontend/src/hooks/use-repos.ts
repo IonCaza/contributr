@@ -2,6 +2,14 @@ import { useQuery, useMutation, useQueryClient, keepPreviousData } from "@tansta
 import { api } from "@/lib/api-client";
 import { queryKeys } from "@/lib/query-keys";
 
+export function useProjectRepos(projectId: string) {
+  return useQuery({
+    queryKey: queryKeys.repos.list(projectId),
+    queryFn: () => api.listRepos(projectId),
+    enabled: !!projectId,
+  });
+}
+
 export function useRepo(id: string) {
   return useQuery({
     queryKey: queryKeys.repos.detail(id),

@@ -10,7 +10,11 @@ import logging
 import uuid
 from typing import TYPE_CHECKING
 
+from sqlalchemy import select
+
 from app.agents.memory.pool import get_store
+from app.db.base import async_session
+from app.db.models.ai_settings import AiSettings, SINGLETON_ID
 
 if TYPE_CHECKING:
     from langchain_core.messages import BaseMessage
@@ -18,26 +22,75 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _manager = None
+_manager_model: str | None = None
 
 
-def _get_memory_manager():
-    """Lazy-init the memory store manager (requires langmem + store)."""
-    global _manager
-    if _manager is not None:
-        return _manager
+def invalidate_extraction_cache() -> None:
+    """Force the manager to be rebuilt on next call (e.g. after settings change)."""
+    global _manager, _manager_model
+    _manager = None
+    _manager_model = None
+
+
+async def _resolve_extraction_model() -> tuple[str | None, dict]:
+    """Read AiSettings to determine the extraction model string and langmem flags."""
+    try:
+        async with async_session() as db:
+            row = (await db.execute(
+                select(AiSettings).where(AiSettings.id == SINGLETON_ID)
+            )).scalar_one_or_none()
+
+            if not row or not row.extraction_enabled:
+                return None, {}
+
+            flags = {
+                "enable_inserts": row.extraction_enable_inserts,
+                "enable_updates": row.extraction_enable_updates,
+                "enable_deletes": row.extraction_enable_deletes,
+            }
+
+            if not row.extraction_provider_id:
+                return None, flags
+
+            from app.db.models.llm_provider import LlmProvider
+            provider = (await db.execute(
+                select(LlmProvider).where(LlmProvider.id == row.extraction_provider_id)
+            )).scalar_one_or_none()
+
+            if not provider:
+                return None, flags
+
+            return provider.model, flags
+    except Exception:
+        logger.debug("Failed to resolve extraction model from settings", exc_info=True)
+        return None, {}
+
+
+async def _get_memory_manager():
+    """Lazy-init the memory store manager (requires langmem + store + configured provider)."""
+    global _manager, _manager_model
 
     store = get_store()
     if store is None:
         return None
 
+    model, flags = await _resolve_extraction_model()
+    if not model:
+        return None
+
+    if _manager is not None and _manager_model == model:
+        return _manager
+
     try:
         from langmem import create_memory_store_manager
 
         _manager = create_memory_store_manager(
-            "anthropic:claude-3-5-sonnet-latest",
+            model,
             namespace=("memories", "{user_id}"),
+            **flags,
         )
-        logger.info("LangMem memory store manager initialised")
+        _manager_model = model
+        logger.info("LangMem memory store manager initialised with model=%s", model)
         return _manager
     except Exception:
         logger.debug("LangMem not available or failed to initialise", exc_info=True)
@@ -54,7 +107,7 @@ async def extract_memories(
         user_id: Scope extraction to this user's namespace.
         messages: List of {"role": ..., "content": ...} dicts from the turn.
     """
-    manager = _get_memory_manager()
+    manager = await _get_memory_manager()
     if manager is None:
         return
 

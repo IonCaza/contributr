@@ -13,19 +13,22 @@ import {
 } from "@/components/ui/resizable";
 import { useAiStatus } from "@/hooks/use-settings";
 import { FeedbackWidget } from "@/components/feedback-widget";
+import { MfaSetupDialog } from "@/components/mfa-setup-dialog";
 
 export default function DashboardLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
-  const { user, loading } = useAuth();
+  const { user, loading, refresh } = useAuth();
   const router = useRouter();
   const [chatOpen, setChatOpen] = useState(false);
   const chatPanelRef = useRef<PanelImperativeHandle>(null);
 
   const { data: aiStatusData } = useAiStatus();
   const aiEnabled = !!(aiStatusData?.enabled && aiStatusData?.configured);
+
+  const needsMfaSetup = user?.mfa_setup_required ?? false;
 
   useEffect(() => {
     if (!loading && !user) {
@@ -93,6 +96,17 @@ export default function DashboardLayout({
         </ResizablePanel>
       </ResizablePanelGroup>
       <FeedbackWidget />
+      {needsMfaSetup && (
+        <MfaSetupDialog
+          open
+          dismissible={false}
+          onComplete={async (at, rt) => {
+            localStorage.setItem("access_token", at);
+            localStorage.setItem("refresh_token", rt);
+            await refresh();
+          }}
+        />
+      )}
     </div>
   );
 }

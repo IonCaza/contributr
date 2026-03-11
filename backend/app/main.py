@@ -10,6 +10,9 @@ from app.db.base import engine, async_session
 from app.db.models import Repository
 from app.db.models.agent_config import AgentConfig, AgentToolAssignment, SupervisorMember
 from app.db.models.ai_settings import AiSettings, SINGLETON_ID
+from app.db.models.auth_settings import AuthSettings, SINGLETON_ID as AUTH_SETTINGS_ID
+from app.db.models.smtp_settings import SmtpSettings, SINGLETON_ID as SMTP_SETTINGS_ID
+from app.db.models.email_template import EmailTemplate
 from app.db.models.llm_provider import LlmProvider
 from app.agents.llm.manager import build_embeddings_from_provider, get_embedding_dims
 from app.agents.memory.pool import init_memory_pool, close_memory_pool
@@ -25,7 +28,14 @@ from app.api import (
     contributor_insights as contributor_insights_api,
     team_insights as team_insights_api,
     sast as sast_api,
+    dependencies as dep_api,
     feedback as feedback_api,
+    mfa as mfa_api,
+    smtp_settings as smtp_settings_api,
+    email_templates as email_templates_api,
+    auth_settings as auth_settings_api,
+    oidc_providers as oidc_providers_api,
+    oidc_auth as oidc_auth_api,
 )
 from app.api.repositories import _parse_platform_fields
 from app.agents.builtin import get_builtin_agents
@@ -169,15 +179,87 @@ async def _seed_builtin_agents():
             await db.commit()
 
 
+async def _ensure_auth_settings():
+    """Ensure the AuthSettings singleton row exists."""
+    async with async_session() as db:
+        result = await db.execute(select(AuthSettings).where(AuthSettings.id == AUTH_SETTINGS_ID))
+        if not result.scalar_one_or_none():
+            db.add(AuthSettings(id=AUTH_SETTINGS_ID))
+            await db.commit()
+
+
+async def _ensure_smtp_settings():
+    """Ensure the SmtpSettings singleton row exists."""
+    async with async_session() as db:
+        result = await db.execute(select(SmtpSettings).where(SmtpSettings.id == SMTP_SETTINGS_ID))
+        if not result.scalar_one_or_none():
+            db.add(SmtpSettings(id=SMTP_SETTINGS_ID))
+            await db.commit()
+
+
+_BUILTIN_EMAIL_TEMPLATES = [
+    {
+        "slug": "otp_code",
+        "name": "OTP Verification Code",
+        "subject": "Your Contributr verification code",
+        "body_html": (
+            '<div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:24px">'
+            '<h2 style="margin:0 0 16px">Verification Code</h2>'
+            "<p>Hi {{ username }},</p>"
+            '<p>Your one-time verification code is:</p>'
+            '<div style="font-size:32px;font-weight:700;letter-spacing:6px;text-align:center;'
+            'padding:16px;margin:16px 0;background:#f4f4f5;border-radius:8px">{{ code }}</div>'
+            '<p style="color:#71717a;font-size:14px">This code expires in 5 minutes. '
+            "If you did not request this, you can safely ignore this email.</p>"
+            "</div>"
+        ),
+        "body_text": "Hi {{ username }},\n\nYour verification code is: {{ code }}\n\nThis code expires in 5 minutes.",
+        "variables": {
+            "code": {"description": "6-digit OTP code", "sample": "482916"},
+            "username": {"description": "User's display name", "sample": "johndoe"},
+        },
+    },
+]
+
+
+async def _seed_email_templates():
+    """Create builtin email templates if they don't already exist."""
+    async with async_session() as db:
+        for spec in _BUILTIN_EMAIL_TEMPLATES:
+            result = await db.execute(
+                select(EmailTemplate).where(EmailTemplate.slug == spec["slug"])
+            )
+            if not result.scalar_one_or_none():
+                db.add(EmailTemplate(is_builtin=True, **spec))
+                logger.info("Seeded builtin email template: %s", spec["slug"])
+        await db.commit()
+
+
 async def _init_memory():
-    """Start the LangGraph memory pool with an optional embedding provider."""
+    """Start the LangGraph memory pool with an optional embedding provider.
+
+    Reads memory_enabled and memory_embedding_provider_id from AiSettings
+    to decide whether to activate the vector store.
+    """
     embed_fn = None
     embed_dims = 1536
     try:
         async with async_session() as db:
-            row = (await db.execute(
-                select(LlmProvider).where(LlmProvider.model_type == "embedding").limit(1)
+            ai_row = (await db.execute(
+                select(AiSettings).where(AiSettings.id == SINGLETON_ID)
             )).scalar_one_or_none()
+
+            if ai_row and not ai_row.memory_enabled:
+                logger.info("Memory disabled in AI settings — vector store skipped")
+                await init_memory_pool(embed_fn=None, embed_dims=embed_dims)
+                return
+
+            provider_query = select(LlmProvider).where(LlmProvider.model_type == "embedding")
+            if ai_row and ai_row.memory_embedding_provider_id:
+                provider_query = provider_query.where(LlmProvider.id == ai_row.memory_embedding_provider_id)
+            provider_query = provider_query.limit(1)
+
+            row = (await db.execute(provider_query)).scalar_one_or_none()
             if row:
                 embed_fn = build_embeddings_from_provider(row)
                 embed_dims = get_embedding_dims(row)
@@ -193,6 +275,9 @@ async def _init_memory():
 async def lifespan(app: FastAPI):
     await _backfill_platform_fields()
     await _ensure_ai_settings()
+    await _ensure_auth_settings()
+    await _ensure_smtp_settings()
+    await _seed_email_templates()
     await _seed_builtin_agents()
     await _init_memory()
     yield
@@ -238,7 +323,16 @@ app.include_router(sast_api.project_router)
 app.include_router(sast_api.profile_router)
 app.include_router(sast_api.settings_router)
 app.include_router(sast_api.ignored_router)
+app.include_router(dep_api.repo_router)
+app.include_router(dep_api.project_router)
+app.include_router(dep_api.settings_router)
 app.include_router(feedback_api.router)
+app.include_router(mfa_api.router, prefix="/api")
+app.include_router(smtp_settings_api.router, prefix="/api")
+app.include_router(email_templates_api.router, prefix="/api")
+app.include_router(auth_settings_api.router, prefix="/api")
+app.include_router(oidc_providers_api.router, prefix="/api")
+app.include_router(oidc_auth_api.router, prefix="/api")
 
 
 @app.get("/api/health")

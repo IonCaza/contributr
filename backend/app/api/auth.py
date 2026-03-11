@@ -1,21 +1,42 @@
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel, EmailStr, field_validator
+from pydantic import BaseModel, field_validator
 import re
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.base import get_db
 from app.db.models import User
-from app.auth.security import hash_password, verify_password, create_access_token, create_refresh_token, decode_token
+from app.db.models.oidc_provider import OidcProvider
+from app.auth.security import (
+    hash_password,
+    create_access_token,
+    create_refresh_token,
+    create_mfa_challenge_token,
+    create_mfa_setup_token,
+    decode_token,
+)
+from app.db.models.auth_settings import AuthSettings, SINGLETON_ID as AUTH_SETTINGS_ID
 from app.auth.dependencies import get_current_user, require_admin
+from app.auth.providers.local import LocalAuthProvider
+from app.services.mfa import (
+    verify_totp,
+    decrypt_totp_secret,
+    verify_email_otp,
+    verify_recovery_code,
+    generate_email_otp,
+    store_email_otp,
+)
+from app.services.email import send_templated_email
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
-
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+_local_provider = LocalAuthProvider()
 
+
+# ── Schemas ──────────────────────────────────────────────────────────────
 
 class RegisterRequest(BaseModel):
     email: str
@@ -42,6 +63,17 @@ class TokenResponse(BaseModel):
     token_type: str = "bearer"
 
 
+class MfaChallengeResponse(BaseModel):
+    requires_mfa: bool = True
+    mfa_token: str
+    mfa_method: str | None = None
+
+
+class MfaSetupRequiredResponse(BaseModel):
+    requires_mfa_setup: bool = True
+    mfa_setup_token: str
+
+
 class UserResponse(BaseModel):
     id: uuid.UUID
     email: str
@@ -49,6 +81,10 @@ class UserResponse(BaseModel):
     full_name: str | None
     is_admin: bool
     is_active: bool
+    auth_provider: str
+    mfa_enabled: bool
+    mfa_method: str | None
+    mfa_setup_complete: bool
 
     model_config = {"from_attributes": True}
 
@@ -67,6 +103,36 @@ class CreateUserRequest(BaseModel):
             raise ValueError("Not a valid email address")
         return v.lower().strip()
 
+
+class UpdateUserRequest(BaseModel):
+    email: str | None = None
+    username: str | None = None
+    full_name: str | None = None
+    is_admin: bool | None = None
+    is_active: bool | None = None
+    password: str | None = None
+
+    @field_validator("email")
+    @classmethod
+    def validate_email(cls, v: str | None) -> str | None:
+        if v is not None:
+            if not _EMAIL_RE.match(v):
+                raise ValueError("Not a valid email address")
+            return v.lower().strip()
+        return v
+
+
+class MfaVerifyRequest(BaseModel):
+    mfa_token: str
+    code: str
+    method: str  # "totp", "email", "recovery"
+
+
+class MfaSendEmailOtpRequest(BaseModel):
+    mfa_token: str
+
+
+# ── Endpoints ────────────────────────────────────────────────────────────
 
 @router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
 async def register(body: RegisterRequest, db: AsyncSession = Depends(get_db)):
@@ -87,18 +153,128 @@ async def register(body: RegisterRequest, db: AsyncSession = Depends(get_db)):
     return user
 
 
-@router.post("/login", response_model=TokenResponse)
+@router.post("/login")
 async def login(body: LoginRequest, db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(User).where(User.username == body.username))
-    user = result.scalar_one_or_none()
-    if user is None or not verify_password(body.password, user.hashed_password):
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
-    if not user.is_active:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Account is disabled")
+    auth_result = await _local_provider.authenticate(
+        {"username": body.username, "password": body.password}, db
+    )
+    user = auth_result.user
+
+    row = await db.execute(select(AuthSettings).where(AuthSettings.id == AUTH_SETTINGS_ID))
+    auth_settings = row.scalar_one_or_none()
+    if auth_settings and not auth_settings.local_login_enabled and not user.is_admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Local login is disabled. Please use an external identity provider.",
+        )
+
+    if auth_result.requires_mfa:
+        return MfaChallengeResponse(
+            mfa_token=create_mfa_challenge_token(str(user.id)),
+            mfa_method=auth_result.mfa_method,
+        )
+
+    if auth_result.requires_mfa_setup:
+        return MfaSetupRequiredResponse(
+            mfa_setup_token=create_mfa_setup_token(str(user.id)),
+        )
+
     return TokenResponse(
         access_token=create_access_token(str(user.id)),
         refresh_token=create_refresh_token(str(user.id)),
     )
+
+
+class OidcProviderPublicItem(BaseModel):
+    slug: str
+    name: str
+    provider_type: str
+
+
+class AuthProvidersResponse(BaseModel):
+    local_login_enabled: bool
+    oidc_providers: list[OidcProviderPublicItem]
+
+
+@router.get("/providers", response_model=AuthProvidersResponse)
+async def list_auth_providers(db: AsyncSession = Depends(get_db)):
+    """Public endpoint -- returns what login options are available."""
+    row = await db.execute(select(AuthSettings).where(AuthSettings.id == AUTH_SETTINGS_ID))
+    auth_settings = row.scalar_one_or_none()
+    local_enabled = auth_settings.local_login_enabled if auth_settings else True
+
+    result = await db.execute(
+        select(OidcProvider).where(OidcProvider.enabled == True).order_by(OidcProvider.name)  # noqa: E712
+    )
+    providers = result.scalars().all()
+
+    return AuthProvidersResponse(
+        local_login_enabled=local_enabled,
+        oidc_providers=[
+            OidcProviderPublicItem(slug=p.slug, name=p.name, provider_type=p.provider_type)
+            for p in providers
+        ],
+    )
+
+
+@router.post("/mfa/verify", response_model=TokenResponse)
+async def mfa_verify(body: MfaVerifyRequest, db: AsyncSession = Depends(get_db)):
+    """Verify an MFA code during login and issue full tokens."""
+    payload = decode_token(body.mfa_token)
+    if payload is None or payload.get("type") != "mfa_challenge":
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired MFA token")
+
+    user_id = payload["sub"]
+    result = await db.execute(select(User).where(User.id == uuid.UUID(user_id)))
+    user = result.scalar_one_or_none()
+    if user is None or not user.is_active:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
+
+    verified = False
+    if body.method == "totp":
+        if user.totp_secret_encrypted:
+            secret = decrypt_totp_secret(user.totp_secret_encrypted)
+            verified = verify_totp(secret, body.code)
+    elif body.method == "email":
+        verified = await verify_email_otp(str(user.id), body.code)
+    elif body.method == "recovery":
+        if user.mfa_recovery_codes_encrypted:
+            verified, updated = verify_recovery_code(user.mfa_recovery_codes_encrypted, body.code)
+            if verified:
+                user.mfa_recovery_codes_encrypted = updated
+                await db.commit()
+
+    if not verified:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid MFA code")
+
+    return TokenResponse(
+        access_token=create_access_token(str(user.id)),
+        refresh_token=create_refresh_token(str(user.id)),
+    )
+
+
+@router.post("/mfa/send-email-otp", status_code=status.HTTP_200_OK)
+async def mfa_send_email_otp(body: MfaSendEmailOtpRequest, db: AsyncSession = Depends(get_db)):
+    """Send an email OTP during the MFA challenge login flow."""
+    payload = decode_token(body.mfa_token)
+    if payload is None or payload.get("type") not in ("mfa_challenge", "mfa_setup"):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired MFA token")
+
+    user_id = payload["sub"]
+    result = await db.execute(select(User).where(User.id == uuid.UUID(user_id)))
+    user = result.scalar_one_or_none()
+    if user is None or not user.is_active:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
+
+    code = generate_email_otp()
+    await store_email_otp(str(user.id), code)
+
+    try:
+        await send_templated_email(user.email, "otp_code", {"code": code, "username": user.username}, db)
+    except Exception:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Failed to send OTP email. Check SMTP configuration.")
+
+    return {"detail": "OTP sent"}
 
 
 @router.post("/refresh", response_model=TokenResponse)
@@ -117,9 +293,24 @@ async def refresh(refresh_token: str, db: AsyncSession = Depends(get_db)):
     )
 
 
-@router.get("/me", response_model=UserResponse)
-async def me(user: User = Depends(get_current_user)):
-    return user
+class MeResponse(UserResponse):
+    mfa_setup_required: bool = False
+
+@router.get("/me", response_model=MeResponse)
+async def me(user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    force_mfa = False
+    if user.auth_provider == "local" and not user.mfa_setup_complete:
+        row = await db.execute(select(AuthSettings).where(AuthSettings.id == AUTH_SETTINGS_ID))
+        auth_settings = row.scalar_one_or_none()
+        if auth_settings and auth_settings.force_mfa_local_auth:
+            force_mfa = True
+    return MeResponse(
+        id=user.id, email=user.email, username=user.username,
+        full_name=user.full_name, is_admin=user.is_admin, is_active=user.is_active,
+        auth_provider=user.auth_provider, mfa_enabled=user.mfa_enabled,
+        mfa_method=user.mfa_method, mfa_setup_complete=user.mfa_setup_complete,
+        mfa_setup_required=force_mfa,
+    )
 
 
 @router.get("/users", response_model=list[UserResponse])
@@ -144,6 +335,66 @@ async def create_user(body: CreateUserRequest, db: AsyncSession = Depends(get_db
     await db.commit()
     await db.refresh(user)
     return user
+
+
+@router.put("/users/{user_id}", response_model=UserResponse)
+async def update_user(
+    user_id: uuid.UUID,
+    body: UpdateUserRequest,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require_admin),
+):
+    result = await db.execute(select(User).where(User.id == user_id))
+    target = result.scalar_one_or_none()
+    if target is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
+    if body.email is not None and body.email != target.email:
+        dup = await db.execute(select(User).where(User.email == body.email, User.id != user_id))
+        if dup.scalar_one_or_none():
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Email already taken")
+        target.email = body.email
+    if body.username is not None and body.username != target.username:
+        dup = await db.execute(select(User).where(User.username == body.username, User.id != user_id))
+        if dup.scalar_one_or_none():
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Username already taken")
+        target.username = body.username
+    if body.full_name is not None:
+        target.full_name = body.full_name
+    if body.is_admin is not None:
+        if user_id == admin.id and not body.is_admin:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cannot revoke your own admin privileges")
+        target.is_admin = body.is_admin
+    if body.is_active is not None:
+        if user_id == admin.id and not body.is_active:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cannot deactivate yourself")
+        target.is_active = body.is_active
+    if body.password is not None and body.password:
+        target.hashed_password = hash_password(body.password)
+
+    await db.commit()
+    await db.refresh(target)
+    return target
+
+
+@router.post("/users/{user_id}/mfa/reset", response_model=UserResponse)
+async def admin_reset_mfa(
+    user_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    _admin: User = Depends(require_admin),
+):
+    result = await db.execute(select(User).where(User.id == user_id))
+    target = result.scalar_one_or_none()
+    if target is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    target.mfa_enabled = False
+    target.mfa_method = None
+    target.totp_secret_encrypted = None
+    target.mfa_recovery_codes_encrypted = None
+    target.mfa_setup_complete = False
+    await db.commit()
+    await db.refresh(target)
+    return target
 
 
 @router.delete("/users/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
