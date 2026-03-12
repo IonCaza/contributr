@@ -30,6 +30,7 @@ class User(Base):
     totp_secret_encrypted: Mapped[str | None] = mapped_column(String(2048), comment="Fernet-encrypted TOTP secret for authenticator apps")
     mfa_recovery_codes_encrypted: Mapped[str | None] = mapped_column(Text, comment="Fernet-encrypted JSON array of bcrypt-hashed recovery codes")
     mfa_setup_complete: Mapped[bool] = mapped_column(Boolean, default=False, comment="Whether MFA setup has been completed by the user")
+    must_change_password: Mapped[bool] = mapped_column(Boolean, default=False, comment="Whether user must change password on next login (temporary password)")
 
     oidc_provider_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("oidc_providers.id", ondelete="SET NULL"), nullable=True)
     oidc_subject: Mapped[str | None] = mapped_column(String(255), nullable=True, comment="Subject claim from the OIDC ID token")

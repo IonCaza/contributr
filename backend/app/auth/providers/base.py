@@ -12,6 +12,7 @@ class AuthResult:
     requires_mfa: bool = False
     mfa_method: str | None = None
     requires_mfa_setup: bool = False
+    requires_password_change: bool = False
 
 
 class AuthProvider(ABC):

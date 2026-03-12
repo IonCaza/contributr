@@ -29,6 +29,9 @@ class LocalAuthProvider(AuthProvider):
                 detail="Account is disabled",
             )
 
+        if user.must_change_password:
+            return AuthResult(user=user, requires_password_change=True)
+
         if user.mfa_enabled and user.mfa_setup_complete:
             return AuthResult(
                 user=user,

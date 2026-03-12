@@ -3,7 +3,7 @@
 import { createContext, useContext, useEffect, useState, useCallback, type ReactNode } from "react";
 import { api, setSessionExpiredHandler } from "./api-client";
 import { queryClient } from "./query-client";
-import type { User, LoginResponse, MfaChallengeResponse, MfaSetupRequiredResponse } from "./types";
+import type { User, LoginResponse, MfaChallengeResponse, MfaSetupRequiredResponse, PasswordChangeRequiredResponse } from "./types";
 
 function isMfaChallenge(r: LoginResponse): r is MfaChallengeResponse {
   return "requires_mfa" in r && r.requires_mfa === true;
@@ -13,16 +13,21 @@ function isMfaSetupRequired(r: LoginResponse): r is MfaSetupRequiredResponse {
   return "requires_mfa_setup" in r && r.requires_mfa_setup === true;
 }
 
+function isPasswordChangeRequired(r: LoginResponse): r is PasswordChangeRequiredResponse {
+  return "password_change_required" in r && r.password_change_required === true;
+}
+
 interface AuthContextType {
   user: User | null;
   loading: boolean;
-  login: (username: string, password: string) => Promise<"ok" | "mfa_pending" | "mfa_setup_required">;
+  login: (username: string, password: string) => Promise<"ok" | "mfa_pending" | "mfa_setup_required" | "password_change_required">;
   logout: () => void;
   refresh: () => Promise<void>;
   mfaPending: boolean;
   mfaSetupRequired: boolean;
   mfaToken: string | null;
   mfaMethod: string | null;
+  passwordChangeToken: string | null;
   verifyMfa: (code: string, method: string) => Promise<void>;
   completeMfaSetup: (accessToken: string, refreshToken: string) => Promise<void>;
   clearMfaState: () => void;
@@ -37,6 +42,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [mfaSetupRequired, setMfaSetupRequired] = useState(false);
   const [mfaToken, setMfaToken] = useState<string | null>(null);
   const [mfaMethod, setMfaMethod] = useState<string | null>(null);
+  const [passwordChangeToken, setPasswordChangeToken] = useState<string | null>(null);
 
   const logout = useCallback(() => {
     localStorage.removeItem("access_token");
@@ -46,6 +52,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setMfaSetupRequired(false);
     setMfaToken(null);
     setMfaMethod(null);
+    setPasswordChangeToken(null);
     queryClient.clear();
   }, []);
 
@@ -82,9 +89,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setMfaMethod(null);
   }, []);
 
-  const login = async (username: string, password: string): Promise<"ok" | "mfa_pending" | "mfa_setup_required"> => {
+  const login = async (username: string, password: string): Promise<"ok" | "mfa_pending" | "mfa_setup_required" | "password_change_required"> => {
     clearMfaState();
+    setPasswordChangeToken(null);
     const result = await api.login({ username, password });
+
+    if (isPasswordChangeRequired(result)) {
+      setPasswordChangeToken(result.password_change_token);
+      return "password_change_required";
+    }
 
     if (isMfaChallenge(result)) {
       setMfaPending(true);
@@ -125,6 +138,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     <AuthContext.Provider value={{
       user, loading, login, logout, refresh,
       mfaPending, mfaSetupRequired, mfaToken, mfaMethod,
+      passwordChangeToken,
       verifyMfa, completeMfaSetup, clearMfaState,
     }}>
       {children}

@@ -1310,7 +1310,7 @@ export default function SettingsPage() {
   const [credTestResult, setCredTestResult] = useState<{ id: string; success: boolean; message: string } | null>(null);
 
   const [userOpen, setUserOpen] = useState(false);
-  const [userForm, setUserForm] = useState({ email: "", username: "", password: "", full_name: "", is_admin: false });
+  const [userForm, setUserForm] = useState({ email: "", username: "", password: "", full_name: "", is_admin: false, send_invite: true, temporary_password: true });
   const [editUserOpen, setEditUserOpen] = useState(false);
   const [editUserId, setEditUserId] = useState<string | null>(null);
   const [editUserForm, setEditUserForm] = useState({ email: "", username: "", full_name: "", is_admin: false, is_active: true, password: "" });
@@ -1426,7 +1426,7 @@ export default function SettingsPage() {
   async function handleCreateUser(e: React.FormEvent) {
     e.preventDefault();
     await createUser.mutateAsync(userForm);
-    setUserForm({ email: "", username: "", password: "", full_name: "", is_admin: false });
+    setUserForm({ email: "", username: "", password: "", full_name: "", is_admin: false, send_invite: true, temporary_password: true });
     setUserOpen(false);
   }
 
@@ -1824,6 +1824,14 @@ export default function SettingsPage() {
                     <div className="flex items-center gap-2">
                       <input type="checkbox" id="is_admin" checked={userForm.is_admin} onChange={(e) => setUserForm((f) => ({ ...f, is_admin: e.target.checked }))} />
                       <Label htmlFor="is_admin">Admin privileges</Label>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <input type="checkbox" id="temporary_password" checked={userForm.temporary_password} onChange={(e) => setUserForm((f) => ({ ...f, temporary_password: e.target.checked }))} />
+                      <Label htmlFor="temporary_password">Set as temporary password (force change on login)</Label>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <input type="checkbox" id="send_invite" checked={userForm.send_invite} onChange={(e) => setUserForm((f) => ({ ...f, send_invite: e.target.checked }))} />
+                      <Label htmlFor="send_invite">Send invite email</Label>
                     </div>
                     <Button type="submit" className="w-full" disabled={createUser.isPending}>
                       {createUser.isPending ? "Creating..." : "Create User"}

@@ -1,6 +1,6 @@
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, field_validator
 import re
 from sqlalchemy import select, func
@@ -15,6 +15,7 @@ from app.auth.security import (
     create_refresh_token,
     create_mfa_challenge_token,
     create_mfa_setup_token,
+    create_password_change_token,
     decode_token,
 )
 from app.db.models.auth_settings import AuthSettings, SINGLETON_ID as AUTH_SETTINGS_ID
@@ -74,6 +75,11 @@ class MfaSetupRequiredResponse(BaseModel):
     mfa_setup_token: str
 
 
+class PasswordChangeRequiredResponse(BaseModel):
+    password_change_required: bool = True
+    password_change_token: str
+
+
 class UserResponse(BaseModel):
     id: uuid.UUID
     email: str
@@ -95,6 +101,8 @@ class CreateUserRequest(BaseModel):
     password: str
     full_name: str | None = None
     is_admin: bool = False
+    send_invite: bool = False
+    temporary_password: bool = False
 
     @field_validator("email")
     @classmethod
@@ -132,6 +140,11 @@ class MfaSendEmailOtpRequest(BaseModel):
     mfa_token: str
 
 
+class ChangePasswordRequest(BaseModel):
+    token: str
+    new_password: str
+
+
 # ── Endpoints ────────────────────────────────────────────────────────────
 
 @router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
@@ -166,6 +179,11 @@ async def login(body: LoginRequest, db: AsyncSession = Depends(get_db)):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Local login is disabled. Please use an external identity provider.",
+        )
+
+    if auth_result.requires_password_change:
+        return PasswordChangeRequiredResponse(
+            password_change_token=create_password_change_token(str(user.id)),
         )
 
     if auth_result.requires_mfa:
@@ -293,6 +311,29 @@ async def refresh(refresh_token: str, db: AsyncSession = Depends(get_db)):
     )
 
 
+@router.post("/change-password", response_model=TokenResponse)
+async def change_password(body: ChangePasswordRequest, db: AsyncSession = Depends(get_db)):
+    """Accept a password-change token and set a new password, clearing the temporary flag."""
+    payload = decode_token(body.token)
+    if payload is None or payload.get("type") != "password_change":
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired password change token")
+
+    user_id = payload["sub"]
+    result = await db.execute(select(User).where(User.id == uuid.UUID(user_id)))
+    user = result.scalar_one_or_none()
+    if user is None or not user.is_active:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
+
+    user.hashed_password = hash_password(body.new_password)
+    user.must_change_password = False
+    await db.commit()
+
+    return TokenResponse(
+        access_token=create_access_token(str(user.id)),
+        refresh_token=create_refresh_token(str(user.id)),
+    )
+
+
 class MeResponse(UserResponse):
     mfa_setup_required: bool = False
 
@@ -320,7 +361,12 @@ async def list_users(db: AsyncSession = Depends(get_db), _admin: User = Depends(
 
 
 @router.post("/users", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
-async def create_user(body: CreateUserRequest, db: AsyncSession = Depends(get_db), _admin: User = Depends(require_admin)):
+async def create_user(
+    body: CreateUserRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    _admin: User = Depends(require_admin),
+):
     existing = await db.execute(select(User).where((User.email == body.email) | (User.username == body.username)))
     if existing.scalar_one_or_none():
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Email or username already taken")
@@ -330,10 +376,30 @@ async def create_user(body: CreateUserRequest, db: AsyncSession = Depends(get_db
         hashed_password=hash_password(body.password),
         full_name=body.full_name,
         is_admin=body.is_admin,
+        must_change_password=body.temporary_password,
     )
     db.add(user)
     await db.commit()
     await db.refresh(user)
+
+    if body.send_invite:
+        login_url = request.headers.get("referer", "").rstrip("/").split("/settings")[0] or str(request.base_url).rstrip("/")
+        login_url = login_url.rstrip("/") + "/login"
+        try:
+            await send_templated_email(
+                user.email,
+                "user_invite",
+                {
+                    "username": user.username,
+                    "email": user.email,
+                    "password": body.password,
+                    "login_url": login_url,
+                },
+                db,
+            )
+        except Exception:
+            pass
+
     return user
 
 

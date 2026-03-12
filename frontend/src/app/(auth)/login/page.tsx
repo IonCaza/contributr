@@ -151,9 +151,7 @@ function providerLabel(provider: OidcProviderPublicItem): string {
 }
 
 function OidcButtons({ providers }: { providers: OidcProviderPublicItem[] }) {
-  const apiBase = typeof window !== "undefined"
-    ? (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api")
-    : "";
+  const apiBase = typeof window !== "undefined" ? "/api" : "";
   const frontendUrl = typeof window !== "undefined" ? window.location.origin : "";
 
   return (
@@ -212,6 +210,8 @@ export default function LoginPage() {
         router.push("/dashboard");
       } else if (result === "mfa_setup_required") {
         router.push("/mfa-setup");
+      } else if (result === "password_change_required") {
+        router.push("/change-password");
       }
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Login failed");

@@ -29,7 +29,12 @@ export interface MfaSetupRequiredResponse {
   mfa_setup_token: string;
 }
 
-export type LoginResponse = TokenResponse | MfaChallengeResponse | MfaSetupRequiredResponse;
+export interface PasswordChangeRequiredResponse {
+  password_change_required: true;
+  password_change_token: string;
+}
+
+export type LoginResponse = TokenResponse | MfaChallengeResponse | MfaSetupRequiredResponse | PasswordChangeRequiredResponse;
 
 export interface MfaTotpInitResponse {
   secret: string;

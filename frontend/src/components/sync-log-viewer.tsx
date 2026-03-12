@@ -68,7 +68,7 @@ export function SyncLogViewer({ repoId, jobId, logUrl, compact = false, title = 
     if (logUrl) {
       url = `${logUrl}${tokenSuffix}`;
     } else {
-      const apiBase = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
+      const apiBase = "/api";
       url = `${apiBase}/repositories/${repoId}/sync-jobs/${jobId}/logs${tokenSuffix}`;
     }
 

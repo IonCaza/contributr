@@ -65,6 +65,8 @@ backend:
   jwtSecret: change-me-to-a-random-64-char-hex-string
   jwtAccessTokenExpireMinutes: 30
   jwtRefreshTokenExpireDays: 7
+  # -- Extra environment variables injected into the backend configmap
+  env: {}
   resources:
     requests:
       cpu: 250m
@@ -92,6 +94,8 @@ frontend:
     tag: latest
     pullPolicy: Always
   replicaCount: 1
+  # -- Extra environment variables injected into the frontend configmap
+  env: {}
   resources:
     requests:
       cpu: 100m

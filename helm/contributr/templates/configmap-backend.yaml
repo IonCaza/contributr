@@ -10,3 +10,6 @@ data:
   JWT_REFRESH_TOKEN_EXPIRE_DAYS: {{ .Values.backend.jwtRefreshTokenExpireDays | quote }}
   {{- $scheme := ternary "https" "http" .Values.ingress.tls.enabled }}
   BACKEND_CORS_ORIGINS: '[{{ printf "%s://%s" $scheme .Values.ingress.host | quote }}]'
+  {{- range $key, $value := .Values.backend.env }}
+  {{ $key }}: {{ $value | quote }}
+  {{- end }}

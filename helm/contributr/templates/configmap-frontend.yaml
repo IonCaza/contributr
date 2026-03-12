@@ -5,6 +5,7 @@ metadata:
   labels:
     {{- include "contributr.componentLabels" (dict "root" . "component" "frontend") | nindent 4 }}
 data:
-  {{- $scheme := ternary "https" "http" .Values.ingress.tls.enabled }}
-  NEXT_PUBLIC_API_URL: {{ printf "%s://%s/api" $scheme .Values.ingress.host | quote }}
   API_URL: "http://{{ include "contributr.fullname" . }}-backend:8000/api"
+  {{- range $key, $value := .Values.frontend.env }}
+  {{ $key }}: {{ $value | quote }}
+  {{- end }}

@@ -219,6 +219,44 @@ _BUILTIN_EMAIL_TEMPLATES = [
             "username": {"description": "User's display name", "sample": "johndoe"},
         },
     },
+    {
+        "slug": "user_invite",
+        "name": "User Invite",
+        "subject": "You've been invited to Contributr",
+        "body_html": (
+            '<div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:24px">'
+            '<h2 style="margin:0 0 16px">Welcome to Contributr</h2>'
+            "<p>Hi {{ username }},</p>"
+            "<p>An account has been created for you. Here are your login details:</p>"
+            '<div style="background:#f4f4f5;border-radius:8px;padding:16px;margin:16px 0">'
+            '<p style="margin:0 0 8px"><strong>Username:</strong> {{ username }}</p>'
+            '<p style="margin:0 0 8px"><strong>Email:</strong> {{ email }}</p>'
+            '<p style="margin:0"><strong>Temporary Password:</strong> {{ password }}</p>'
+            "</div>"
+            '<p>Please sign in and change your password immediately:</p>'
+            '<p><a href="{{ login_url }}" style="display:inline-block;padding:10px 20px;'
+            "background:#18181b;color:#fff;text-decoration:none;border-radius:6px;"
+            'font-weight:600">Sign in to Contributr</a></p>'
+            '<p style="color:#71717a;font-size:14px">If you did not expect this invitation, '
+            "you can safely ignore this email.</p>"
+            "</div>"
+        ),
+        "body_text": (
+            "Hi {{ username }},\n\n"
+            "An account has been created for you on Contributr.\n\n"
+            "Username: {{ username }}\n"
+            "Email: {{ email }}\n"
+            "Temporary Password: {{ password }}\n\n"
+            "Sign in at: {{ login_url }}\n\n"
+            "Please change your password immediately after signing in."
+        ),
+        "variables": {
+            "username": {"description": "User's login username", "sample": "janedoe"},
+            "email": {"description": "User's email address", "sample": "jane@example.com"},
+            "password": {"description": "Temporary password", "sample": "TempPass123!"},
+            "login_url": {"description": "URL to the login page", "sample": "https://contributr.example.com/login"},
+        },
+    },
 ]
 
 

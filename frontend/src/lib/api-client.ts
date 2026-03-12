@@ -25,7 +25,7 @@ import type {
   DepScanRun, DepFinding, DepSummary, DepSettings,
 } from "./types";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
+const API_BASE = "/api";
 
 function buildQuery(params: Record<string, string | string[] | undefined>): string {
   const sp = new URLSearchParams();
@@ -139,13 +139,15 @@ export const api = {
     request<TokenResponse>(`/auth/refresh?refresh_token=${refresh_token}`, { method: "POST" }),
   me: () => request<User>("/auth/me"),
   listUsers: () => request<User[]>("/auth/users"),
-  createUser: (data: { email: string; username: string; password: string; full_name?: string; is_admin?: boolean }) =>
+  createUser: (data: { email: string; username: string; password: string; full_name?: string; is_admin?: boolean; send_invite?: boolean; temporary_password?: boolean }) =>
     request<User>("/auth/users", { method: "POST", body: JSON.stringify(data) }),
   updateUser: (id: string, data: { email?: string; username?: string; full_name?: string; is_admin?: boolean; is_active?: boolean; password?: string }) =>
     request<User>(`/auth/users/${id}`, { method: "PUT", body: JSON.stringify(data) }),
   resetUserMfa: (id: string) =>
     request<User>(`/auth/users/${id}/mfa/reset`, { method: "POST" }),
   deleteUser: (id: string) => request<void>(`/auth/users/${id}`, { method: "DELETE" }),
+  changePassword: (data: { token: string; new_password: string }) =>
+    request<TokenResponse>("/auth/change-password", { method: "POST", body: JSON.stringify(data) }),
 
   // MFA
   mfaVerify: (data: { mfa_token: string; code: string; method: string }) =>

@@ -13,11 +13,11 @@ test-backend-cov:
 	cd backend && pip install -q -r requirements.txt && python -m pytest tests --cov=app --cov-report=term-missing --cov-fail-under=25 -q
 
 test-frontend:
-	cd frontend && npm ci && npm run test:run
+	cd frontend && pnpm install --frozen-lockfile && pnpm run test:run
 
 test-frontend-cov:
-	cd frontend && npm run test:coverage
+	cd frontend && pnpm run test:coverage
 
 # E2E requires the app to be running (e.g. docker compose up).
 test-e2e:
-	cd frontend && npm run test:e2e
+	cd frontend && pnpm run test:e2e
