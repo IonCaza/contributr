@@ -12,18 +12,30 @@
 
 The chart requires two custom images: **backend** and **frontend**. PostgreSQL (pgvector) and Redis are pulled from public registries.
 
+> **Important:** AKS nodes run `linux/amd64`. If you're building on Apple Silicon (M1/M2/M3), you **must** specify `--platform linux/amd64` or the pods will fail with "no match for platform in manifest".
+
 ```bash
 # From the repo root
 REGISTRY=your-registry.example.com
 
 # Backend (also used by the Celery worker)
-docker build -t $REGISTRY/contributr-backend:latest ./backend
+docker build --platform linux/amd64 -t $REGISTRY/contributr-backend:latest ./backend
 docker push $REGISTRY/contributr-backend:latest
 
 # Frontend
-docker build -t $REGISTRY/contributr-frontend:latest ./frontend
+docker build --platform linux/amd64 -t $REGISTRY/contributr-frontend:latest ./frontend
 docker push $REGISTRY/contributr-frontend:latest
 ```
+
+### ACR Authentication (Azure)
+
+If using Azure Container Registry, grant the AKS cluster pull access:
+
+```bash
+az aks update -n <aks-cluster-name> -g <resource-group> --attach-acr <acr-name>
+```
+
+This assigns the `AcrPull` role to the cluster's managed identity. Without this, pods will fail with `401 Unauthorized` when pulling images.
 
 ## 2. Configure Values
 
@@ -37,14 +49,16 @@ At minimum, update these fields in your production values file:
 
 | Value | What to set |
 |---|---|
-| `global.imageRegistry` | Your container registry (e.g. `your-registry.example.com`) |
+| `backend.image.registry` | Private registry FQDN for backend/worker (e.g. `myregistry.azurecr.io`) |
+| `frontend.image.registry` | Private registry FQDN for frontend (e.g. `myregistry.azurecr.io`) |
 | `ingress.host` | Your domain (e.g. `your.fqdn.com`) |
 | `ingress.tls.secretName` | Name of the TLS secret (see [TLS Setup](#4-tls-setup)) |
 | `postgresql.auth.password` | A strong, unique password |
 | `backend.secretKey` | Random 64-char hex string for encryption |
 | `backend.jwtSecret` | Random string for JWT signing |
-| `backend.image.repository` | `contributr-backend` (or full path if no `global.imageRegistry`) |
-| `frontend.image.repository` | `contributr-frontend` (or full path if no `global.imageRegistry`) |
+| `global.nodeSelector` | Node selector labels (e.g. `agentpool: computepool` for AKS) |
+
+> **Note:** PostgreSQL and Redis use public images and do not need a registry override. Only backend and frontend images are pulled from your private registry.
 
 Generate secure secrets:
 
@@ -74,7 +88,8 @@ Or pass overrides inline:
 ```bash
 helm install contributr ./helm/contributr \
   -n contributr \
-  --set global.imageRegistry=your-registry.example.com \
+  --set backend.image.registry=your-registry.example.com \
+  --set frontend.image.registry=your-registry.example.com \
   --set ingress.host=your.fqdn.com \
   --set postgresql.auth.password="$(openssl rand -base64 24)" \
   --set backend.secretKey="$(openssl rand -hex 32)" \
@@ -124,6 +139,28 @@ ingress:
     traefik.ingress.kubernetes.io/router.entrypoints: websecure
     traefik.ingress.kubernetes.io/router.tls: "true"
 ```
+
+### Option C: Re-use a TLS secret from another namespace
+
+Standard Kubernetes `Ingress` resources only support secrets in the **same namespace** — the `secretName` field does not accept `namespace/name` syntax.
+
+If the certificate already exists in another namespace, mirror it into `contributr`:
+
+```bash
+kubectl get secret navai-cert -n ingress -o yaml \
+  | sed 's/namespace: ingress/namespace: contributr/' \
+  | kubectl apply -f -
+```
+
+Then reference it by name only:
+
+```yaml
+ingress:
+  tls:
+    secretName: navai-cert
+```
+
+> **Note:** If the source secret is rotated, you will need to re-run the mirror command. For automatic syncing, consider [kubernetes-replicator](https://github.com/mittwald/kubernetes-replicator) or [reflector](https://github.com/emberstack/kubernetes-reflector).
 
 ## 5. Verify the Deployment
 

@@ -57,11 +57,13 @@ app.kubernetes.io/instance: {{ .root.Release.Name }}
 {{- end }}
 
 {{/*
-Resolve image reference, prepending global registry when set.
+Resolve image reference. Uses per-component .registry when set,
+falls back to global.imageRegistry, then plain repository:tag.
 */}}
 {{- define "contributr.image" -}}
-{{- if .root.Values.global.imageRegistry -}}
-{{- printf "%s/%s:%s" .root.Values.global.imageRegistry .repository .tag -}}
+{{- $reg := .registry | default .root.Values.global.imageRegistry | default "" -}}
+{{- if $reg -}}
+{{- printf "%s/%s:%s" $reg .repository .tag -}}
 {{- else -}}
 {{- printf "%s:%s" .repository .tag -}}
 {{- end -}}

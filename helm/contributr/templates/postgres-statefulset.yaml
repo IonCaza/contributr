@@ -15,6 +15,10 @@ spec:
       labels:
         {{- include "contributr.componentLabels" (dict "root" . "component" "postgresql") | nindent 8 }}
     spec:
+      {{- with .Values.global.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       containers:
         - name: postgresql
           image: {{ include "contributr.image" (dict "root" . "repository" .Values.postgresql.image.repository "tag" .Values.postgresql.image.tag) }}

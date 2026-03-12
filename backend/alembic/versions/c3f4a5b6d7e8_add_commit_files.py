@@ -15,6 +15,10 @@ depends_on = None
 
 
 def upgrade() -> None:
+    bind = op.get_bind()
+    inspector = sa.inspect(bind)
+    if "commit_files" in inspector.get_table_names():
+        return
     op.create_table(
         "commit_files",
         sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True),

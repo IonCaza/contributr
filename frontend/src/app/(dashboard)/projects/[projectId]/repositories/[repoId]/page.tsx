@@ -639,7 +639,7 @@ function SecurityFindingRow({
                 <pre className="text-xs bg-emerald-50 dark:bg-emerald-950/20 rounded-md p-3 overflow-x-auto font-mono border border-emerald-200 dark:border-emerald-800"><code>{finding.fix_suggestion}</code></pre>
               </div>
             )}
-            {finding.metadata && (finding.metadata as Record<string, unknown>).references && (
+            {finding.metadata && !!(finding.metadata as Record<string, unknown>).references && (
               <div className="flex items-center gap-2 flex-wrap">
                 <span className="text-xs text-muted-foreground">References:</span>
                 {((finding.metadata as Record<string, unknown>).references as string[]).slice(0, 3).map((ref) => (

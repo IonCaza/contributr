@@ -14,6 +14,10 @@ spec:
       labels:
         {{- include "contributr.componentLabels" (dict "root" . "component" "redis") | nindent 8 }}
     spec:
+      {{- with .Values.global.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       containers:
         - name: redis
           image: {{ include "contributr.image" (dict "root" . "repository" .Values.redis.image.repository "tag" .Values.redis.image.tag) }}

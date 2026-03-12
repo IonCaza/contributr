@@ -331,7 +331,7 @@ function SastFindingRow({
                 ))}
               </div>
             )}
-            {finding.metadata && (finding.metadata as Record<string, unknown>).references && (
+            {finding.metadata && !!(finding.metadata as Record<string, unknown>).references && (
               <div className="flex items-center gap-2 flex-wrap">
                 <span className="text-xs text-muted-foreground">References:</span>
                 {((finding.metadata as Record<string, unknown>).references as string[]).slice(0, 3).map((ref) => (

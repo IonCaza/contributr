@@ -1512,7 +1512,7 @@ export default function SettingsPage() {
       name: agentForm.name,
       description: agentForm.description || undefined,
       agent_type: agentForm.agent_type,
-      llm_provider_id: agentForm.llm_provider_id || null,
+      llm_provider_id: agentForm.llm_provider_id || undefined,
       system_prompt: agentForm.system_prompt,
       max_iterations: parseInt(agentForm.max_iterations) || 10,
       summary_token_limit: agentForm.summary_token_limit ? parseInt(agentForm.summary_token_limit) : null,

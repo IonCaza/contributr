@@ -5,7 +5,7 @@ import { useState, useEffect, useRef } from "react";
 export function useCountUp(target: number, duration = 600): number {
   const [value, setValue] = useState(0);
   const prevTarget = useRef(target);
-  const rafId = useRef<number>();
+  const rafId = useRef<number>(undefined);
 
   useEffect(() => {
     if (target === prevTarget.current && value !== 0) return;

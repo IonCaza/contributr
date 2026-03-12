@@ -13,7 +13,7 @@ interface FeedbackFilters {
 
 export function useFeedback(filters?: FeedbackFilters) {
   return useQuery({
-    queryKey: queryKeys.feedback.all(filters),
+    queryKey: queryKeys.feedback.all(filters ? { ...filters } : undefined),
     queryFn: () => api.listFeedback(filters),
   });
 }

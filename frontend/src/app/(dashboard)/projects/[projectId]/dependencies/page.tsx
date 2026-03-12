@@ -658,8 +658,9 @@ export default function ProjectDependenciesPage({
           </CardHeader>
           <CardContent>
             <SyncLogViewer
-              url={`${api.getApiBase()}/repositories/${activeRun.repository_id}/dependencies/runs/${activeRun.id}/logs`}
-              token={api.getAuthToken() ?? undefined}
+              logUrl={`${api.getApiBase()}/repositories/${activeRun.repository_id}/dependencies/runs/${activeRun.id}/logs`}
+              compact
+              title="Dependency Scan"
             />
           </CardContent>
         </Card>
