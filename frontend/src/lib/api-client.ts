@@ -154,6 +154,11 @@ export const api = {
     request<TokenResponse>("/auth/mfa/verify", { method: "POST", body: JSON.stringify(data) }),
   mfaSendEmailOtp: (data: { mfa_token: string }) =>
     request<{ detail: string }>("/auth/mfa/send-email-otp", { method: "POST", body: JSON.stringify(data) }),
+  mfaSetupOptions: (token?: string) => {
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    if (token) headers["Authorization"] = `Bearer ${token}`;
+    return request<{ totp: boolean; email: boolean }>("/auth/mfa/setup/options", { headers });
+  },
   mfaTotpInit: (token?: string) => {
     const headers: Record<string, string> = { "Content-Type": "application/json" };
     if (token) headers["Authorization"] = `Bearer ${token}`;

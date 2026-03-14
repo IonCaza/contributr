@@ -1,9 +1,13 @@
+import re
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.base import get_db
 from app.db.models import User
+from app.db.models.smtp_settings import SmtpSettings
 from app.auth.dependencies import get_current_user, get_mfa_setup_user
 from app.auth.security import verify_password, create_access_token, create_refresh_token
 from app.services.mfa import (
@@ -57,6 +61,33 @@ class RecoveryCodesResponse(BaseModel):
     recovery_codes: list[str]
 
 
+_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+
+async def _smtp_enabled(db: AsyncSession) -> bool:
+    result = await db.execute(select(SmtpSettings).limit(1))
+    smtp = result.scalar_one_or_none()
+    return bool(smtp and smtp.enabled and smtp.host)
+
+
+# ── Setup Options ────────────────────────────────────────────────────────
+
+class MfaOptionsResponse(BaseModel):
+    totp: bool
+    email: bool
+
+
+@router.get("/setup/options", response_model=MfaOptionsResponse)
+async def mfa_setup_options(
+    user: User = Depends(get_mfa_setup_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return which MFA methods are available for this user."""
+    smtp_ok = await _smtp_enabled(db)
+    has_email = bool(user.email and _EMAIL_RE.match(user.email))
+    return MfaOptionsResponse(totp=True, email=smtp_ok and has_email)
+
+
 # ── TOTP Setup ───────────────────────────────────────────────────────────
 
 @router.post("/setup/totp/init", response_model=TotpInitResponse)
@@ -99,6 +130,17 @@ async def email_otp_init(
     user: User = Depends(get_mfa_setup_user),
     db: AsyncSession = Depends(get_db),
 ):
+    if not user.email or not _EMAIL_RE.match(user.email):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="A valid email address is required for email-based MFA. Update your email in account settings first.",
+        )
+    if not await _smtp_enabled(db):
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Email delivery is not configured. Contact your administrator or use an authenticator app instead.",
+        )
+
     code = generate_email_otp()
     await store_email_otp(str(user.id), code)
     try:

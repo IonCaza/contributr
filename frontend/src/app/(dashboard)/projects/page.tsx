@@ -62,49 +62,68 @@ export default function ProjectsPage() {
 
       {isLoading ? (
         <div className="flex items-center gap-2 text-muted-foreground"><div className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />Loading...</div>
-      ) : filtered.length === 0 ? (
-        <Card>
-          <CardContent className="flex flex-col items-center justify-center py-12 text-center">
-            <FolderGit2 className="mb-4 h-12 w-12 text-muted-foreground/50" />
-            <p className="text-lg font-medium">No projects found</p>
+      ) : projects.length === 0 ? (
+        <Card className="border-dashed">
+          <CardContent className="flex flex-col items-center justify-center py-16 text-center">
+            <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-primary/10">
+              <FolderGit2 className="h-8 w-8 text-primary" />
+            </div>
+            <p className="text-lg font-semibold">No projects yet</p>
+            <p className="mt-1 max-w-sm text-sm text-muted-foreground">
+              Create your first project to start tracking repositories, contributors, and delivery metrics.
+            </p>
+            <Button className="mt-6" onClick={() => setOpen(true)}>
+              <Plus className="mr-2 h-4 w-4" />
+              Create Project
+            </Button>
           </CardContent>
         </Card>
       ) : (
-        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-          <Card
-            className="group flex cursor-pointer items-center justify-center border-dashed transition-all duration-200 hover:shadow-md hover:-translate-y-0.5 hover:border-primary/50"
-            onClick={() => setOpen(true)}
-          >
-            <CardContent className="flex flex-col items-center gap-2 py-8">
-              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10 transition-colors group-hover:bg-primary/20">
-                <Plus className="h-5 w-5 text-primary" />
-              </div>
-              <span className="text-sm font-medium text-muted-foreground group-hover:text-foreground">New Project</span>
-            </CardContent>
-          </Card>
-          {filtered.map((p) => (
-            <Card key={p.id} className="group relative cursor-pointer transition-all duration-200 hover:shadow-md hover:-translate-y-0.5 hover:border-primary/30">
-              <Link href={`/projects/${p.id}/code`} className="absolute inset-0 z-10" />
-              <CardHeader className="flex flex-row items-center gap-3 space-y-0">
-                <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10">
-                  <FolderGit2 className="h-5 w-5 text-primary" />
-                </div>
-                <div className="flex-1">
-                  <CardTitle className="text-base">{p.name}</CardTitle>
-                  {p.description && <p className="text-xs text-muted-foreground line-clamp-1">{p.description}</p>}
-                </div>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="relative z-20 opacity-0 group-hover:opacity-100"
-                  onClick={(e) => { e.preventDefault(); setDeleteId(p.id); }}
-                >
-                  <Trash2 className="h-4 w-4 text-destructive" />
-                </Button>
-              </CardHeader>
+        <>
+          {filtered.length === 0 && (
+            <Card>
+              <CardContent className="flex flex-col items-center justify-center py-12 text-center">
+                <FolderGit2 className="mb-4 h-12 w-12 text-muted-foreground/50" />
+                <p className="text-lg font-medium">No projects match your search</p>
+              </CardContent>
             </Card>
-          ))}
-        </div>
+          )}
+          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+            <Card
+              className="group flex cursor-pointer items-center justify-center border-dashed transition-all duration-200 hover:shadow-md hover:-translate-y-0.5 hover:border-primary/50"
+              onClick={() => setOpen(true)}
+            >
+              <CardContent className="flex flex-col items-center gap-2 py-8">
+                <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10 transition-colors group-hover:bg-primary/20">
+                  <Plus className="h-5 w-5 text-primary" />
+                </div>
+                <span className="text-sm font-medium text-muted-foreground group-hover:text-foreground">New Project</span>
+              </CardContent>
+            </Card>
+            {filtered.map((p) => (
+              <Card key={p.id} className="group relative cursor-pointer transition-all duration-200 hover:shadow-md hover:-translate-y-0.5 hover:border-primary/30">
+                <Link href={`/projects/${p.id}/code`} className="absolute inset-0 z-10" />
+                <CardHeader className="flex flex-row items-center gap-3 space-y-0">
+                  <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10">
+                    <FolderGit2 className="h-5 w-5 text-primary" />
+                  </div>
+                  <div className="flex-1">
+                    <CardTitle className="text-base">{p.name}</CardTitle>
+                    {p.description && <p className="text-xs text-muted-foreground line-clamp-1">{p.description}</p>}
+                  </div>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="relative z-20 opacity-0 group-hover:opacity-100"
+                    onClick={(e) => { e.preventDefault(); setDeleteId(p.id); }}
+                  >
+                    <Trash2 className="h-4 w-4 text-destructive" />
+                  </Button>
+                </CardHeader>
+              </Card>
+            ))}
+          </div>
+        </>
       )}
 
       <ConfirmDialog

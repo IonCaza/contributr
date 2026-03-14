@@ -1,0 +1,189 @@
+---
+description: Sitrep coordination protocol for parallel development
+alwaysApply: true
+---
+
+# Sitrep Coordination Protocol
+
+You are working in a codebase where multiple agents and humans develop in parallel. You have access to the **Sitrep MCP server** which provides shared awareness of what everyone is doing, what architectural decisions have been made, and which files are being actively modified by others. Your goal is to avoid silent divergence -- making choices that conflict with choices other agents are making right now.
+
+## Why This Matters
+
+Without coordination, two agents starting from the same codebase will diverge within minutes. You might choose one ORM pattern while another agent chooses a different one. You might restructure a model file while another agent is adding fields to it. Git merges cannot resolve semantic conflicts -- only you can, by staying aware of what others are doing and recording what you are doing.
+
+Sitrep is not a lock manager. It is a shared awareness system. The information it provides helps you make better judgment calls, not hard rules.
+
+## The Seven Tools
+
+You have 7 MCP tools. Here is when and why to use each one.
+
+### `sitrep_begin` -- Before Any Work
+
+Call this as your first action when starting a task. Not after planning, not after reading files -- before everything.
+
+```
+sitrep_begin(
+  task="Implement user authentication with JWT",
+  scope=["src/auth/", "src/models/user.py", "src/api/routes.py"],
+  branch="feature/auth",
+  branch_intent="feature",
+  agent_id="cursor-agent-1"
+)
+```
+
+**What you get back and how to reason about it:**
+
+- `active_sessions`: Other agents currently working. Read their `task` and `scope`. If anyone's scope overlaps with yours, this is the most important signal in the entire protocol. Plan your approach around their work, not in isolation.
+- `active_claims`: Files being modified right now. If a file you need is claimed with `risk_if_concurrent: high`, you should either wait or adjust your approach to avoid that file until the claim is released.
+- `recent_decisions`: Architectural choices already made. These are not suggestions -- they are commitments by other agents. If someone has decided on SQLAlchemy for the ORM, you should not choose a different ORM unless you have a strong reason and are prepared to discuss it.
+- `warnings`: Explicit overlap alerts. Take these seriously.
+
+**Judgment call**: If the briefing reveals heavy overlap with your planned work, consider narrowing your scope rather than pushing through. Two agents doing orthogonal work is always better than two agents racing on the same files.
+
+### `sitrep_decide` -- When Making Architectural Choices
+
+Call this whenever you make a choice that another agent in the same codebase would need to know about. The bar is: "if someone else made this choice differently, would it create merge pain?"
+
+```
+sitrep_decide(
+  session_id="<your-session-id>",
+  category="authentication",
+  decision="JWT with refresh tokens, stored in httpOnly cookies",
+  rationale="Stateless auth scales better for our microservice architecture",
+  affects=["src/auth/", "src/middleware/"]
+)
+```
+
+**Examples of decisions worth recording:**
+- Choosing a library or dependency (e.g., "Using Pydantic v2 for validation")
+- Defining a data model shape (e.g., "User model has `roles` as a JSON array, not a separate table")
+- Establishing a pattern (e.g., "All API errors use RFC 7807 problem details format")
+- Naming conventions (e.g., "Service classes use `<Entity>Service` naming")
+- Directory structure choices (e.g., "One router file per domain, not one giant routes.py")
+
+**Examples of things that are NOT decisions:**
+- Implementation details internal to a single function
+- Variable names, formatting choices
+- Anything that doesn't affect other files or other agents' work
+
+**What you get back:**
+- `conflicts`: Existing decisions in the same category that differ from yours. If there are conflicts, you MUST address them via `sitrep_discuss`. Do not silently proceed with a conflicting decision.
+- `aligned_with`: Existing decisions that your choice is consistent with. Good -- you are on the same page.
+
+### `sitrep_discuss` -- When Decisions Conflict
+
+Call this when you see a decision you disagree with, when your decision is contested by another agent, or when you have a question about an existing decision.
+
+```
+sitrep_discuss(
+  session_id="<your-session-id>",
+  decision_id="<decision-id>",
+  position="counter",
+  message="Refresh tokens add complexity we don't need for a single-page app. Session-based auth is simpler and sufficient.",
+  proposed_alternative="Session-based auth with Redis session store"
+)
+```
+
+**Positions and when to use them:**
+- `align`: You agree with the decision. Record this -- it strengthens the decision and signals consensus.
+- `counter`: You disagree and have an alternative. You MUST provide `proposed_alternative` and a clear rationale. Be specific -- "I don't like it" is not useful.
+- `question`: You don't have enough context to agree or disagree. Ask a specific question.
+- `withdraw`: You previously countered but now agree after seeing additional reasoning.
+
+**Important**: Discussions are asynchronous. The other agent will see your message on their next `sitrep_status` call. If the discussion doesn't resolve within a few rounds, sitrep will escalate to a human. This is by design -- some decisions need human judgment.
+
+### `sitrep_claim` -- Before Modifying Shared Files
+
+Call this before modifying files in shared areas: models, utilities, configuration, base classes, middleware, database schemas. The claim is not a lock -- other agents can still modify the file. It is a signal with context.
+
+```
+sitrep_claim(
+  session_id="<your-session-id>",
+  files=["src/models/user.py", "src/models/base.py"],
+  claim_type="exclusive",
+  intent_summary="Adding role-based fields and a mixin for audit timestamps",
+  interfaces_affected=["User.to_dict()", "Base model constructor"],
+  patterns_introduced=["AuditMixin for created_at/updated_at on all models"],
+  risk_if_concurrent="high"
+)
+```
+
+**The context fields are the most important part.** The file path alone tells other agents nothing useful. The `intent_summary` and `interfaces_affected` fields tell them whether their planned change would conflict with yours.
+
+**How to choose `claim_type`:**
+- `exclusive`: You are restructuring, renaming, or changing interfaces in this file. Concurrent changes would likely conflict.
+- `shared`: You are adding something that doesn't affect existing code (e.g., adding a new function, adding a field with a default value).
+
+**How to choose `risk_if_concurrent`:**
+- `high`: You are changing the structure or interfaces of the file. Another agent touching this file would almost certainly create a merge conflict.
+- `medium`: You are making changes that touch shared areas but are somewhat isolated.
+- `low`: Your changes are additive and unlikely to conflict with other modifications.
+
+**When you see another agent's claim on a file you need:**
+1. Read their `intent_summary` and `interfaces_affected`.
+2. Assess: is your change orthogonal to theirs, or overlapping?
+3. If orthogonal (e.g., they are adding audit fields, you are adding a validation method): proceed, but use `shared` claim type.
+4. If overlapping (e.g., both of you are changing the same model's constructor): wait for their claim to be released, or use `sitrep_discuss` to coordinate.
+
+### `sitrep_status` -- Your Heartbeat
+
+Call this after each meaningful commit, before touching a file another agent has claimed, and whenever you see `action_required` notifications.
+
+```
+sitrep_status(
+  session_id="<your-session-id>",
+  progress="Implemented JWT middleware and token generation. Auth routes passing tests.",
+  files_changed=["src/auth/jwt.py", "src/auth/middleware.py", "src/api/auth_routes.py"]
+)
+```
+
+**This is your primary pull mechanism.** Every response carries `notifications` from other agents' activity. Check them:
+
+- `info` notifications: Another agent made a decision or claim. Note it and continue.
+- `warning` notifications: Something may conflict with your work. Review the details before your next change.
+- `action_required` notifications: Stop and address this. Typically a contested decision or a file contention that needs your input. Do not continue working until you have responded.
+
+**Call frequency**: At minimum after every commit. More frequently if you are working in areas with active claims from other agents.
+
+### `sitrep_query` -- When You Need Context
+
+Call this when you need to understand the current state of parallel work. Useful before making a decision, when you are unsure if someone else has already solved a problem, or when you need to understand branch topology.
+
+```
+sitrep_query(
+  question="Has anyone decided on an error handling pattern?",
+  scope="src/api/",
+  session_id="<your-session-id>"
+)
+```
+
+### `sitrep_end` -- When You Are Done
+
+Always call this when your task is complete, even if it failed or was abandoned. This releases your claims and closes your session so other agents have accurate information.
+
+```
+sitrep_end(
+  session_id="<your-session-id>",
+  summary="Implemented JWT auth: middleware, token generation, auth routes. All tests passing.",
+  files_changed=["src/auth/jwt.py", "src/auth/middleware.py", "src/api/auth_routes.py"],
+  decisions_made=["<decision-id-1>", "<decision-id-2>"]
+)
+```
+
+**Failure to call `sitrep_end`** means your claims stay active and your session appears in other agents' briefings as ongoing work. Sitrep will eventually reap stale sessions, but the delay causes confusion.
+
+## Reasoning Principles
+
+1. **Read the briefing, don't just check the box.** The information from `sitrep_begin` should change your plan, not just be acknowledged. If you see three agents modifying the models directory, do not also pile in.
+
+2. **Record decisions early, not late.** Call `sitrep_decide` when you decide, not after you implement. The point is to catch conflicts before code is written.
+
+3. **Rich context on claims saves everyone time.** "Modifying user.py" is useless to another agent. "Adding email verification fields and changing the registration flow to require email confirmation" lets them make a real judgment call.
+
+4. **Contested decisions are conversations, not failures.** If your decision is contested, engage with the counter-argument. The goal is the best decision for the codebase, not winning.
+
+5. **When in doubt, query.** A `sitrep_query` call costs nothing. Silently proceeding with a choice that conflicts with another agent's work costs hours of merge resolution.
+
+6. **One concern per session.** Do not begin a session with "implement the entire backend." Narrow scope means fewer conflicts and clearer coordination.
+
+7. **Commit messages carry intent.** When you commit, your message should explain the architectural choice, not just "updated files." Other agents read commit signals too.

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Smartphone, Mail, Loader2, Copy, Check, Download, ShieldCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -29,6 +29,17 @@ export function MfaSetupDialog({ open, onOpenChange, dismissible = true, setupTo
   const [copied, setCopied] = useState(false);
   const [emailSent, setEmailSent] = useState(false);
   const [savedCodes, setSavedCodes] = useState(false);
+  const [mfaOptions, setMfaOptions] = useState<{ totp: boolean; email: boolean } | null>(null);
+  const [optionsLoading, setOptionsLoading] = useState(false);
+
+  useEffect(() => {
+    if (!open) return;
+    setOptionsLoading(true);
+    api.mfaSetupOptions(setupToken ?? undefined)
+      .then(setMfaOptions)
+      .catch(() => setMfaOptions({ totp: true, email: false }))
+      .finally(() => setOptionsLoading(false));
+  }, [open, setupToken]);
 
   function reset() {
     setStep("choose");
@@ -169,35 +180,43 @@ export function MfaSetupDialog({ open, onOpenChange, dismissible = true, setupTo
         )}
 
         {step === "choose" && (
-          <div className="grid gap-3 sm:grid-cols-2">
-            <Card className="cursor-pointer hover:border-primary/50 transition-colors" onClick={handleChooseTotp}>
-              <CardContent className="flex flex-col items-center gap-3 p-6 text-center">
-                <div className="flex h-12 w-12 items-center justify-center rounded-full bg-primary/10">
-                  <Smartphone className="h-6 w-6 text-primary" />
+          optionsLoading ? (
+            <div className="flex items-center justify-center py-8">
+              <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+            </div>
+          ) : (
+            <div className={`grid gap-3 ${mfaOptions?.email !== false ? "sm:grid-cols-2" : "sm:grid-cols-1"}`}>
+              <Card className="cursor-pointer hover:border-primary/50 transition-colors" onClick={handleChooseTotp}>
+                <CardContent className="flex flex-col items-center gap-3 p-6 text-center">
+                  <div className="flex h-12 w-12 items-center justify-center rounded-full bg-primary/10">
+                    <Smartphone className="h-6 w-6 text-primary" />
+                  </div>
+                  <div>
+                    <p className="font-medium">Authenticator App</p>
+                    <p className="text-xs text-muted-foreground mt-1">Use Google Authenticator, Authy, or similar</p>
+                  </div>
+                </CardContent>
+              </Card>
+              {mfaOptions?.email !== false && (
+                <Card className="cursor-pointer hover:border-primary/50 transition-colors" onClick={handleChooseEmail}>
+                  <CardContent className="flex flex-col items-center gap-3 p-6 text-center">
+                    <div className="flex h-12 w-12 items-center justify-center rounded-full bg-primary/10">
+                      <Mail className="h-6 w-6 text-primary" />
+                    </div>
+                    <div>
+                      <p className="font-medium">Email Verification</p>
+                      <p className="text-xs text-muted-foreground mt-1">Receive a code at your registered email</p>
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
+              {loading && (
+                <div className="col-span-full flex items-center justify-center py-2">
+                  <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
                 </div>
-                <div>
-                  <p className="font-medium">Authenticator App</p>
-                  <p className="text-xs text-muted-foreground mt-1">Use Google Authenticator, Authy, or similar</p>
-                </div>
-              </CardContent>
-            </Card>
-            <Card className="cursor-pointer hover:border-primary/50 transition-colors" onClick={handleChooseEmail}>
-              <CardContent className="flex flex-col items-center gap-3 p-6 text-center">
-                <div className="flex h-12 w-12 items-center justify-center rounded-full bg-primary/10">
-                  <Mail className="h-6 w-6 text-primary" />
-                </div>
-                <div>
-                  <p className="font-medium">Email Verification</p>
-                  <p className="text-xs text-muted-foreground mt-1">Receive a code at your registered email</p>
-                </div>
-              </CardContent>
-            </Card>
-            {loading && (
-              <div className="col-span-2 flex items-center justify-center py-2">
-                <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
-              </div>
-            )}
-          </div>
+              )}
+            </div>
+          )
         )}
 
         {step === "totp-scan" && totpData && (
