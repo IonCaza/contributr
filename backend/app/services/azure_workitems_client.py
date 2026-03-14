@@ -696,7 +696,7 @@ async def fetch_ado_work_item_activities(
                 contributor = None
                 if revised_by:
                     name, email = _identity_email(revised_by)
-                    async with db.no_autoflush:
+                    with db.no_autoflush:
                         contributor = await resolve_contributor(db, name, email, platform="azure")
 
                 fields_changed = getattr(update, "fields", None) or {}
