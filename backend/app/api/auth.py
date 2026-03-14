@@ -28,6 +28,7 @@ from app.services.mfa import (
     verify_recovery_code,
     generate_email_otp,
     store_email_otp,
+    check_otp_cooldown,
 )
 from app.services.email import send_templated_email
 
@@ -68,6 +69,7 @@ class MfaChallengeResponse(BaseModel):
     requires_mfa: bool = True
     mfa_token: str
     mfa_method: str | None = None
+    mfa_methods: list[str] = []
 
 
 class MfaSetupRequiredResponse(BaseModel):
@@ -90,6 +92,7 @@ class UserResponse(BaseModel):
     auth_provider: str
     mfa_enabled: bool
     mfa_method: str | None
+    mfa_methods: list[str] = []
     mfa_setup_complete: bool
 
     model_config = {"from_attributes": True}
@@ -190,6 +193,7 @@ async def login(body: LoginRequest, db: AsyncSession = Depends(get_db)):
         return MfaChallengeResponse(
             mfa_token=create_mfa_challenge_token(str(user.id)),
             mfa_method=auth_result.mfa_method,
+            mfa_methods=user.mfa_methods,
         )
 
     if auth_result.requires_mfa_setup:
@@ -284,6 +288,13 @@ async def mfa_send_email_otp(body: MfaSendEmailOtpRequest, db: AsyncSession = De
     if user is None or not user.is_active:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
 
+    remaining = await check_otp_cooldown(str(user.id))
+    if remaining > 0:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"Please wait {remaining} seconds before requesting a new code.",
+        )
+
     code = generate_email_otp()
     await store_email_otp(str(user.id), code)
 
@@ -349,9 +360,76 @@ async def me(user: User = Depends(get_current_user), db: AsyncSession = Depends(
         id=user.id, email=user.email, username=user.username,
         full_name=user.full_name, is_admin=user.is_admin, is_active=user.is_active,
         auth_provider=user.auth_provider, mfa_enabled=user.mfa_enabled,
-        mfa_method=user.mfa_method, mfa_setup_complete=user.mfa_setup_complete,
+        mfa_method=user.mfa_method, mfa_methods=user.mfa_methods,
+        mfa_setup_complete=user.mfa_setup_complete,
         mfa_setup_required=force_mfa,
     )
+
+
+class UpdateProfileRequest(BaseModel):
+    full_name: str | None = None
+    email: str | None = None
+
+    @field_validator("email")
+    @classmethod
+    def validate_email(cls, v: str | None) -> str | None:
+        if v is not None and not _EMAIL_RE.match(v):
+            raise ValueError("Not a valid email address")
+        return v.lower().strip() if v else v
+
+
+@router.put("/me", response_model=MeResponse)
+async def update_profile(
+    body: UpdateProfileRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    if body.email is not None and body.email != user.email:
+        dup = await db.execute(select(User).where(User.email == body.email, User.id != user.id))
+        if dup.scalar_one_or_none():
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Email already taken")
+        user.email = body.email
+    if body.full_name is not None:
+        user.full_name = body.full_name
+    await db.commit()
+    await db.refresh(user)
+
+    force_mfa = False
+    if user.auth_provider == "local" and not user.mfa_setup_complete:
+        row = await db.execute(select(AuthSettings).where(AuthSettings.id == AUTH_SETTINGS_ID))
+        auth_settings = row.scalar_one_or_none()
+        if auth_settings and auth_settings.force_mfa_local_auth:
+            force_mfa = True
+    return MeResponse(
+        id=user.id, email=user.email, username=user.username,
+        full_name=user.full_name, is_admin=user.is_admin, is_active=user.is_active,
+        auth_provider=user.auth_provider, mfa_enabled=user.mfa_enabled,
+        mfa_method=user.mfa_method, mfa_methods=user.mfa_methods,
+        mfa_setup_complete=user.mfa_setup_complete,
+        mfa_setup_required=force_mfa,
+    )
+
+
+class ChangeOwnPasswordRequest(BaseModel):
+    current_password: str
+    new_password: str
+
+
+@router.post("/me/password", status_code=status.HTTP_200_OK)
+async def change_own_password(
+    body: ChangeOwnPasswordRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    if user.auth_provider != "local":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Password changes are only available for local accounts")
+    if not user.hashed_password or not verify_password(body.current_password, user.hashed_password):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Current password is incorrect")
+    if len(body.new_password) < 8:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Password must be at least 8 characters")
+    user.hashed_password = hash_password(body.new_password)
+    await db.commit()
+    return {"detail": "Password changed successfully"}
 
 
 @router.get("/users", response_model=list[UserResponse])
@@ -456,6 +534,7 @@ async def admin_reset_mfa(
     target.mfa_enabled = False
     target.mfa_method = None
     target.totp_secret_encrypted = None
+    target.email_mfa_enabled = False
     target.mfa_recovery_codes_encrypted = None
     target.mfa_setup_complete = False
     await db.commit()

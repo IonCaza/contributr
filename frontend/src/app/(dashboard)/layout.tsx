@@ -65,6 +65,22 @@ export default function DashboardLayout({
     );
   }
 
+  if (needsMfaSetup) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-background p-4">
+        <MfaSetupDialog
+          open
+          dismissible={false}
+          onComplete={async (at, rt) => {
+            localStorage.setItem("access_token", at);
+            localStorage.setItem("refresh_token", rt);
+            await refresh();
+          }}
+        />
+      </div>
+    );
+  }
+
   return (
     <div className="flex h-screen overflow-hidden">
       <SidebarNav
@@ -96,17 +112,6 @@ export default function DashboardLayout({
         </ResizablePanel>
       </ResizablePanelGroup>
       <FeedbackWidget />
-      {needsMfaSetup && (
-        <MfaSetupDialog
-          open
-          dismissible={false}
-          onComplete={async (at, rt) => {
-            localStorage.setItem("access_token", at);
-            localStorage.setItem("refresh_token", rt);
-            await refresh();
-          }}
-        />
-      )}
     </div>
   );
 }

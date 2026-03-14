@@ -19,6 +19,7 @@ from app.services.mfa import (
     decrypt_totp_secret,
     generate_email_otp,
     store_email_otp,
+    check_otp_cooldown,
     verify_email_otp,
     generate_recovery_codes,
     hash_recovery_codes,
@@ -107,19 +108,23 @@ async def totp_confirm(
     if not verify_totp(body.secret, body.code):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid TOTP code")
 
-    codes = generate_recovery_codes()
+    already_had_mfa = user.mfa_enabled and user.mfa_setup_complete
     user.totp_secret_encrypted = encrypt_totp_secret(body.secret)
     user.mfa_enabled = True
     user.mfa_method = "totp"
     user.mfa_setup_complete = True
-    user.mfa_recovery_codes_encrypted = hash_recovery_codes(codes)
+
+    codes: list[str] = []
+    if not user.mfa_recovery_codes_encrypted:
+        codes = generate_recovery_codes()
+        user.mfa_recovery_codes_encrypted = hash_recovery_codes(codes)
     await db.commit()
 
     return MfaSetupCompleteResponse(
         recovery_codes=codes,
         mfa_method="totp",
-        access_token=create_access_token(str(user.id)),
-        refresh_token=create_refresh_token(str(user.id)),
+        access_token=None if already_had_mfa else create_access_token(str(user.id)),
+        refresh_token=None if already_had_mfa else create_refresh_token(str(user.id)),
     )
 
 
@@ -141,6 +146,13 @@ async def email_otp_init(
             detail="Email delivery is not configured. Contact your administrator or use an authenticator app instead.",
         )
 
+    remaining = await check_otp_cooldown(str(user.id))
+    if remaining > 0:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"Please wait {remaining} seconds before requesting a new code.",
+        )
+
     code = generate_email_otp()
     await store_email_otp(str(user.id), code)
     try:
@@ -160,18 +172,23 @@ async def email_otp_confirm(
     if not valid:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid or expired verification code")
 
-    codes = generate_recovery_codes()
+    already_had_mfa = user.mfa_enabled and user.mfa_setup_complete
+    user.email_mfa_enabled = True
     user.mfa_enabled = True
     user.mfa_method = "email"
     user.mfa_setup_complete = True
-    user.mfa_recovery_codes_encrypted = hash_recovery_codes(codes)
+
+    codes: list[str] = []
+    if not user.mfa_recovery_codes_encrypted:
+        codes = generate_recovery_codes()
+        user.mfa_recovery_codes_encrypted = hash_recovery_codes(codes)
     await db.commit()
 
     return MfaSetupCompleteResponse(
         recovery_codes=codes,
         mfa_method="email",
-        access_token=create_access_token(str(user.id)),
-        refresh_token=create_refresh_token(str(user.id)),
+        access_token=None if already_had_mfa else create_access_token(str(user.id)),
+        refresh_token=None if already_had_mfa else create_refresh_token(str(user.id)),
     )
 
 
@@ -189,6 +206,7 @@ async def disable_mfa(
     user.mfa_enabled = False
     user.mfa_method = None
     user.totp_secret_encrypted = None
+    user.email_mfa_enabled = False
     user.mfa_recovery_codes_encrypted = None
     user.mfa_setup_complete = False
     await db.commit()

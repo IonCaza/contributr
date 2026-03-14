@@ -20,7 +20,7 @@ class PlatformCredential(Base):
     platform: Mapped[Platform] = mapped_column(SAEnum(Platform, create_constraint=False, native_enum=False), nullable=False, comment="Target platform (github, gitlab, azure)")
     token_encrypted: Mapped[str] = mapped_column(String(4096), nullable=False, comment="Fernet-encrypted API access token")
     base_url: Mapped[str | None] = mapped_column(String(2048), comment="Custom API base URL for self-hosted instances")
-    created_by_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False, comment="User who created this credential")
+    created_by_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, comment="User who created this credential")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), comment="Timestamp when the credential was created")
 
     created_by_user = relationship("User")

@@ -26,14 +26,25 @@ class User(Base):
 
     auth_provider: Mapped[str] = mapped_column(String(50), default="local", nullable=False, comment="Authentication provider (local, oidc, etc.)")
     mfa_enabled: Mapped[bool] = mapped_column(Boolean, default=False, comment="Whether MFA is enabled for this user")
-    mfa_method: Mapped[str | None] = mapped_column(String(20), comment="Active MFA method: totp or email")
+    mfa_method: Mapped[str | None] = mapped_column(String(20), comment="Preferred/last-enrolled MFA method: totp or email")
     totp_secret_encrypted: Mapped[str | None] = mapped_column(String(2048), comment="Fernet-encrypted TOTP secret for authenticator apps")
+    email_mfa_enabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false", comment="Whether email OTP is enrolled as an MFA method")
     mfa_recovery_codes_encrypted: Mapped[str | None] = mapped_column(Text, comment="Fernet-encrypted JSON array of bcrypt-hashed recovery codes")
     mfa_setup_complete: Mapped[bool] = mapped_column(Boolean, default=False, comment="Whether MFA setup has been completed by the user")
+
+    @property
+    def mfa_methods(self) -> list[str]:
+        """Return list of enrolled MFA methods."""
+        methods: list[str] = []
+        if self.totp_secret_encrypted:
+            methods.append("totp")
+        if self.email_mfa_enabled:
+            methods.append("email")
+        return methods
     must_change_password: Mapped[bool] = mapped_column(Boolean, default=False, comment="Whether user must change password on next login (temporary password)")
 
     oidc_provider_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("oidc_providers.id", ondelete="SET NULL"), nullable=True)
     oidc_subject: Mapped[str | None] = mapped_column(String(255), nullable=True, comment="Subject claim from the OIDC ID token")
 
-    ssh_credentials = relationship("SSHCredential", back_populates="created_by_user")
+    ssh_credentials = relationship("SSHCredential", back_populates="created_by_user", cascade="all, delete-orphan", passive_deletes=True)
     oidc_provider = relationship("OidcProvider")

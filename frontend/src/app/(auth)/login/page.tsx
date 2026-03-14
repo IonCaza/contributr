@@ -14,9 +14,10 @@ import { api } from "@/lib/api-client";
 import { useAuthProviders } from "@/hooks/use-settings";
 import type { OidcProviderPublicItem } from "@/lib/types";
 
-function MfaVerifyForm({ mfaToken, mfaMethod, onVerified }: {
+function MfaVerifyForm({ mfaToken, mfaMethod, mfaMethods, onVerified }: {
   mfaToken: string;
   mfaMethod: string | null;
+  mfaMethods: string[];
   onVerified: () => void;
 }) {
   const { verifyMfa } = useAuth();
@@ -25,11 +26,20 @@ function MfaVerifyForm({ mfaToken, mfaMethod, onVerified }: {
   const [loading, setLoading] = useState(false);
   const [emailSent, setEmailSent] = useState(false);
   const [sendingEmail, setSendingEmail] = useState(false);
+  const [cooldown, setCooldown] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => { inputRef.current?.focus(); }, []);
 
-  const defaultTab = mfaMethod === "email" ? "email" : "totp";
+  useEffect(() => {
+    if (cooldown <= 0) return;
+    const t = setTimeout(() => setCooldown((c) => c - 1), 1000);
+    return () => clearTimeout(t);
+  }, [cooldown]);
+
+  const hasTotp = mfaMethods.includes("totp");
+  const hasEmail = mfaMethods.includes("email");
+  const defaultTab = mfaMethod === "email" && hasEmail ? "email" : hasTotp ? "totp" : "email";
 
   async function handleVerify(method: string) {
     setError("");
@@ -50,8 +60,12 @@ function MfaVerifyForm({ mfaToken, mfaMethod, onVerified }: {
     try {
       await api.mfaSendEmailOtp({ mfa_token: mfaToken });
       setEmailSent(true);
+      setCooldown(60);
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Failed to send email");
+      const msg = err instanceof Error ? err.message : "Failed to send email";
+      setError(msg);
+      const match = msg.match(/wait (\d+) seconds/);
+      if (match) setCooldown(parseInt(match[1], 10));
     } finally {
       setSendingEmail(false);
     }
@@ -66,9 +80,9 @@ function MfaVerifyForm({ mfaToken, mfaMethod, onVerified }: {
         <div className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</div>
       )}
       <Tabs defaultValue={defaultTab} className="w-full">
-        <TabsList className="grid w-full grid-cols-3">
-          <TabsTrigger value="totp" className="gap-1.5 text-xs"><Smartphone className="h-3.5 w-3.5" /> Authenticator</TabsTrigger>
-          <TabsTrigger value="email" className="gap-1.5 text-xs"><Mail className="h-3.5 w-3.5" /> Email</TabsTrigger>
+        <TabsList className={`grid w-full ${hasTotp && hasEmail ? "grid-cols-3" : "grid-cols-2"}`}>
+          {hasTotp && <TabsTrigger value="totp" className="gap-1.5 text-xs"><Smartphone className="h-3.5 w-3.5" /> Authenticator</TabsTrigger>}
+          {hasEmail && <TabsTrigger value="email" className="gap-1.5 text-xs"><Mail className="h-3.5 w-3.5" /> Email</TabsTrigger>}
           <TabsTrigger value="recovery" className="gap-1.5 text-xs"><KeyRound className="h-3.5 w-3.5" /> Recovery</TabsTrigger>
         </TabsList>
 
@@ -93,8 +107,8 @@ function MfaVerifyForm({ mfaToken, mfaMethod, onVerified }: {
           {!emailSent ? (
             <>
               <p className="text-sm text-muted-foreground">We&apos;ll send a verification code to your registered email.</p>
-              <Button className="w-full" variant="outline" onClick={handleSendEmail} disabled={sendingEmail}>
-                {sendingEmail ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Sending...</> : "Send code"}
+              <Button className="w-full" variant="outline" onClick={handleSendEmail} disabled={sendingEmail || cooldown > 0}>
+                {sendingEmail ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Sending...</> : cooldown > 0 ? `Send code (${cooldown}s)` : "Send code"}
               </Button>
             </>
           ) : (
@@ -112,8 +126,8 @@ function MfaVerifyForm({ mfaToken, mfaMethod, onVerified }: {
               <Button className="w-full" disabled={loading || code.length !== 6} onClick={() => handleVerify("email")}>
                 {loading ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Verifying...</> : "Verify"}
               </Button>
-              <Button variant="ghost" size="sm" className="w-full" onClick={handleSendEmail} disabled={sendingEmail}>
-                Resend code
+              <Button variant="ghost" size="sm" className="w-full" onClick={handleSendEmail} disabled={sendingEmail || cooldown > 0}>
+                {cooldown > 0 ? `Resend code (${cooldown}s)` : "Resend code"}
               </Button>
             </>
           )}
@@ -187,7 +201,7 @@ function OrDivider() {
 
 export default function LoginPage() {
   const router = useRouter();
-  const { login, mfaPending, mfaToken, mfaMethod, clearMfaState } = useAuth();
+  const { login, mfaPending, mfaToken, mfaMethod, mfaMethods, clearMfaState } = useAuth();
   const { data: authProviders } = useAuthProviders();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -236,7 +250,7 @@ export default function LoginPage() {
         <CardContent>
           {mfaPending && mfaToken ? (
             <>
-              <MfaVerifyForm mfaToken={mfaToken} mfaMethod={mfaMethod} onVerified={() => router.push("/dashboard")} />
+              <MfaVerifyForm mfaToken={mfaToken} mfaMethod={mfaMethod} mfaMethods={mfaMethods} onVerified={() => router.push("/dashboard")} />
               <Button variant="ghost" size="sm" className="mt-3 w-full" onClick={clearMfaState}>
                 Back to login
               </Button>

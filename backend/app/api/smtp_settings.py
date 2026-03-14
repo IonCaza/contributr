@@ -92,8 +92,8 @@ async def update_smtp_settings(
         row.port = body.port
     if body.username is not None:
         row.username = body.username
-    if body.password is not None:
-        row.password_encrypted = _get_fernet().encrypt(body.password.encode()).decode() if body.password else ""
+    if body.password is not None and body.password != "":
+        row.password_encrypted = _get_fernet().encrypt(body.password.encode()).decode()
     if body.from_email is not None:
         row.from_email = body.from_email
     if body.from_name is not None:

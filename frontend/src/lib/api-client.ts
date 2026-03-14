@@ -138,6 +138,10 @@ export const api = {
   refresh: (refresh_token: string) =>
     request<TokenResponse>(`/auth/refresh?refresh_token=${refresh_token}`, { method: "POST" }),
   me: () => request<User>("/auth/me"),
+  updateProfile: (data: { full_name?: string; email?: string }) =>
+    request<User>("/auth/me", { method: "PUT", body: JSON.stringify(data) }),
+  changeOwnPassword: (data: { current_password: string; new_password: string }) =>
+    request<{ detail: string }>("/auth/me/password", { method: "POST", body: JSON.stringify(data) }),
   listUsers: () => request<User[]>("/auth/users"),
   createUser: (data: { email: string; username: string; password: string; full_name?: string; is_admin?: boolean; send_invite?: boolean; temporary_password?: boolean }) =>
     request<User>("/auth/users", { method: "POST", body: JSON.stringify(data) }),

@@ -27,6 +27,7 @@ interface AuthContextType {
   mfaSetupRequired: boolean;
   mfaToken: string | null;
   mfaMethod: string | null;
+  mfaMethods: string[];
   passwordChangeToken: string | null;
   verifyMfa: (code: string, method: string) => Promise<void>;
   completeMfaSetup: (accessToken: string, refreshToken: string) => Promise<void>;
@@ -42,6 +43,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [mfaSetupRequired, setMfaSetupRequired] = useState(false);
   const [mfaToken, setMfaToken] = useState<string | null>(null);
   const [mfaMethod, setMfaMethod] = useState<string | null>(null);
+  const [mfaMethods, setMfaMethods] = useState<string[]>([]);
   const [passwordChangeToken, setPasswordChangeToken] = useState<string | null>(null);
 
   const logout = useCallback(() => {
@@ -87,6 +89,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setMfaSetupRequired(false);
     setMfaToken(null);
     setMfaMethod(null);
+    setMfaMethods([]);
   }, []);
 
   const login = async (username: string, password: string): Promise<"ok" | "mfa_pending" | "mfa_setup_required" | "password_change_required"> => {
@@ -103,6 +106,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setMfaPending(true);
       setMfaToken(result.mfa_token);
       setMfaMethod(result.mfa_method);
+      setMfaMethods(result.mfa_methods ?? []);
       return "mfa_pending";
     }
 
@@ -137,7 +141,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   return (
     <AuthContext.Provider value={{
       user, loading, login, logout, refresh,
-      mfaPending, mfaSetupRequired, mfaToken, mfaMethod,
+      mfaPending, mfaSetupRequired, mfaToken, mfaMethod, mfaMethods,
       passwordChangeToken,
       verifyMfa, completeMfaSetup, clearMfaState,
     }}>

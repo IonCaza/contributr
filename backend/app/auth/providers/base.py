@@ -11,6 +11,7 @@ class AuthResult:
     user: User
     requires_mfa: bool = False
     mfa_method: str | None = None
+    mfa_methods: list[str] | None = None
     requires_mfa_setup: bool = False
     requires_password_change: bool = False
 

@@ -1,15 +1,19 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useTheme } from "next-themes";
 import {
   LayoutDashboard, FolderGit2, Users, Users2, Settings, Sun, Moon,
-  LogOut, ChevronLeft, ChevronRight, Bot,
+  LogOut, ChevronLeft, ChevronRight, Bot, MoreHorizontal, User as UserIcon,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem,
+  DropdownMenuSeparator, DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { useAuth } from "@/lib/auth-context";
 import { cn } from "@/lib/utils";
 import { useState } from "react";
@@ -27,9 +31,106 @@ interface SidebarNavProps {
   onChatToggle: () => void;
 }
 
+function UserSection({ user, pathname, collapsed, logout }: {
+  user: { username?: string; full_name?: string | null };
+  pathname: string;
+  collapsed: boolean;
+  logout: () => void;
+}) {
+  const router = useRouter();
+  const { theme, setTheme } = useTheme();
+  const profileActive = pathname.startsWith("/profile");
+
+  const menuItems = (
+    <DropdownMenuContent side="right" align="end" className="w-48">
+      {collapsed && (
+        <>
+          <DropdownMenuItem onClick={() => router.push("/profile")}>
+            <UserIcon className="mr-2 h-4 w-4" /> Profile
+          </DropdownMenuItem>
+          <DropdownMenuSeparator />
+        </>
+      )}
+      <DropdownMenuItem onClick={() => router.push("/settings")}>
+        <Settings className="mr-2 h-4 w-4" /> Settings
+      </DropdownMenuItem>
+      <DropdownMenuItem onClick={() => setTheme(theme === "dark" ? "light" : "dark")}>
+        {theme === "dark"
+          ? <><Sun className="mr-2 h-4 w-4" /> Light mode</>
+          : <><Moon className="mr-2 h-4 w-4" /> Dark mode</>}
+      </DropdownMenuItem>
+      <DropdownMenuSeparator />
+      <DropdownMenuItem onClick={logout} className="text-destructive focus:text-destructive">
+        <LogOut className="mr-2 h-4 w-4" /> Logout
+      </DropdownMenuItem>
+    </DropdownMenuContent>
+  );
+
+  if (collapsed) {
+    return (
+      <DropdownMenu>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <DropdownMenuTrigger asChild>
+              <button
+                className={cn(
+                  "relative flex w-full items-center justify-center rounded-md py-2 transition-all duration-150",
+                  profileActive
+                    ? "bg-sidebar-accent text-sidebar-accent-foreground"
+                    : "hover:bg-sidebar-accent/50",
+                )}
+              >
+                {profileActive && (
+                  <span className="absolute left-0 top-1/2 h-5 w-[3px] -translate-y-1/2 rounded-r-full bg-primary" />
+                )}
+                <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary/15 text-xs font-semibold text-primary">
+                  {user.username?.charAt(0).toUpperCase() ?? "U"}
+                </div>
+              </button>
+            </DropdownMenuTrigger>
+          </TooltipTrigger>
+          <TooltipContent side="right">{user.full_name || user.username}</TooltipContent>
+        </Tooltip>
+        {menuItems}
+      </DropdownMenu>
+    );
+  }
+
+  return (
+    <div
+      className={cn(
+        "relative flex items-center gap-2 rounded-md px-3 py-2 transition-all duration-150",
+        profileActive
+          ? "bg-sidebar-accent text-sidebar-accent-foreground"
+          : "hover:bg-sidebar-accent/50",
+      )}
+    >
+      {profileActive && (
+        <span className="absolute left-0 top-1/2 h-5 w-[3px] -translate-y-1/2 rounded-r-full bg-primary" />
+      )}
+      <Link href="/profile" className="flex min-w-0 flex-1 items-center gap-3">
+        <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary/15 text-xs font-semibold text-primary">
+          {user.username?.charAt(0).toUpperCase() ?? "U"}
+        </div>
+        <div className="min-w-0 flex-1">
+          <span className="block truncate text-sm font-medium text-sidebar-foreground">{user.full_name || user.username}</span>
+          <span className="block truncate text-xs text-sidebar-foreground/50">@{user.username}</span>
+        </div>
+      </Link>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <button className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-sidebar-foreground/50 hover:bg-sidebar-accent hover:text-sidebar-foreground transition-colors">
+            <MoreHorizontal className="h-4 w-4" />
+          </button>
+        </DropdownMenuTrigger>
+        {menuItems}
+      </DropdownMenu>
+    </div>
+  );
+}
+
 export function SidebarNav({ aiEnabled, chatOpen, onChatToggle }: SidebarNavProps) {
   const pathname = usePathname();
-  const { theme, setTheme } = useTheme();
   const { user, logout } = useAuth();
   const [collapsed, setCollapsed] = useState(false);
 
@@ -124,73 +225,15 @@ export function SidebarNav({ aiEnabled, chatOpen, onChatToggle }: SidebarNavProp
               <span>AI Assistant</span>
             </Button>
           ))}
-        {(() => {
-          const active = pathname.startsWith("/settings");
-          const link = (
-            <Link
-              href="/settings"
-              className={cn(
-                "relative flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-all duration-150",
-                active
-                  ? "bg-sidebar-accent text-sidebar-accent-foreground"
-                  : "text-sidebar-foreground/70 hover:bg-sidebar-accent/50 hover:text-sidebar-accent-foreground",
-              )}
-            >
-              {active && (
-                <span className="absolute left-0 top-1/2 h-5 w-[3px] -translate-y-1/2 rounded-r-full bg-primary" />
-              )}
-              <Settings className="h-4 w-4 shrink-0" />
-              {!collapsed && <span>Settings</span>}
-            </Link>
-          );
-          return collapsed ? (
-            <Tooltip>
-              <TooltipTrigger asChild>{link}</TooltipTrigger>
-              <TooltipContent side="right">Settings</TooltipContent>
-            </Tooltip>
-          ) : link;
-        })()}
-        <Button
-          variant="ghost"
-          size={collapsed ? "icon" : "default"}
-          className={cn("w-full", !collapsed && "justify-start gap-3")}
-          onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
-        >
-          {theme === "dark" ? (
-            <Sun className="h-4 w-4" />
-          ) : (
-            <Moon className="h-4 w-4" />
-          )}
-          {!collapsed && (
-            <span>{theme === "dark" ? "Light mode" : "Dark mode"}</span>
-          )}
-        </Button>
         {user && (
           <>
             <Separator className="!my-2" />
-            <div className={cn(
-              "flex items-center gap-3 rounded-md px-3 py-2",
-              collapsed && "justify-center px-0",
-            )}>
-              <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary/15 text-xs font-semibold text-primary">
-                {user.username?.charAt(0).toUpperCase() ?? "U"}
-              </div>
-              {!collapsed && (
-                <span className="truncate text-sm text-sidebar-foreground/80">{user.username}</span>
-              )}
-            </div>
-            <Button
-              variant="ghost"
-              size={collapsed ? "icon" : "default"}
-              className={cn(
-                "w-full text-destructive hover:text-destructive",
-                !collapsed && "justify-start gap-3",
-              )}
-              onClick={logout}
-            >
-              <LogOut className="h-4 w-4" />
-              {!collapsed && <span>Logout</span>}
-            </Button>
+            <UserSection
+              user={user}
+              pathname={pathname}
+              collapsed={collapsed}
+              logout={logout}
+            />
           </>
         )}
       </div>

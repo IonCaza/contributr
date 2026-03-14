@@ -596,16 +596,16 @@ function NotificationsSettingsSection() {
   }
 
   async function handleSmtpSave() {
-    const data: Record<string, unknown> = {
-      host: smtpForm.host,
-      port: parseInt(smtpForm.port) || 587,
-      username: smtpForm.username,
-      from_email: smtpForm.from_email,
-      from_name: smtpForm.from_name,
-      use_tls: smtpForm.use_tls,
-      enabled: smtpForm.enabled,
-    };
+    const data: Record<string, unknown> = {};
+    if (smtpForm.host !== (smtp?.host ?? "")) data.host = smtpForm.host;
+    if ((parseInt(smtpForm.port) || 587) !== (smtp?.port ?? 587)) data.port = parseInt(smtpForm.port) || 587;
+    if (smtpForm.username !== (smtp?.username ?? "")) data.username = smtpForm.username;
+    if (smtpForm.from_email !== (smtp?.from_email ?? "")) data.from_email = smtpForm.from_email;
+    if (smtpForm.from_name !== (smtp?.from_name ?? "Contributr")) data.from_name = smtpForm.from_name;
+    if (smtpForm.use_tls !== (smtp?.use_tls ?? true)) data.use_tls = smtpForm.use_tls;
+    if (smtpForm.enabled !== (smtp?.enabled ?? false)) data.enabled = smtpForm.enabled;
     if (smtpForm.password) data.password = smtpForm.password;
+    if (Object.keys(data).length === 0) return;
     await updateSmtp.mutateAsync(data as Parameters<typeof updateSmtp.mutateAsync>[0]);
     setSmtpDirty(false);
     smtpLoaded.current = false;
@@ -835,46 +835,68 @@ function UserSecuritySection() {
           <CardDescription>Add an extra layer of security to your account.</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="flex items-center justify-between rounded-lg border p-4">
-            <div className="flex items-center gap-3">
-              <div className={`flex h-9 w-9 items-center justify-center rounded-full ${user?.mfa_enabled ? "bg-green-100 dark:bg-green-900/30" : "bg-muted"}`}>
-                {user?.mfa_method === "totp"
-                  ? <Smartphone className={`h-4 w-4 ${user?.mfa_enabled ? "text-green-600 dark:text-green-400" : "text-muted-foreground"}`} />
-                  : user?.mfa_method === "email"
-                    ? <Mail className={`h-4 w-4 ${user?.mfa_enabled ? "text-green-600 dark:text-green-400" : "text-muted-foreground"}`} />
-                    : <ShieldCheck className="h-4 w-4 text-muted-foreground" />}
+          {!user?.mfa_enabled ? (
+            <div className="flex items-center justify-between rounded-lg border p-4">
+              <div className="flex items-center gap-3">
+                <div className="flex h-9 w-9 items-center justify-center rounded-full bg-muted">
+                  <ShieldCheck className="h-4 w-4 text-muted-foreground" />
+                </div>
+                <div>
+                  <p className="text-sm font-medium">MFA is not enabled</p>
+                  <p className="text-xs text-muted-foreground">Enable MFA to add an extra layer of security</p>
+                </div>
               </div>
-              <div>
-                <p className="text-sm font-medium">
-                  {user?.mfa_enabled
-                    ? `MFA enabled via ${user.mfa_method === "totp" ? "authenticator app" : "email"}`
-                    : "MFA is not enabled"}
-                </p>
-                <p className="text-xs text-muted-foreground">
-                  {user?.mfa_enabled
-                    ? "Your account is secured with two-factor authentication"
-                    : "Enable MFA to add an extra layer of security"}
-                </p>
-              </div>
-            </div>
-            {user?.mfa_enabled ? (
-              <Badge variant="secondary" className="bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400">Enabled</Badge>
-            ) : (
               <Button size="sm" onClick={() => setMfaSetupOpen(true)}>Set up MFA</Button>
-            )}
-          </div>
+            </div>
+          ) : (
+            <>
+              <div className="space-y-2">
+                <p className="text-sm font-medium">Enrolled Methods</p>
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between rounded-lg border p-3">
+                    <div className="flex items-center gap-3">
+                      <div className={`flex h-8 w-8 items-center justify-center rounded-full ${(user.mfa_methods ?? []).includes("totp") ? "bg-green-100 dark:bg-green-900/30" : "bg-muted"}`}>
+                        <Smartphone className={`h-4 w-4 ${(user.mfa_methods ?? []).includes("totp") ? "text-green-600 dark:text-green-400" : "text-muted-foreground"}`} />
+                      </div>
+                      <div>
+                        <p className="text-sm font-medium">Authenticator App</p>
+                        <p className="text-xs text-muted-foreground">Use an app like Google Authenticator or Authy</p>
+                      </div>
+                    </div>
+                    {(user.mfa_methods ?? []).includes("totp") ? (
+                      <Badge variant="secondary" className="bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400">Enrolled</Badge>
+                    ) : (
+                      <Button size="sm" variant="outline" onClick={() => setMfaSetupOpen(true)}>Enroll</Button>
+                    )}
+                  </div>
+                  <div className="flex items-center justify-between rounded-lg border p-3">
+                    <div className="flex items-center gap-3">
+                      <div className={`flex h-8 w-8 items-center justify-center rounded-full ${(user.mfa_methods ?? []).includes("email") ? "bg-green-100 dark:bg-green-900/30" : "bg-muted"}`}>
+                        <Mail className={`h-4 w-4 ${(user.mfa_methods ?? []).includes("email") ? "text-green-600 dark:text-green-400" : "text-muted-foreground"}`} />
+                      </div>
+                      <div>
+                        <p className="text-sm font-medium">Email OTP</p>
+                        <p className="text-xs text-muted-foreground">Receive a one-time code via email</p>
+                      </div>
+                    </div>
+                    {(user.mfa_methods ?? []).includes("email") ? (
+                      <Badge variant="secondary" className="bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400">Enrolled</Badge>
+                    ) : (
+                      <Button size="sm" variant="outline" onClick={() => setMfaSetupOpen(true)}>Enroll</Button>
+                    )}
+                  </div>
+                </div>
+              </div>
 
-          {user?.mfa_enabled && (
-            <div className="space-y-3">
               <div className="rounded-lg border p-4 space-y-3">
                 <p className="text-sm font-medium">Disable MFA</p>
-                <p className="text-xs text-muted-foreground">Enter your password to disable two-factor authentication.</p>
+                <p className="text-xs text-muted-foreground">Enter your password to remove all MFA methods from your account.</p>
                 {disableError && <div className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">{disableError}</div>}
                 <div className="flex gap-2">
                   <Input type="password" placeholder="Your password" value={disablePassword} onChange={(e) => setDisablePassword(e.target.value)} className="max-w-xs" />
                   <Button variant="destructive" size="sm" onClick={handleDisable} disabled={disabling || !disablePassword}>
                     {disabling ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-                    Disable
+                    Disable All
                   </Button>
                 </div>
               </div>
@@ -907,7 +929,7 @@ function UserSecuritySection() {
                   </div>
                 )}
               </div>
-            </div>
+            </>
           )}
         </CardContent>
       </Card>
@@ -917,8 +939,10 @@ function UserSecuritySection() {
         onOpenChange={setMfaSetupOpen}
         dismissible
         onComplete={async (at, rt) => {
-          localStorage.setItem("access_token", at);
-          localStorage.setItem("refresh_token", rt);
+          if (at && rt) {
+            localStorage.setItem("access_token", at);
+            localStorage.setItem("refresh_token", rt);
+          }
           await refresh();
           setMfaSetupOpen(false);
         }}
@@ -1867,17 +1891,14 @@ export default function SettingsPage() {
                         </Badge>
                       </TableCell>
                       <TableCell>
-                        {u.mfa_enabled ? (
-                          <TooltipProvider>
-                            <Tooltip>
-                              <TooltipTrigger>
-                                <Badge variant="default" className="gap-1 text-[10px]">
-                                  <ShieldCheck className="h-3 w-3" /> {u.mfa_method === "totp" ? "TOTP" : "Email"}
-                                </Badge>
-                              </TooltipTrigger>
-                              <TooltipContent>MFA enrolled via {u.mfa_method === "totp" ? "authenticator app" : "email OTP"}</TooltipContent>
-                            </Tooltip>
-                          </TooltipProvider>
+                        {(u.mfa_methods ?? []).length > 0 ? (
+                          <div className="flex flex-wrap gap-1">
+                            {(u.mfa_methods ?? []).map((m) => (
+                              <Badge key={m} variant="default" className="gap-1 text-[10px]">
+                                <ShieldCheck className="h-3 w-3" /> {m === "totp" ? "TOTP" : "Email"}
+                              </Badge>
+                            ))}
+                          </div>
                         ) : (
                           <Badge variant="secondary" className="text-[10px]">Off</Badge>
                         )}

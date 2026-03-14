@@ -8,6 +8,7 @@ export interface User {
   auth_provider: string;
   mfa_enabled: boolean;
   mfa_method: string | null;
+  mfa_methods: string[];
   mfa_setup_complete: boolean;
   mfa_setup_required: boolean;
 }
@@ -22,6 +23,7 @@ export interface MfaChallengeResponse {
   requires_mfa: true;
   mfa_token: string;
   mfa_method: string | null;
+  mfa_methods: string[];
 }
 
 export interface MfaSetupRequiredResponse {

@@ -37,6 +37,7 @@ class LocalAuthProvider(AuthProvider):
                 user=user,
                 requires_mfa=True,
                 mfa_method=user.mfa_method,
+                mfa_methods=user.mfa_methods,
             )
 
         auth_row = await db.execute(

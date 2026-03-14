@@ -15,6 +15,7 @@ from app.services.ssh_manager import _get_fernet
 logger = logging.getLogger(__name__)
 
 OTP_TTL_SECONDS = 300  # 5 minutes
+OTP_COOLDOWN_SECONDS = 60
 RECOVERY_CODE_COUNT = 10
 
 _redis: aioredis.Redis | None = None
@@ -64,11 +65,19 @@ def generate_email_otp() -> str:
     return f"{secrets.randbelow(1_000_000):06d}"
 
 
+async def check_otp_cooldown(user_id: str) -> int:
+    """Return remaining cooldown seconds, or 0 if the user can request a new OTP."""
+    r = _get_redis()
+    ttl = await r.ttl(f"mfa:otp_cooldown:{user_id}")
+    return max(ttl, 0)
+
+
 async def store_email_otp(user_id: str, code: str) -> None:
     r = _get_redis()
     key = f"mfa:email_otp:{user_id}"
     hashed = bcrypt.hashpw(code.encode(), bcrypt.gensalt()).decode()
     await r.set(key, hashed, ex=OTP_TTL_SECONDS)
+    await r.set(f"mfa:otp_cooldown:{user_id}", "1", ex=OTP_COOLDOWN_SECONDS)
 
 
 async def verify_email_otp(user_id: str, code: str) -> bool:

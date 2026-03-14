@@ -20,7 +20,7 @@ class SSHCredential(Base):
     public_key: Mapped[str] = mapped_column(Text, nullable=False, comment="SSH public key in OpenSSH format")
     private_key_encrypted: Mapped[str] = mapped_column(Text, nullable=False, comment="Fernet-encrypted SSH private key")
     fingerprint: Mapped[str] = mapped_column(String(255), nullable=False, comment="SSH key fingerprint for identification")
-    created_by_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False, comment="User who generated this SSH key")
+    created_by_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, comment="User who generated this SSH key")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), comment="Timestamp when the key was generated")
 
     created_by_user = relationship("User", back_populates="ssh_credentials")

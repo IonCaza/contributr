@@ -28,9 +28,16 @@ export function MfaSetupDialog({ open, onOpenChange, dismissible = true, setupTo
   const [recoveryCodes, setRecoveryCodes] = useState<string[]>([]);
   const [copied, setCopied] = useState(false);
   const [emailSent, setEmailSent] = useState(false);
+  const [cooldown, setCooldown] = useState(0);
   const [savedCodes, setSavedCodes] = useState(false);
   const [mfaOptions, setMfaOptions] = useState<{ totp: boolean; email: boolean } | null>(null);
   const [optionsLoading, setOptionsLoading] = useState(false);
+
+  useEffect(() => {
+    if (cooldown <= 0) return;
+    const t = setTimeout(() => setCooldown((c) => c - 1), 1000);
+    return () => clearTimeout(t);
+  }, [cooldown]);
 
   useEffect(() => {
     if (!open) return;
@@ -73,9 +80,13 @@ export function MfaSetupDialog({ open, onOpenChange, dismissible = true, setupTo
     try {
       await api.mfaEmailInit(setupToken ?? undefined);
       setEmailSent(true);
+      setCooldown(60);
       setStep("email-verify");
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Failed to send verification email");
+      const msg = err instanceof Error ? err.message : "Failed to send verification email";
+      setError(msg);
+      const match = msg.match(/wait (\d+) seconds/);
+      if (match) setCooldown(parseInt(match[1], 10));
     } finally {
       setLoading(false);
     }
@@ -87,11 +98,15 @@ export function MfaSetupDialog({ open, onOpenChange, dismissible = true, setupTo
     setLoading(true);
     try {
       const result = await api.mfaTotpConfirm({ secret: totpData.secret, code }, setupToken ?? undefined);
-      setRecoveryCodes(result.recovery_codes);
-      setStep("recovery");
       if (result.access_token && result.refresh_token) {
         localStorage.setItem("_mfa_at", result.access_token);
         localStorage.setItem("_mfa_rt", result.refresh_token);
+      }
+      if (result.recovery_codes.length > 0) {
+        setRecoveryCodes(result.recovery_codes);
+        setStep("recovery");
+      } else {
+        setStep("done");
       }
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Invalid code");
@@ -105,11 +120,15 @@ export function MfaSetupDialog({ open, onOpenChange, dismissible = true, setupTo
     setLoading(true);
     try {
       const result = await api.mfaEmailConfirm({ code }, setupToken ?? undefined);
-      setRecoveryCodes(result.recovery_codes);
-      setStep("recovery");
       if (result.access_token && result.refresh_token) {
         localStorage.setItem("_mfa_at", result.access_token);
         localStorage.setItem("_mfa_rt", result.refresh_token);
+      }
+      if (result.recovery_codes.length > 0) {
+        setRecoveryCodes(result.recovery_codes);
+        setStep("recovery");
+      } else {
+        setStep("done");
       }
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Invalid code");
@@ -123,8 +142,12 @@ export function MfaSetupDialog({ open, onOpenChange, dismissible = true, setupTo
     try {
       await api.mfaEmailInit(setupToken ?? undefined);
       setEmailSent(true);
+      setCooldown(60);
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Failed to resend email");
+      const msg = err instanceof Error ? err.message : "Failed to resend email";
+      setError(msg);
+      const match = msg.match(/wait (\d+) seconds/);
+      if (match) setCooldown(parseInt(match[1], 10));
     }
   }
 
@@ -151,6 +174,8 @@ export function MfaSetupDialog({ open, onOpenChange, dismissible = true, setupTo
     localStorage.removeItem("_mfa_rt");
     if (at && rt) {
       onComplete(at, rt);
+    } else {
+      onComplete("", "");
     }
     reset();
   }
@@ -283,8 +308,8 @@ export function MfaSetupDialog({ open, onOpenChange, dismissible = true, setupTo
                 {loading ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Verifying...</> : "Verify & enable"}
               </Button>
             </div>
-            <Button variant="ghost" size="sm" className="w-full" onClick={handleResendEmail}>
-              Resend code
+            <Button variant="ghost" size="sm" className="w-full" onClick={handleResendEmail} disabled={cooldown > 0}>
+              {cooldown > 0 ? `Resend code (${cooldown}s)` : "Resend code"}
             </Button>
           </div>
         )}
