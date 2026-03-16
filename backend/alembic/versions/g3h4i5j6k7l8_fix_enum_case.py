@@ -12,29 +12,39 @@ branch_labels = None
 depends_on = None
 
 
+def _safe_rename(type_name: str, old: str, new: str) -> None:
+    op.execute(
+        f"DO $$ BEGIN "
+        f"IF EXISTS (SELECT 1 FROM pg_enum WHERE enumtypid = '{type_name}'::regtype AND enumlabel = '{old}') "
+        f"THEN EXECUTE 'ALTER TYPE {type_name} RENAME VALUE ''{old}'' TO ''{new}'''; "
+        f"END IF; "
+        f"END $$;"
+    )
+
+
 def upgrade() -> None:
-    op.execute("ALTER TYPE prcommenttype RENAME VALUE 'inline' TO 'INLINE'")
-    op.execute("ALTER TYPE prcommenttype RENAME VALUE 'general' TO 'GENERAL'")
-    op.execute("ALTER TYPE prcommenttype RENAME VALUE 'system' TO 'SYSTEM'")
+    _safe_rename("prcommenttype", "inline", "INLINE")
+    _safe_rename("prcommenttype", "general", "GENERAL")
+    _safe_rename("prcommenttype", "system", "SYSTEM")
     op.execute("ALTER TABLE pr_comments ALTER COLUMN comment_type SET DEFAULT 'GENERAL'")
 
-    op.execute("ALTER TYPE adrstatus RENAME VALUE 'proposed' TO 'PROPOSED'")
-    op.execute("ALTER TYPE adrstatus RENAME VALUE 'accepted' TO 'ACCEPTED'")
-    op.execute("ALTER TYPE adrstatus RENAME VALUE 'deprecated' TO 'DEPRECATED'")
-    op.execute("ALTER TYPE adrstatus RENAME VALUE 'superseded' TO 'SUPERSEDED'")
-    op.execute("ALTER TYPE adrstatus RENAME VALUE 'rejected' TO 'REJECTED'")
+    _safe_rename("adrstatus", "proposed", "PROPOSED")
+    _safe_rename("adrstatus", "accepted", "ACCEPTED")
+    _safe_rename("adrstatus", "deprecated", "DEPRECATED")
+    _safe_rename("adrstatus", "superseded", "SUPERSEDED")
+    _safe_rename("adrstatus", "rejected", "REJECTED")
     op.execute("ALTER TABLE adrs ALTER COLUMN status SET DEFAULT 'PROPOSED'")
 
 
 def downgrade() -> None:
     op.execute("ALTER TABLE adrs ALTER COLUMN status SET DEFAULT 'proposed'")
-    op.execute("ALTER TYPE adrstatus RENAME VALUE 'REJECTED' TO 'rejected'")
-    op.execute("ALTER TYPE adrstatus RENAME VALUE 'SUPERSEDED' TO 'superseded'")
-    op.execute("ALTER TYPE adrstatus RENAME VALUE 'DEPRECATED' TO 'deprecated'")
-    op.execute("ALTER TYPE adrstatus RENAME VALUE 'ACCEPTED' TO 'accepted'")
-    op.execute("ALTER TYPE adrstatus RENAME VALUE 'PROPOSED' TO 'proposed'")
+    _safe_rename("adrstatus", "REJECTED", "rejected")
+    _safe_rename("adrstatus", "SUPERSEDED", "superseded")
+    _safe_rename("adrstatus", "DEPRECATED", "deprecated")
+    _safe_rename("adrstatus", "ACCEPTED", "accepted")
+    _safe_rename("adrstatus", "PROPOSED", "proposed")
 
     op.execute("ALTER TABLE pr_comments ALTER COLUMN comment_type SET DEFAULT 'general'")
-    op.execute("ALTER TYPE prcommenttype RENAME VALUE 'SYSTEM' TO 'system'")
-    op.execute("ALTER TYPE prcommenttype RENAME VALUE 'GENERAL' TO 'general'")
-    op.execute("ALTER TYPE prcommenttype RENAME VALUE 'INLINE' TO 'inline'")
+    _safe_rename("prcommenttype", "SYSTEM", "system")
+    _safe_rename("prcommenttype", "GENERAL", "general")
+    _safe_rename("prcommenttype", "INLINE", "inline")
