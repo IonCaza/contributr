@@ -1,4 +1,5 @@
 import asyncio
+import re
 import uuid
 import logging
 from datetime import datetime, timezone
@@ -68,6 +69,79 @@ def _on_worker_ready(sender, **kwargs):
 
 class SyncCancelled(Exception):
     pass
+
+
+_WI_REF_RE = re.compile(r'(?:AB)?#(\d{2,})')
+
+
+async def _link_commits_to_work_items(
+    db: AsyncSession,
+    project_id: uuid.UUID,
+    repo_ids: list[uuid.UUID] | None = None,
+    sync_log: "SyncLogger | None" = None,
+) -> int:
+    """Scan commit messages for work-item references and create WorkItemCommit rows.
+
+    If *repo_ids* is given, only commits from those repos are scanned;
+    otherwise all repos belonging to *project_id* are included.
+    """
+    from app.db.models.work_item import WorkItem
+    from app.db.models.work_item_commit import WorkItemCommit
+
+    if repo_ids is None:
+        repo_ids = list(
+            (await db.execute(
+                select(Repository.id).where(Repository.project_id == project_id)
+            )).scalars().all()
+        )
+    if not repo_ids:
+        return 0
+
+    commits = (
+        await db.execute(
+            select(Commit).where(Commit.repository_id.in_(repo_ids))
+        )
+    ).scalars().all()
+
+    wi_rows = await db.execute(
+        select(WorkItem.platform_work_item_id, WorkItem.id)
+        .where(WorkItem.project_id == project_id)
+    )
+    wi_map = {row[0]: row[1] for row in wi_rows.all()}
+    if not wi_map:
+        if sync_log:
+            sync_log.info("wi_links", "No work items in DB — skipping commit-message link scan")
+        return 0
+
+    link_count = 0
+    for c in commits:
+        if not c.message:
+            continue
+        refs = _WI_REF_RE.findall(c.message)
+        for ref_str in refs:
+            ref_id = int(ref_str)
+            wi_uuid = wi_map.get(ref_id)
+            if not wi_uuid:
+                continue
+            existing = await db.execute(
+                select(WorkItemCommit).where(
+                    WorkItemCommit.work_item_id == wi_uuid,
+                    WorkItemCommit.commit_id == c.id,
+                )
+            )
+            if not existing.scalar_one_or_none():
+                db.add(WorkItemCommit(
+                    work_item_id=wi_uuid,
+                    commit_id=c.id,
+                    link_type="message_ref",
+                ))
+                link_count += 1
+
+    if link_count:
+        await db.flush()
+    if sync_log:
+        sync_log.info("wi_links", f"Found {link_count} commit-to-work-item links from messages")
+    return link_count
 
 
 async def _check_cancelled(db: AsyncSession, job_id: uuid.UUID) -> None:
@@ -176,46 +250,9 @@ async def _run_sync(repo_id: str, job_id: str) -> None:
             await _check_cancelled(db, uuid.UUID(job_id))
 
             slog.info("wi_links", "Scanning commit messages for work item references...")
-            from app.db.models.work_item import WorkItem
-            from app.db.models.work_item_commit import WorkItemCommit
-            import re as _re
-            _WI_REF_RE = _re.compile(r'(?:AB)?#(\d{2,})')
-            _link_commits = (
-                await db.execute(
-                    select(Commit).where(Commit.repository_id == repo.id)
-                )
-            ).scalars().all()
-            _wi_ids_result = await db.execute(
-                select(WorkItem.platform_work_item_id, WorkItem.id)
-                .where(WorkItem.project_id == repo.project_id)
+            await _link_commits_to_work_items(
+                db, repo.project_id, repo_ids=[repo.id], sync_log=slog,
             )
-            _wi_map = {row[0]: row[1] for row in _wi_ids_result.all()}
-            _wi_link_count = 0
-            for c in _link_commits:
-                if not c.message:
-                    continue
-                refs = _WI_REF_RE.findall(c.message)
-                for ref_str in refs:
-                    ref_id = int(ref_str)
-                    wi_uuid = _wi_map.get(ref_id)
-                    if not wi_uuid:
-                        continue
-                    existing_link = await db.execute(
-                        select(WorkItemCommit).where(
-                            WorkItemCommit.work_item_id == wi_uuid,
-                            WorkItemCommit.commit_id == c.id,
-                        )
-                    )
-                    if not existing_link.scalar_one_or_none():
-                        db.add(WorkItemCommit(
-                            work_item_id=wi_uuid,
-                            commit_id=c.id,
-                            link_type="message_ref",
-                        ))
-                        _wi_link_count += 1
-            if _wi_link_count:
-                await db.flush()
-            slog.info("wi_links", f"Found {_wi_link_count} commit-to-work-item links from messages")
 
             await _check_cancelled(db, uuid.UUID(job_id))
 
@@ -411,6 +448,11 @@ async def _run_delivery_sync(project_id: str, job_id: str | None = None) -> dict
             slog.info("activities", "Fetching work item activity history...")
             act_count = await fetch_ado_work_item_activities(db, project, org_url, token, ado_project_name, slog)
             slog.info("activities", f"Synced {act_count} activity records")
+
+            slog.info("wi_links", "Scanning commit messages for work item references...")
+            await _link_commits_to_work_items(
+                db, project.id, sync_log=slog,
+            )
 
             slog.info("stats", "Rebuilding daily delivery stats...")
             await rebuild_daily_delivery_stats(db, project.id)

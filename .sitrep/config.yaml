@@ -1,0 +1,28 @@
+# Sitrep project configuration
+# Place this file at .sitrep/config.yaml in your repository root.
+# Agents read this file before their first sitrep call to auto-configure.
+
+# Project identifier -- must match the project name registered on the sitrep server.
+# If the project doesn't exist yet, sitrep will auto-create it from this config.
+project_id: nav-ai
+
+# Sitrep server URL
+server_url: http://localhost:18000
+
+# Git remote name to use for repo_url detection (default: origin)
+git_remote: origin
+
+# Default branch intent for sessions started from this repo.
+# One of: feature, spike, experiment, analysis, hotfix
+default_branch_intent: feature
+
+# Commit semantics: "strict" means commits signal meaningful intent,
+# "relaxed" means commits are frequent saves without strong semantic weight.
+commit_semantics: strict
+
+# Session TTL in minutes. Sessions without a heartbeat for this long are reaped.
+session_ttl_minutes: 30
+
+# Escalation settings
+escalation_timeout_minutes: 15
+escalation_max_rounds: 5

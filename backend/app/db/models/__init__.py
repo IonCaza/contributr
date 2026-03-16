@@ -36,6 +36,8 @@ from app.db.models.smtp_settings import SmtpSettings
 from app.db.models.email_template import EmailTemplate
 from app.db.models.auth_settings import AuthSettings
 from app.db.models.oidc_provider import OidcProvider
+from app.db.models.pr_comment import PRComment, PRCommentType
+from app.db.models.adr import AdrRepository, AdrTemplate, Adr, AdrStatus
 
 __all__ = [
     "User",
@@ -93,4 +95,10 @@ __all__ = [
     "EmailTemplate",
     "AuthSettings",
     "OidcProvider",
+    "PRComment",
+    "PRCommentType",
+    "AdrRepository",
+    "AdrTemplate",
+    "Adr",
+    "AdrStatus",
 ]

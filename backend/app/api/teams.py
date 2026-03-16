@@ -69,7 +69,7 @@ def _team_out(team: Team, member_count: int) -> dict:
 
 # ── Endpoints ────────────────────────────────────────────────────────
 
-@router.get("/")
+@router.get("")
 async def list_teams(
     project_id: uuid.UUID | None = None,
     db: AsyncSession = Depends(get_db),

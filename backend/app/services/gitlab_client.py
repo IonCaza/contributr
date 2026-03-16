@@ -4,9 +4,10 @@ import gitlab
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
-from app.db.models import Repository, PullRequest, Review
+from app.db.models import Repository, PullRequest, Review, PRComment
 from app.db.models.pull_request import PRState
 from app.db.models.review import ReviewState
+from app.db.models.pr_comment import PRCommentType
 from app.services.identity import resolve_contributor
 
 if __import__("typing").TYPE_CHECKING:
@@ -54,14 +55,31 @@ async def fetch_gitlab_mrs(
         contributor = await resolve_contributor(db, author_name, author_email)
 
         state = STATE_MAP.get(mr.state, PRState.OPEN)
+
+        mr_detail = None
+        lines_added = 0
+        lines_deleted = 0
+        try:
+            mr_detail = gl_project.mergerequests.get(mr.iid)
+            mr_changes = mr_detail.changes()
+            for ch in mr_changes.get("changes", []):
+                diff_text = ch.get("diff", "")
+                for line in diff_text.split("\n"):
+                    if line.startswith("+") and not line.startswith("+++"):
+                        lines_added += 1
+                    elif line.startswith("-") and not line.startswith("---"):
+                        lines_deleted += 1
+        except Exception:
+            lines_added = getattr(mr, "changes_count", 0) or 0
+
         db_pr = PullRequest(
             repository_id=repo.id,
             contributor_id=contributor.id,
             platform_pr_id=mr.iid,
             title=(mr.title or "")[:1024],
             state=state,
-            lines_added=getattr(mr, "changes_count", 0) or 0,
-            lines_deleted=0,
+            lines_added=lines_added,
+            lines_deleted=lines_deleted,
             created_at=mr.created_at,
             merged_at=getattr(mr, "merged_at", None),
             closed_at=getattr(mr, "closed_at", None),
@@ -70,7 +88,8 @@ async def fetch_gitlab_mrs(
         await db.flush()
 
         try:
-            mr_detail = gl_project.mergerequests.get(mr.iid)
+            if not mr_detail:
+                mr_detail = gl_project.mergerequests.get(mr.iid)
             for approver in getattr(mr_detail, "approved_by", []) or []:
                 user = approver.get("user", {})
                 rev_email = user.get("email") or f"{user.get('username', 'unknown')}@gitlab.com"
@@ -83,6 +102,39 @@ async def fetch_gitlab_mrs(
                 ))
         except Exception as e:
             logger.warning("Could not fetch approvals for MR %s: %s", mr.iid, e)
+
+        try:
+            notes = mr_detail.notes.list(sort="asc", iterator=True) if mr_detail else []
+            for note in notes:
+                if getattr(note, "system", False):
+                    continue
+                n_author = note.author if isinstance(note.author, dict) else {}
+                n_name = n_author.get("name") or n_author.get("username", "unknown")
+                n_email = n_author.get("email") or f"{n_author.get('username', 'unknown')}@gitlab.com"
+                n_contributor = await resolve_contributor(db, n_name, n_email)
+                n_position = getattr(note, "position", None)
+                n_file = None
+                n_line = None
+                ctype = PRCommentType.GENERAL
+                if isinstance(n_position, dict) and n_position.get("new_path"):
+                    n_file = n_position["new_path"]
+                    n_line = n_position.get("new_line") or n_position.get("old_line")
+                    ctype = PRCommentType.INLINE
+                db.add(PRComment(
+                    pull_request_id=db_pr.id,
+                    author_name=n_name,
+                    author_id=n_contributor.id,
+                    body=getattr(note, "body", "") or "",
+                    thread_id=str(getattr(note, "discussion_id", "")) or None,
+                    file_path=n_file,
+                    line_number=n_line,
+                    comment_type=ctype,
+                    platform_comment_id=str(note.id),
+                    created_at=getattr(note, "created_at", mr.created_at),
+                    updated_at=getattr(note, "updated_at", None),
+                ))
+        except Exception as e:
+            logger.warning("Could not fetch notes for MR %s: %s", mr.iid, e)
 
         new_count += 1
 

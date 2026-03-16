@@ -4,9 +4,10 @@ from github import Github, GithubException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
-from app.db.models import Repository, PullRequest, Review, Contributor
+from app.db.models import Repository, PullRequest, Review, Contributor, PRComment
 from app.db.models.pull_request import PRState
 from app.db.models.review import ReviewState
+from app.db.models.pr_comment import PRCommentType
 from app.services.identity import resolve_contributor
 
 if __import__("typing").TYPE_CHECKING:
@@ -82,6 +83,43 @@ async def fetch_github_prs(
                 state=review_state,
                 submitted_at=review.submitted_at,
             ))
+
+        try:
+            for rc in pr.get_review_comments():
+                c_user = rc.user
+                c_email = (c_user.email if c_user else None) or f"{c_user.login}@github.com"
+                c_name = c_user.login if c_user else "unknown"
+                c_contributor = await resolve_contributor(db, c_name, c_email)
+                db.add(PRComment(
+                    pull_request_id=db_pr.id,
+                    author_name=c_name,
+                    author_id=c_contributor.id,
+                    body=rc.body or "",
+                    thread_id=str(rc.pull_request_review_id) if rc.pull_request_review_id else None,
+                    file_path=rc.path,
+                    line_number=rc.original_line or rc.line,
+                    comment_type=PRCommentType.INLINE if rc.path else PRCommentType.GENERAL,
+                    platform_comment_id=str(rc.id),
+                    created_at=rc.created_at,
+                    updated_at=rc.updated_at,
+                ))
+            for ic in pr.get_issue_comments():
+                ic_user = ic.user
+                ic_email = (ic_user.email if ic_user else None) or f"{ic_user.login}@github.com"
+                ic_name = ic_user.login if ic_user else "unknown"
+                ic_contributor = await resolve_contributor(db, ic_name, ic_email)
+                db.add(PRComment(
+                    pull_request_id=db_pr.id,
+                    author_name=ic_name,
+                    author_id=ic_contributor.id,
+                    body=ic.body or "",
+                    comment_type=PRCommentType.GENERAL,
+                    platform_comment_id=f"issue_{ic.id}",
+                    created_at=ic.created_at,
+                    updated_at=ic.updated_at,
+                ))
+        except GithubException as e:
+            logger.warning("Could not fetch comments for PR %d: %s", pr.number, e)
 
         new_count += 1
 

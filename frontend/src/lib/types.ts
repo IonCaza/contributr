@@ -1157,3 +1157,137 @@ export interface PaginatedFeedback {
   items: FeedbackItem[];
   total: number;
 }
+
+// ── Pull Requests ─────────────────────────────────────────────────────
+
+export interface PRReview {
+  id: string;
+  reviewer_name: string | null;
+  reviewer_id: string | null;
+  state: string;
+  comment_count: number;
+  submitted_at: string;
+}
+
+export interface PRCommentItem {
+  id: string;
+  author_name: string;
+  author_id: string | null;
+  body: string;
+  thread_id: string | null;
+  parent_comment_id: string | null;
+  file_path: string | null;
+  line_number: number | null;
+  comment_type: string;
+  created_at: string;
+  updated_at: string | null;
+}
+
+export interface PRListItem {
+  id: string;
+  platform_pr_id: number;
+  title: string | null;
+  state: string;
+  repository_name: string;
+  repository_id: string;
+  author_name: string | null;
+  contributor_id: string | null;
+  lines_added: number;
+  lines_deleted: number;
+  comment_count: number;
+  review_count: number;
+  iteration_count: number;
+  created_at: string;
+  merged_at: string | null;
+  closed_at: string | null;
+  first_review_at: string | null;
+  cycle_time_hours: number | null;
+  review_turnaround_hours: number | null;
+}
+
+export interface PRListResponse {
+  items: PRListItem[];
+  total: number;
+  page: number;
+  page_size: number;
+}
+
+export interface PRDetail extends PRListItem {
+  reviews: PRReview[];
+  comments: PRCommentItem[];
+}
+
+export interface PRSizeBucket {
+  label: string;
+  count: number;
+  avg_cycle_time_hours: number | null;
+}
+
+export interface PRReviewerStat {
+  reviewer_name: string;
+  reviewer_id: string | null;
+  review_count: number;
+  avg_turnaround_hours: number | null;
+  approval_count: number;
+}
+
+export interface PRCycleTimeTrend {
+  period: string;
+  avg_cycle_time_hours: number | null;
+  pr_count: number;
+}
+
+export interface PRAnalytics {
+  total_prs: number;
+  open_prs: number;
+  merged_prs: number;
+  closed_prs: number;
+  avg_cycle_time_hours: number | null;
+  avg_review_turnaround_hours: number | null;
+  merge_rate: number | null;
+  size_distribution: PRSizeBucket[];
+  cycle_time_trend: PRCycleTimeTrend[];
+  top_reviewers: PRReviewerStat[];
+}
+
+// ── ADR Types ─────────────────────────────────────────────────────────
+
+export interface AdrConfig {
+  id: string;
+  project_id: string;
+  repository_id: string | null;
+  directory_path: string;
+  naming_convention: string;
+  next_number: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AdrTemplate {
+  id: string;
+  project_id: string | null;
+  name: string;
+  description: string | null;
+  content: string;
+  is_default: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface Adr {
+  id: string;
+  project_id: string;
+  adr_number: number;
+  title: string;
+  slug: string;
+  status: string;
+  content: string;
+  template_id: string | null;
+  superseded_by_id: string | null;
+  file_path: string | null;
+  last_committed_sha: string | null;
+  pr_url: string | null;
+  created_by_id: string;
+  created_at: string;
+  updated_at: string;
+}

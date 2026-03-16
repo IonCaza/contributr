@@ -48,6 +48,7 @@ DEFINITIONS = [
     ToolDefinition("get_work_patterns", "Work Patterns", "Day-of-week and hour-of-day commit distribution", CATEGORY),
     ToolDefinition("get_contributor_cross_repo", "Contributor Cross-Repo", "Which repos a contributor works on", CATEGORY),
     ToolDefinition("get_inactive_contributors", "Inactive Contributors", "Previously active contributors who have gone quiet", CATEGORY),
+    ToolDefinition("list_pull_requests", "List Pull Requests", "Search and filter pull requests across project repositories", CATEGORY),
     ToolDefinition("get_branch_summary", "Branch Summary", "Active branches with recent commit activity", CATEGORY),
     ToolDefinition("get_branch_comparison", "Branch Comparison", "Compare two branches by commits and contributors", CATEGORY),
     ToolDefinition("get_data_freshness", "Data Freshness", "How current the synced data is for a project or repo", CATEGORY),
@@ -1684,6 +1685,63 @@ def _build_contribution_tools(db: AsyncSession) -> list:
             return _table(["Repository", "Last Synced", "Sync Status", "Sync Finished", "Latest Commit"], rows)
         return await _safe(db, _impl())
 
+    @tool
+    async def list_pull_requests(project_name: str, state: str = "all", limit: int = 20) -> str:
+        """Search and filter pull requests across project repositories.
+
+        Args:
+            project_name: Project name (fuzzy match).
+            state: Filter by state: open, merged, closed, or all.
+            limit: Max results to return (default 20).
+        """
+        async def _impl():
+            result = await db.execute(
+                select(Project).where(Project.name.ilike(f"%{project_name}%")).limit(1)
+            )
+            project = result.scalar_one_or_none()
+            if not project:
+                return f"No project found matching '{project_name}'."
+
+            repo_ids = select(Repository.id).where(Repository.project_id == project.id)
+            q = (
+                select(PullRequest)
+                .where(PullRequest.repository_id.in_(repo_ids))
+                .options(
+                    __import__("sqlalchemy.orm", fromlist=["selectinload"]).selectinload(PullRequest.repository),
+                    __import__("sqlalchemy.orm", fromlist=["selectinload"]).selectinload(PullRequest.contributor),
+                )
+            )
+            if state and state != "all":
+                state_map = {"open": PRState.OPEN, "merged": PRState.MERGED, "closed": PRState.CLOSED}
+                if state in state_map:
+                    q = q.where(PullRequest.state == state_map[state])
+            q = q.order_by(PullRequest.created_at.desc()).limit(min(int(limit), 50))
+
+            pr_result = await db.execute(q)
+            prs = pr_result.scalars().unique().all()
+
+            if not prs:
+                return f"No PRs found in '{project_name}' with state='{state}'."
+
+            rows = []
+            for p in prs:
+                ct = ""
+                if p.merged_at and p.created_at:
+                    hours = (p.merged_at.timestamp() - p.created_at.timestamp()) / 3600
+                    ct = f"{hours:.1f}h"
+                rows.append((
+                    f"#{p.platform_pr_id}",
+                    (p.title or "")[:60],
+                    p.state.value,
+                    p.repository.name if p.repository else "",
+                    p.contributor.canonical_name if p.contributor else "",
+                    f"+{p.lines_added}/-{p.lines_deleted}",
+                    ct,
+                ))
+            header = f"**{project.name}** — {len(prs)} PR(s) ({state})\n\n"
+            return header + _table(["#", "Title", "State", "Repo", "Author", "+/-", "Cycle"], rows)
+        return await _safe(db, _impl())
+
     return [
         find_project,
         find_contributor,
@@ -1707,6 +1765,7 @@ def _build_contribution_tools(db: AsyncSession) -> list:
         get_work_patterns,
         get_contributor_cross_repo,
         get_inactive_contributors,
+        list_pull_requests,
         get_branch_summary,
         get_branch_comparison,
         get_data_freshness,

@@ -39,3 +39,4 @@ class PullRequest(Base):
     repository = relationship("Repository", back_populates="pull_requests")
     contributor = relationship("Contributor", back_populates="pull_requests")
     reviews = relationship("Review", back_populates="pull_request", cascade="all, delete-orphan")
+    comments = relationship("PRComment", back_populates="pull_request", cascade="all, delete-orphan")

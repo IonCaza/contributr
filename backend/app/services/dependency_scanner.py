@@ -281,19 +281,44 @@ def parse_package_json(filepath: str) -> list[ParsedDep]:
 
 
 def parse_pnpm_lock(filepath: str) -> list[ParsedDep]:
+    """Parse pnpm-lock.yaml (v5 through v9).
+
+    Only reads the ``packages:`` section to avoid matching version-resolution
+    strings from ``importers`` / ``snapshots`` (e.g. ``7.0.0(stylelint@17)``).
+    """
     deps: list[ParsedDep] = []
     content = _safe_read(filepath)
-    for match in re.finditer(r"'?/?([^@\s]+)@([^':\s]+)", content):
-        name, version = match.group(1), match.group(2)
-        if name and version and not name.startswith("/"):
-            deps.append(ParsedDep(name=name, version=version, is_direct=False))
+    if not content:
+        return deps
+
+    # v6+  '  @scope/name@version:'  or  '  name@version:'
+    _V6 = re.compile(
+        r"^  '?(@[a-zA-Z0-9][\w.-]*/[\w.-]+|[a-zA-Z0-9][\w.-]*)@([^':\s]+)'?:"
+    )
+    # v5   '  /@scope/name/version:'  or  '  /name/version:'
+    _V5 = re.compile(
+        r"^  /?((?:@[^/]+/)?[^/]+)/(\d[^:]*):"
+    )
+
+    in_packages = False
     seen: set[str] = set()
-    unique: list[ParsedDep] = []
-    for d in deps:
-        if d.name not in seen:
-            seen.add(d.name)
-            unique.append(d)
-    return unique
+
+    for line in content.splitlines():
+        if line and not line[0].isspace():
+            in_packages = line.strip().rstrip(":") == "packages"
+            continue
+
+        if not in_packages:
+            continue
+
+        m = _V6.match(line) or _V5.match(line)
+        if m:
+            name, version = m.group(1), m.group(2)
+            if name not in seen:
+                seen.add(name)
+                deps.append(ParsedDep(name=name, version=version, is_direct=False))
+
+    return deps
 
 
 def parse_yarn_lock(filepath: str) -> list[ParsedDep]:

@@ -13,6 +13,7 @@ const TABS = [
   { label: "Delivery", href: "delivery" },
   { label: "Security", href: "security" },
   { label: "Dependencies", href: "dependencies" },
+  { label: "Standards", href: "adrs" },
   { label: "Insights", href: "insights" },
 ] as const;
 
@@ -66,7 +67,7 @@ export default function ProjectLayout({
         )}
       </div>
 
-      <div className="inline-flex h-9 items-center justify-center rounded-lg bg-muted p-1 text-muted-foreground">
+      <div className="flex items-center gap-1 border-b border-border">
         {TABS.map((tab) => {
           const tabPath = `/projects/${projectId}/${tab.href}`;
           const isActive = pathname.startsWith(tabPath);
@@ -75,13 +76,16 @@ export default function ProjectLayout({
               key={tab.href}
               href={tabPath}
               className={cn(
-                "inline-flex items-center justify-center whitespace-nowrap rounded-md px-3 py-1 text-sm font-medium ring-offset-background transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
+                "relative px-4 py-2 text-sm font-medium transition-colors",
                 isActive
-                  ? "bg-background text-foreground shadow"
-                  : "hover:bg-background/50 hover:text-foreground",
+                  ? "text-foreground"
+                  : "text-muted-foreground hover:text-foreground",
               )}
             >
               {tab.label}
+              {isActive && (
+                <span className="absolute inset-x-0 -bottom-px h-0.5 bg-primary rounded-full" />
+              )}
             </Link>
           );
         })}

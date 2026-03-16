@@ -136,4 +136,15 @@ export const queryKeys = {
   oidcProviders: ["oidcProviders"] as const,
   oidcProviderDetail: (id: string) => ["oidcProviders", id] as const,
   authProviders: ["authProviders"] as const,
+  pullRequests: {
+    list: (projectId: string, filters?: Record<string, unknown>) => ["pullRequests", projectId, "list", filters] as const,
+    detail: (projectId: string, prId: string) => ["pullRequests", projectId, prId] as const,
+    analytics: (projectId: string, filters?: Record<string, unknown>) => ["pullRequests", projectId, "analytics", filters] as const,
+  },
+  adrs: {
+    config: (projectId: string) => ["adrs", projectId, "config"] as const,
+    templates: (projectId: string) => ["adrs", projectId, "templates"] as const,
+    list: (projectId: string, filters?: Record<string, unknown>) => ["adrs", projectId, "list", filters] as const,
+    detail: (projectId: string, adrId: string) => ["adrs", projectId, adrId] as const,
+  },
 };

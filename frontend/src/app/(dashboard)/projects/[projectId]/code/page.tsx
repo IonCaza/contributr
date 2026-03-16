@@ -27,6 +27,7 @@ import { api } from "@/lib/api-client";
 import { queryKeys } from "@/lib/query-keys";
 import { cn } from "@/lib/utils";
 import type { ContributorSummary } from "@/lib/types";
+import { CodeSubTabs } from "@/components/code-sub-tabs";
 import { useProject, useProjectStats } from "@/hooks/use-projects";
 import { useSSHKeys } from "@/hooks/use-settings";
 import { useCreateRepo, useDeleteRepo, usePurgeRepo, useSyncRepo } from "@/hooks/use-repos";
@@ -336,6 +337,8 @@ export default function ProjectCodePage({
           </Button>
         )}
       </div>
+
+      <CodeSubTabs projectId={projectId} />
 
       {stats && (
         <>

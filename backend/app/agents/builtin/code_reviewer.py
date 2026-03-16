@@ -24,5 +24,6 @@ SPEC = BuiltinAgentSpec(
         "get_pr_changed_files",
         "get_pr_file_diff",
         "get_pr_review_comments",
+        "list_pull_requests",
     ],
 )

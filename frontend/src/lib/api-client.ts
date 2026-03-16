@@ -789,6 +789,77 @@ export const api = {
     request<import("./types").FeedbackItem>(`/feedback/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
   deleteFeedback: (id: string) => request<void>(`/feedback/${id}`, { method: "DELETE" }),
 
+  // Pull Requests
+  listPullRequests: (projectId: string, params?: {
+    state?: string; repository_id?: string; contributor_id?: string;
+    reviewer_id?: string; from_date?: string; to_date?: string;
+    search?: string; sort_by?: string; sort_dir?: string;
+    page?: number; page_size?: number;
+  }) => request<import("./types").PRListResponse>(
+    `/projects/${projectId}/pull-requests${buildQuery({
+      state: params?.state,
+      repository_id: params?.repository_id,
+      contributor_id: params?.contributor_id,
+      reviewer_id: params?.reviewer_id,
+      from_date: params?.from_date,
+      to_date: params?.to_date,
+      search: params?.search,
+      sort_by: params?.sort_by,
+      sort_dir: params?.sort_dir,
+      page: params?.page?.toString(),
+      page_size: params?.page_size?.toString(),
+    })}`
+  ),
+  getPullRequest: (projectId: string, prId: string) =>
+    request<import("./types").PRDetail>(`/projects/${projectId}/pull-requests/${prId}`),
+  getPRAnalytics: (projectId: string, params?: {
+    from_date?: string; to_date?: string; repository_id?: string;
+  }) => request<import("./types").PRAnalytics>(
+    `/projects/${projectId}/pull-requests/analytics${buildQuery({
+      from_date: params?.from_date,
+      to_date: params?.to_date,
+      repository_id: params?.repository_id,
+    })}`
+  ),
+
+  // ADRs
+  getAdrConfig: (projectId: string) =>
+    request<import("./types").AdrConfig>(`/projects/${projectId}/adrs/config`),
+  updateAdrConfig: (projectId: string, data: { repository_id?: string | null; directory_path?: string; naming_convention?: string }) =>
+    request<import("./types").AdrConfig>(`/projects/${projectId}/adrs/config`, { method: "PUT", body: JSON.stringify(data) }),
+  syncAdrs: (projectId: string) =>
+    request<{ synced: number }>(`/projects/${projectId}/adrs/config/sync`, { method: "POST" }),
+  listAdrTemplates: (projectId: string) =>
+    request<import("./types").AdrTemplate[]>(`/projects/${projectId}/adrs/templates`),
+  createAdrTemplate: (projectId: string, data: { name: string; description?: string; content: string; is_default?: boolean }) =>
+    request<import("./types").AdrTemplate>(`/projects/${projectId}/adrs/templates`, { method: "POST", body: JSON.stringify(data) }),
+  updateAdrTemplate: (projectId: string, id: string, data: { name?: string; description?: string; content?: string; is_default?: boolean }) =>
+    request<import("./types").AdrTemplate>(`/projects/${projectId}/adrs/templates/${id}`, { method: "PUT", body: JSON.stringify(data) }),
+  deleteAdrTemplate: (projectId: string, id: string) =>
+    request<void>(`/projects/${projectId}/adrs/templates/${id}`, { method: "DELETE" }),
+  listAdrs: (projectId: string, params?: { status?: string; search?: string; sort_by?: string }) =>
+    request<import("./types").Adr[]>(`/projects/${projectId}/adrs${buildQuery({
+      status: params?.status,
+      search: params?.search,
+      sort_by: params?.sort_by,
+    })}`),
+  createAdr: (projectId: string, data: { title: string; template_id?: string; content?: string }) =>
+    request<import("./types").Adr>(`/projects/${projectId}/adrs`, { method: "POST", body: JSON.stringify(data) }),
+  getAdr: (projectId: string, adrId: string) =>
+    request<import("./types").Adr>(`/projects/${projectId}/adrs/${adrId}`),
+  updateAdr: (projectId: string, adrId: string, data: { title?: string; content?: string; status?: string }) =>
+    request<import("./types").Adr>(`/projects/${projectId}/adrs/${adrId}`, { method: "PUT", body: JSON.stringify(data) }),
+  deleteAdr: (projectId: string, adrId: string) =>
+    request<void>(`/projects/${projectId}/adrs/${adrId}`, { method: "DELETE" }),
+  commitAdr: (projectId: string, adrId: string) =>
+    request<{ branch: string; sha: string }>(`/projects/${projectId}/adrs/${adrId}/commit`, { method: "POST" }),
+  createAdrPr: (projectId: string, adrId: string) =>
+    request<{ pr_url: string }>(`/projects/${projectId}/adrs/${adrId}/pr`, { method: "POST" }),
+  mergeAdrPr: (projectId: string, adrId: string) =>
+    request<{ merged: boolean }>(`/projects/${projectId}/adrs/${adrId}/merge`, { method: "POST" }),
+  generateAdr: (projectId: string, data: { text: string; template_id?: string }) =>
+    request<import("./types").Adr>(`/projects/${projectId}/adrs/generate`, { method: "POST", body: JSON.stringify(data) }),
+
   getApiBase: () => API_BASE,
   getAuthToken: () => getToken(),
 };

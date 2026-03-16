@@ -143,6 +143,160 @@ def _gitlab_mr_changes(repo: Repository, mr_iid: int, token: str | None, base_ur
         raise RuntimeError(f"GitLab API error: {e}") from e
 
 
+_ADO_SYSTEM_THREAD_TYPES = frozenset({"System", "VoteUpdate", "StatusUpdate", "RefUpdate", "PolicyStatusUpdate"})
+
+
+def _ado_connection(token: str | None, base_url: str | None):
+    from azure.devops.connection import Connection
+    from msrest.authentication import BasicAuthentication
+    if not token or not base_url:
+        raise RuntimeError("Azure DevOps credentials not configured.")
+    creds = BasicAuthentication("", token)
+    return Connection(base_url=base_url, creds=creds)
+
+
+def _ado_parse(repo: "Repository") -> tuple[str, str]:
+    owner = repo.platform_owner or ""
+    parts = owner.split("/", 1)
+    project = parts[1] if len(parts) > 1 else parts[0]
+    return project, repo.platform_repo
+
+
+async def _azure_pr_changed_files(repo, pr_number: int, token, base_url) -> str:
+    conn = _ado_connection(token, base_url)
+    git_client = conn.clients.get_git_client()
+    project, repo_name = _ado_parse(repo)
+
+    try:
+        pr = git_client.get_pull_request_by_id(pr_number, project=project)
+    except Exception as e:
+        return f"Error fetching Azure PR #{pr_number}: {e}"
+
+    try:
+        iterations = git_client.get_pull_request_iterations(repo_name, pr_number, project=project)
+    except Exception as e:
+        return f"Error fetching iterations: {e}"
+
+    if not iterations:
+        return f"No iterations found for PR #{pr_number}."
+
+    last_iter = iterations[-1]
+    try:
+        changes = git_client.get_pull_request_iteration_changes(
+            repo_name, pr_number, last_iter.id, project=project,
+        )
+    except Exception as e:
+        return f"Error fetching changes: {e}"
+
+    entries = getattr(changes, "change_entries", []) or []
+    title = getattr(pr, "title", "") or ""
+    header = f"**PR #{pr_number}** {title} — {len(entries)} file(s) changed\n\n"
+
+    rows = []
+    for entry in entries:
+        item = getattr(entry, "item", None)
+        path = getattr(item, "path", "?") if item else "?"
+        change_type = getattr(entry, "change_type", "edit") or "edit"
+        rows.append(f"- `{path}` [{change_type}]")
+
+    return header + "\n".join(rows[:200])
+
+
+async def _azure_pr_file_diff(repo, pr_number: int, file_path: str, token, base_url) -> str:
+    conn = _ado_connection(token, base_url)
+    git_client = conn.clients.get_git_client()
+    project, repo_name = _ado_parse(repo)
+
+    try:
+        pr = git_client.get_pull_request_by_id(pr_number, project=project)
+    except Exception as e:
+        return f"Error fetching Azure PR #{pr_number}: {e}"
+
+    target_ref = getattr(pr, "target_ref_name", "refs/heads/main") or "refs/heads/main"
+    source_ref = getattr(pr, "source_ref_name", "") or ""
+
+    bare_path = os.path.join(settings.repos_cache_dir, str(repo.id))
+    if not os.path.isdir(bare_path):
+        return "Repository not synced locally. Cannot compute diff."
+
+    git_repo = _open_git_repo(bare_path)
+    target_branch = target_ref.replace("refs/heads/", "")
+    source_branch = source_ref.replace("refs/heads/", "")
+
+    try:
+        diff = git_repo.git.diff(
+            f"origin/{target_branch}...origin/{source_branch}",
+            "--", file_path,
+            kill_after_timeout=GIT_TIMEOUT,
+        )
+    except Exception:
+        try:
+            diff = git_repo.git.diff(
+                f"{target_branch}...{source_branch}",
+                "--", file_path,
+                kill_after_timeout=GIT_TIMEOUT,
+            )
+        except Exception as e:
+            return f"Error computing diff for '{file_path}': {e}"
+
+    if not diff.strip():
+        return f"No changes found for `{file_path}` in PR #{pr_number}."
+
+    diff = _truncate(diff, MAX_DIFF_BYTES, "diff")
+    header = f"**PR #{pr_number}** `{file_path}`\n\n"
+    return header + f"```diff\n{diff}\n```"
+
+
+async def _azure_pr_review_comments(repo, pr_number: int, token, base_url) -> str:
+    conn = _ado_connection(token, base_url)
+    git_client = conn.clients.get_git_client()
+    project, repo_name = _ado_parse(repo)
+
+    try:
+        pr = git_client.get_pull_request_by_id(pr_number, project=project)
+    except Exception as e:
+        return f"Error fetching Azure PR #{pr_number}: {e}"
+
+    try:
+        threads = git_client.get_threads(repo_name, pr_number, project=project)
+    except Exception as e:
+        return f"Error fetching threads: {e}"
+
+    title = getattr(pr, "title", "") or ""
+    items = []
+    for thread in threads or []:
+        props = thread.properties or {}
+        thread_type = None
+        if hasattr(props, "get"):
+            thread_type = props.get("CodeReviewThreadType", {}).get("$value")
+        elif isinstance(props, dict):
+            thread_type = props.get("CodeReviewThreadType", {}).get("$value")
+
+        if thread_type in _ADO_SYSTEM_THREAD_TYPES:
+            continue
+
+        thread_context = getattr(thread, "thread_context", None)
+        file_path = getattr(thread_context, "file_path", None) if thread_context else None
+
+        for comment in (thread.comments or []):
+            ctype = getattr(comment, "comment_type", None)
+            if ctype == "system":
+                continue
+            author = getattr(comment, "author", None)
+            name = getattr(author, "display_name", "unknown") if author else "unknown"
+            body = (getattr(comment, "content", "") or "")[:500]
+            line_info = ""
+            if file_path:
+                line_info = f" on `{file_path}`"
+            items.append(f"**{name}**{line_info}\n> {body}\n")
+
+    if not items:
+        return f"No review comments on PR #{pr_number} ({title})."
+
+    header = f"**PR #{pr_number}** {title} — {len(items)} comment(s)\n\n"
+    return header + "\n".join(items[:50])
+
+
 # ── Tool factory ───────────────────────────────────────────────────────
 
 
@@ -443,7 +597,7 @@ def _build_code_access_tools(db: AsyncSession) -> list:
                 return header + "\n".join(rows)
 
             elif repo.platform == Platform.AZURE:
-                return "Azure DevOps PR file listing is not yet supported. Use the commit diff tool with specific commit SHAs instead."
+                return await _azure_pr_changed_files(repo, pr_number, token, base_url)
 
             return f"Unsupported platform: {repo.platform}"
 
@@ -503,7 +657,7 @@ def _build_code_access_tools(db: AsyncSession) -> list:
                 return header + f"```diff\n{diff_text}\n```"
 
             elif repo.platform == Platform.AZURE:
-                return "Azure DevOps PR file diff is not yet supported. Use the commit diff tool with specific commit SHAs instead."
+                return await _azure_pr_file_diff(repo, pr_number, file_path, token, base_url)
 
             return f"Unsupported platform: {repo.platform}"
 
@@ -578,7 +732,7 @@ def _build_code_access_tools(db: AsyncSession) -> list:
                     return f"GitLab API error: {e}"
 
             elif repo.platform == Platform.AZURE:
-                return "Azure DevOps PR review comments are not yet supported via this tool."
+                return await _azure_pr_review_comments(repo, pr_number, token, base_url)
 
             return f"Unsupported platform: {repo.platform}"
 

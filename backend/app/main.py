@@ -36,6 +36,8 @@ from app.api import (
     auth_settings as auth_settings_api,
     oidc_providers as oidc_providers_api,
     oidc_auth as oidc_auth_api,
+    pull_requests as pull_requests_api,
+    adrs as adrs_api,
 )
 from app.api.repositories import _parse_platform_fields
 from app.agents.builtin import get_builtin_agents
@@ -323,7 +325,7 @@ async def lifespan(app: FastAPI):
     await engine.dispose()
 
 
-app = FastAPI(title="Contributr", version="0.1.0", lifespan=lifespan)
+app = FastAPI(title="Contributr", version="0.1.0", lifespan=lifespan, redirect_slashes=False)
 
 app.add_middleware(
     CORSMiddleware,
@@ -371,6 +373,8 @@ app.include_router(email_templates_api.router, prefix="/api")
 app.include_router(auth_settings_api.router, prefix="/api")
 app.include_router(oidc_providers_api.router, prefix="/api")
 app.include_router(oidc_auth_api.router, prefix="/api")
+app.include_router(pull_requests_api.router, prefix="/api")
+app.include_router(adrs_api.router, prefix="/api")
 
 
 @app.get("/api/health")

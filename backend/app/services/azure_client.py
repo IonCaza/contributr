@@ -1,16 +1,20 @@
 import logging
+import os
 from datetime import datetime
 
 from azure.devops.connection import Connection
 from azure.devops.v7_1.git.models import GitPullRequestSearchCriteria
+from git import Repo as GitRepo
 from msrest.authentication import BasicAuthentication
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, update
 
-from app.db.models import Repository, PullRequest, Review
+from app.db.models import Repository, PullRequest, Review, PRComment
 from app.db.models.pull_request import PRState
 from app.db.models.review import ReviewState
+from app.db.models.pr_comment import PRCommentType
 from app.services.identity import resolve_contributor
+from app.config import settings
 
 if __import__("typing").TYPE_CHECKING:
     from app.services.sync_logger import SyncLogger
@@ -60,11 +64,17 @@ async def fetch_azure_prs(
     if sync_log:
         sync_log.info("prs", f"Connected to Azure DevOps: {org_url} project={project} repo={repo_name}")
 
+    bare_path = os.path.join(settings.repos_cache_dir, str(repo.id))
+
     existing = await db.execute(
-        select(PullRequest.platform_pr_id).where(PullRequest.repository_id == repo.id)
+        select(PullRequest.platform_pr_id, PullRequest.id, PullRequest.lines_added, PullRequest.lines_deleted)
+        .where(PullRequest.repository_id == repo.id)
     )
-    existing_ids = set(existing.scalars().all())
+    existing_rows = existing.all()
+    existing_ids = {row[0] for row in existing_rows}
+    zero_line_map = {row[0]: row[1] for row in existing_rows if row[2] == 0 and row[3] == 0}
     new_count = 0
+    backfilled = 0
 
     try:
         criteria = GitPullRequestSearchCriteria(status="all")
@@ -82,6 +92,21 @@ async def fetch_azure_prs(
         return 0
 
     for pr in prs:
+        source_commit = getattr(pr, "last_merge_source_commit", None)
+        target_commit = getattr(pr, "last_merge_target_commit", None)
+        source_sha = getattr(source_commit, "commit_id", None) if source_commit else None
+        target_sha = getattr(target_commit, "commit_id", None) if target_commit else None
+
+        if pr.pull_request_id in zero_line_map:
+            added, deleted = _git_diff_stats(bare_path, source_sha, target_sha)
+            if added > 0 or deleted > 0:
+                await db.execute(
+                    update(PullRequest)
+                    .where(PullRequest.id == zero_line_map[pr.pull_request_id])
+                    .values(lines_added=added, lines_deleted=deleted)
+                )
+                backfilled += 1
+
         if pr.pull_request_id in existing_ids:
             continue
 
@@ -96,7 +121,7 @@ async def fetch_azure_prs(
         else:
             state = PRState.OPEN
 
-        comment_count, first_review_at = _fetch_threads(
+        comment_count, first_review_at, raw_comments = _fetch_threads(
             git_client, project, repo_name, pr.pull_request_id
         )
 
@@ -104,14 +129,16 @@ async def fetch_azure_prs(
             git_client, project, repo_name, pr.pull_request_id
         )
 
+        lines_added, lines_deleted = _git_diff_stats(bare_path, source_sha, target_sha)
+
         db_pr = PullRequest(
             repository_id=repo.id,
             contributor_id=contributor.id,
             platform_pr_id=pr.pull_request_id,
             title=(pr.title or "")[:1024],
             state=state,
-            lines_added=0,
-            lines_deleted=0,
+            lines_added=lines_added,
+            lines_deleted=lines_deleted,
             comment_count=comment_count,
             iteration_count=iteration_count,
             created_at=pr.creation_date,
@@ -121,6 +148,25 @@ async def fetch_azure_prs(
         )
         db.add(db_pr)
         await db.flush()
+
+        for rc in raw_comments:
+            author_contributor = None
+            if rc["author_email"]:
+                author_contributor = await resolve_contributor(db, rc["author_name"], rc["author_email"])
+            ctype = PRCommentType.INLINE if rc["comment_type"] == "inline" else PRCommentType.GENERAL
+            db.add(PRComment(
+                pull_request_id=db_pr.id,
+                author_name=rc["author_name"],
+                author_id=author_contributor.id if author_contributor else None,
+                body=rc["body"],
+                thread_id=rc["thread_id"],
+                file_path=rc["file_path"],
+                line_number=rc["line_number"],
+                comment_type=ctype,
+                platform_comment_id=rc["platform_comment_id"],
+                created_at=rc["created_at"] or pr.creation_date,
+                updated_at=rc.get("updated_at"),
+            ))
 
         reviewer_comments = _extract_reviewer_comments(
             git_client, project, repo_name, pr.pull_request_id
@@ -147,22 +193,27 @@ async def fetch_azure_prs(
         new_count += 1
 
     await db.flush()
+    if backfilled:
+        logger.info("Azure DevOps: backfilled line stats for %d existing PRs in %s/%s", backfilled, project, repo_name)
+        if sync_log:
+            sync_log.info("prs", f"Backfilled line stats for {backfilled} existing PRs")
     logger.info("Azure DevOps: fetched %d new PRs for %s/%s", new_count, project, repo_name)
     return new_count
 
 
 def _fetch_threads(
     git_client, project: str, repo_name: str, pr_id: int
-) -> tuple[int, datetime | None]:
-    """Fetch PR threads. Returns (comment_count, first_review_at)."""
+) -> tuple[int, datetime | None, list[dict]]:
+    """Fetch PR threads. Returns (comment_count, first_review_at, raw_comments)."""
     try:
         threads = git_client.get_threads(repo_name, pr_id, project=project)
     except Exception as e:
         logger.warning("Could not fetch threads for PR %d: %s", pr_id, e)
-        return 0, None
+        return 0, None, []
 
     comment_count = 0
     first_review_at: datetime | None = None
+    raw_comments: list[dict] = []
 
     for thread in threads or []:
         props = thread.properties or {}
@@ -185,7 +236,35 @@ def _fetch_threads(
         if published and (first_review_at is None or published < first_review_at):
             first_review_at = published
 
-    return comment_count, first_review_at
+        thread_context = getattr(thread, "thread_context", None)
+        file_path = None
+        line_number = None
+        if thread_context:
+            file_path = getattr(thread_context, "file_path", None)
+            right_pos = getattr(thread_context, "right_file_end", None) or getattr(thread_context, "right_file_start", None)
+            if right_pos:
+                line_number = getattr(right_pos, "line", None)
+
+        thread_id_str = str(getattr(thread, "id", ""))
+        for comment in comments:
+            ctype = getattr(comment, "comment_type", None)
+            if ctype == "system":
+                continue
+            author = getattr(comment, "author", None)
+            raw_comments.append({
+                "platform_comment_id": f"{thread_id_str}_{getattr(comment, 'id', '')}",
+                "author_name": getattr(author, "display_name", "unknown") if author else "unknown",
+                "author_email": (getattr(author, "unique_name", None) or "") if author else "",
+                "body": getattr(comment, "content", "") or "",
+                "thread_id": thread_id_str,
+                "file_path": file_path,
+                "line_number": line_number,
+                "comment_type": "inline" if file_path else "general",
+                "created_at": getattr(comment, "published_date", None),
+                "updated_at": getattr(comment, "last_updated_date", None),
+            })
+
+    return comment_count, first_review_at, raw_comments
 
 
 def _fetch_iteration_count(
@@ -198,6 +277,29 @@ def _fetch_iteration_count(
     except Exception as e:
         logger.warning("Could not fetch iterations for PR %d: %s", pr_id, e)
         return 0
+
+
+def _git_diff_stats(bare_path: str, source_sha: str | None, target_sha: str | None) -> tuple[int, int]:
+    """Calculate lines added/deleted using local git diff on the bare mirror."""
+    if not source_sha or not target_sha or not os.path.isdir(bare_path):
+        return 0, 0
+    try:
+        local_repo = GitRepo(bare_path)
+        merge_base = local_repo.git.merge_base(target_sha, source_sha).strip()
+        numstat = local_repo.git.diff("--numstat", merge_base, source_sha)
+        added = 0
+        deleted = 0
+        for line in numstat.strip().split("\n"):
+            if not line:
+                continue
+            parts = line.split("\t")
+            if len(parts) >= 2 and parts[0] != "-":
+                added += int(parts[0])
+                deleted += int(parts[1])
+        return added, deleted
+    except Exception as e:
+        logger.debug("Could not compute diff stats (%s..%s): %s", target_sha[:8] if target_sha else "?", source_sha[:8] if source_sha else "?", e)
+        return 0, 0
 
 
 def _extract_reviewer_comments(

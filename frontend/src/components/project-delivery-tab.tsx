@@ -349,7 +349,7 @@ export function ProjectDeliveryTab({ projectId }: { projectId: string }) {
       {/* ── Metric Tabs ────────────────────────────────────────────── */}
       <Tabs defaultValue="overview" className="space-y-4">
         <div className="flex items-center justify-between">
-          <TabsList>
+          <TabsList variant="line">
             <TabsTrigger value="overview">Overview</TabsTrigger>
             <TabsTrigger value="velocity">Velocity &amp; Throughput</TabsTrigger>
             <TabsTrigger value="flow">Flow</TabsTrigger>

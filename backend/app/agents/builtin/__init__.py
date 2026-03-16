@@ -25,6 +25,7 @@ def get_builtin_agents() -> list[BuiltinAgentSpec]:
     from app.agents.builtin.sast_analyst import SPEC as sast_analyst
     from app.agents.builtin.code_reviewer import SPEC as code_reviewer
     from app.agents.builtin.supervisor import SPEC as supervisor
+    from app.agents.builtin.adr_architect import SPEC as adr_architect
 
     return [
         contribution_analyst,
@@ -35,5 +36,6 @@ def get_builtin_agents() -> list[BuiltinAgentSpec]:
         contributor_coach,
         sast_analyst,
         code_reviewer,
+        adr_architect,
         supervisor,
     ]
