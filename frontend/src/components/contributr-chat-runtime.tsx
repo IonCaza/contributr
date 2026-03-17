@@ -359,7 +359,7 @@ export function ContributrChatRuntime({ children, agentSlug }: ContributrChatRun
   onAgentEventRef.current = (event: string, data: Record<string, string>) => {
     if (event === "agent_start") {
       activeCountRef.current += 1;
-      if (activeCountRef.current >= 2) setActivityVisible(true);
+      setActivityVisible(true);
       setLiveAgentMap((prev) => {
         const next = new Map(prev);
         next.set(data.run_id, { slug: data.slug, content: "", done: false });
@@ -389,9 +389,8 @@ export function ContributrChatRuntime({ children, agentSlug }: ContributrChatRun
 
   const onActivitiesLoadedRef = useRef<((groups: ActivityGroup[]) => void) | undefined>(undefined);
   onActivitiesLoadedRef.current = (groups: ActivityGroup[]) => {
-    clearLive();
     setHistoricalActivities(groups);
-    setActivityVisible(groups.length > 0);
+    if (groups.length > 0) setActivityVisible(true);
   };
 
   const onRunStartRef = useRef<((userText: string) => void) | undefined>(undefined);

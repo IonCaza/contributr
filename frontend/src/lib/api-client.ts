@@ -857,6 +857,8 @@ export const api = {
     request<{ pr_url: string }>(`/projects/${projectId}/adrs/${adrId}/pr`, { method: "POST" }),
   mergeAdrPr: (projectId: string, adrId: string) =>
     request<{ merged: boolean }>(`/projects/${projectId}/adrs/${adrId}/merge`, { method: "POST" }),
+  supersedeAdr: (projectId: string, adrId: string, newAdrId: string) =>
+    request<import("./types").Adr>(`/projects/${projectId}/adrs/${adrId}/supersede?new_adr_id=${newAdrId}`, { method: "POST" }),
   generateAdr: (projectId: string, data: { text: string; template_id?: string }) =>
     request<import("./types").Adr>(`/projects/${projectId}/adrs/generate`, { method: "POST", body: JSON.stringify(data) }),
 

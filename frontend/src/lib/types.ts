@@ -1287,6 +1287,9 @@ export interface Adr {
   file_path: string | null;
   last_committed_sha: string | null;
   pr_url: string | null;
+  committed_to_repo_at: string | null;
+  removed_from_repo_at: string | null;
+  location: "draft" | "in_repo" | "removed_from_repo";
   created_by_id: string;
   created_at: string;
   updated_at: string;

@@ -52,11 +52,13 @@ async def _get_platform_token(db: AsyncSession, platform: Platform) -> tuple[str
 async def sync_adrs_from_repo(db: AsyncSession, project_id) -> int:
     """Scan the ADR directory in the configured repo and reconcile with DB.
 
-    The repository is the source of truth for committed ADRs:
-    - Files in repo but not DB → create
-    - Files in both → update content/title/status from repo
-    - DB ADRs with file_path that no longer exist in repo → delete
-    - DB ADRs without file_path (never committed) → leave untouched
+    The repository is the source of truth for committed ADRs.  The DB acts
+    as a staging layer that preserves history:
+    - Files in repo but not DB → create (committed_to_repo_at = now)
+    - Files in both → update content/title/status; clear removed flag if set
+    - DB ADRs with file_path that no longer exist in repo → soft-mark
+      (set removed_from_repo_at) instead of deleting
+    - DB ADRs without file_path (drafts, never committed) → leave untouched
     """
     config = (await db.execute(
         select(AdrRepoConfig).where(AdrRepoConfig.project_id == project_id)
@@ -80,7 +82,11 @@ async def sync_adrs_from_repo(db: AsyncSession, project_id) -> int:
     if token:
         remote_url = _build_remote_url(repo, token, base_url)
         try:
-            git_repo.git.fetch(remote_url, kill_after_timeout=GIT_TIMEOUT)
+            git_repo.git.fetch(
+                remote_url,
+                "+refs/heads/*:refs/heads/*",
+                kill_after_timeout=GIT_TIMEOUT,
+            )
         except Exception as e:
             logger.warning("ADR sync fetch failed: %s", e)
     else:
@@ -99,10 +105,13 @@ async def sync_adrs_from_repo(db: AsyncSession, project_id) -> int:
 
     repo_files: set[str] = set()
     try:
-        listing = git_repo.git.ls_tree("--name-only", f"{ref}:{adr_dir}", kill_after_timeout=GIT_TIMEOUT)
-        for fname in listing.strip().split("\n"):
-            if fname.endswith(".md"):
-                repo_files.add(f"{adr_dir}/{fname}")
+        listing = git_repo.git.ls_tree(
+            "-r", "--name-only", ref, adr_dir,
+            kill_after_timeout=GIT_TIMEOUT,
+        )
+        for fpath in listing.strip().split("\n"):
+            if fpath.endswith(".md"):
+                repo_files.add(fpath)
     except Exception:
         pass
 
@@ -114,6 +123,7 @@ async def sync_adrs_from_repo(db: AsyncSession, project_id) -> int:
     admin_result = await db.execute(select(__import__("app.db.models", fromlist=["User"]).User.id).limit(1))
     admin_id = admin_result.scalar()
 
+    now = datetime.now(timezone.utc)
     synced = 0
 
     for file_path in repo_files:
@@ -129,9 +139,15 @@ async def sync_adrs_from_repo(db: AsyncSession, project_id) -> int:
             adr = existing_by_path[file_path]
             adr.content = content
             adr.title = title or adr.title
-            if status:
+            if adr.status == AdrStatus.PROPOSED:
+                adr.status = AdrStatus.ACCEPTED
+            elif status:
                 adr.status = status
-            adr.updated_at = datetime.now(timezone.utc)
+            if adr.removed_from_repo_at:
+                adr.removed_from_repo_at = None
+            if not adr.committed_to_repo_at:
+                adr.committed_to_repo_at = now
+            adr.updated_at = now
         else:
             if adr_number is None:
                 adr_number = config.next_number
@@ -141,9 +157,10 @@ async def sync_adrs_from_repo(db: AsyncSession, project_id) -> int:
                 adr_number=adr_number,
                 title=title or fname.replace(".md", ""),
                 slug=Adr.make_slug(title or fname.replace(".md", "")),
-                status=status or AdrStatus.PROPOSED,
+                status=status or AdrStatus.ACCEPTED,
                 content=content,
                 file_path=file_path,
+                committed_to_repo_at=now,
                 created_by_id=admin_id,
             )
             db.add(adr)
@@ -152,12 +169,13 @@ async def sync_adrs_from_repo(db: AsyncSession, project_id) -> int:
 
     removed = 0
     for path, adr in existing_by_path.items():
-        if path not in repo_files:
-            await db.delete(adr)
+        if path not in repo_files and not adr.removed_from_repo_at:
+            adr.removed_from_repo_at = now
+            adr.updated_at = now
             removed += 1
 
     if removed:
-        logger.info("ADR sync: removed %d ADR(s) no longer in repo", removed)
+        logger.info("ADR sync: soft-marked %d ADR(s) as removed from repo", removed)
 
     await db.flush()
     return synced
@@ -220,7 +238,12 @@ async def write_adr_to_repo(db: AsyncSession, adr: Adr) -> tuple[str, str]:
     adr_dir = config.directory_path or "docs/adr"
     slug = Adr.make_slug(adr.title)
     file_name = config.naming_convention.format(number=adr.adr_number, slug=slug)
-    file_path = f"{adr_dir}/{file_name}"
+
+    archiving = adr.status in (AdrStatus.DEPRECATED, AdrStatus.SUPERSEDED)
+    if archiving:
+        file_path = f"{adr_dir}/archive/{file_name}"
+    else:
+        file_path = f"{adr_dir}/{file_name}"
 
     branch_name = f"adr/{adr.adr_number}-{slug}"
 
@@ -258,16 +281,29 @@ async def write_adr_to_repo(db: AsyncSession, adr: Adr) -> tuple[str, str]:
         except Exception:
             work_repo.git.checkout(branch_name)
 
+        if archiving:
+            old_non_archive = f"{adr_dir}/{file_name}"
+            old_full = os.path.join(work_dir, old_non_archive)
+            if os.path.exists(old_full):
+                work_repo.index.remove([old_non_archive], working_tree=True)
+            if adr.file_path and adr.file_path != old_non_archive:
+                prev_full = os.path.join(work_dir, adr.file_path)
+                if os.path.exists(prev_full):
+                    work_repo.index.remove([adr.file_path], working_tree=True)
+
         full_path = os.path.join(work_dir, file_path)
         os.makedirs(os.path.dirname(full_path), exist_ok=True)
         with open(full_path, "w") as f:
             f.write(adr.content)
 
         work_repo.index.add([file_path])
+        commit_msg = (
+            f"Archive ADR-{adr.adr_number}: {adr.title} ({adr.status.value})"
+            if archiving
+            else f"ADR-{adr.adr_number}: {adr.title}"
+        )
         commit = work_repo.index.commit(
-            f"ADR-{adr.adr_number}: {adr.title}",
-            author=author,
-            committer=author,
+            commit_msg, author=author, committer=author,
         )
 
         if needs_default_branch:
@@ -284,6 +320,9 @@ async def write_adr_to_repo(db: AsyncSession, adr: Adr) -> tuple[str, str]:
 
         adr.file_path = file_path
         adr.last_committed_sha = str(commit.hexsha)
+        if not adr.committed_to_repo_at:
+            adr.committed_to_repo_at = datetime.now(timezone.utc)
+        adr.removed_from_repo_at = None
         adr.updated_at = datetime.now(timezone.utc)
 
         return branch_name, str(commit.hexsha)

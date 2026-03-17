@@ -97,6 +97,14 @@ class Adr(Base):
     file_path: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     last_committed_sha: Mapped[str | None] = mapped_column(String(40), nullable=True)
     pr_url: Mapped[str | None] = mapped_column(String(2048), nullable=True)
+    committed_to_repo_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True,
+        comment="When this ADR was first committed to the git repository",
+    )
+    removed_from_repo_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True,
+        comment="When sync detected this ADR was removed from the repository",
+    )
     created_by_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"),
         nullable=False,

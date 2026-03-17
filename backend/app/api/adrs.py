@@ -1,3 +1,4 @@
+import re
 import uuid
 from datetime import datetime, timezone
 
@@ -66,6 +67,9 @@ class AdrResponse(BaseModel):
     file_path: str | None
     last_committed_sha: str | None
     pr_url: str | None
+    committed_to_repo_at: datetime | None
+    removed_from_repo_at: datetime | None
+    location: str
     created_by_id: uuid.UUID
     created_at: datetime
     updated_at: datetime | None
@@ -79,6 +83,7 @@ class AdrUpdate(BaseModel):
     title: str | None = None
     content: str | None = None
     status: str | None = None
+    superseded_by_id: uuid.UUID | None = None
 
 class GenerateAdrRequest(BaseModel):
     text: str
@@ -266,11 +271,23 @@ def _fix_azure_pr_url(url: str | None) -> str | None:
     """Fix legacy Azure DevOps PR URLs that have the org name duplicated."""
     if not url or "dev.azure.com" not in url:
         return url
-    import re
     m = re.match(r"(https://dev\.azure\.com/([^/]+))/\2/(.+)", url)
     if m:
         return f"{m.group(1)}/{m.group(3)}"
     return url
+
+
+def _extract_title_from_content(content: str) -> str | None:
+    m = re.match(r"^#\s+(.+)$", content, re.MULTILINE)
+    return m.group(1).strip() if m else None
+
+
+def _adr_location(a: Adr) -> str:
+    if not a.committed_to_repo_at:
+        return "draft"
+    if a.removed_from_repo_at:
+        return "removed_from_repo"
+    return "in_repo"
 
 
 def _adr_to_response(a: Adr) -> AdrResponse:
@@ -280,6 +297,9 @@ def _adr_to_response(a: Adr) -> AdrResponse:
         content=a.content, template_id=a.template_id,
         superseded_by_id=a.superseded_by_id, file_path=a.file_path,
         last_committed_sha=a.last_committed_sha, pr_url=_fix_azure_pr_url(a.pr_url),
+        committed_to_repo_at=a.committed_to_repo_at,
+        removed_from_repo_at=a.removed_from_repo_at,
+        location=_adr_location(a),
         created_by_id=a.created_by_id, created_at=a.created_at, updated_at=a.updated_at,
     )
 
@@ -366,6 +386,15 @@ async def get_adr(
     return _adr_to_response(adr)
 
 
+_ALLOWED_TRANSITIONS: dict[AdrStatus, list[AdrStatus]] = {
+    AdrStatus.PROPOSED: [AdrStatus.ACCEPTED, AdrStatus.REJECTED],
+    AdrStatus.ACCEPTED: [AdrStatus.DEPRECATED, AdrStatus.SUPERSEDED],
+    AdrStatus.DEPRECATED: [],
+    AdrStatus.SUPERSEDED: [],
+    AdrStatus.REJECTED: [],
+}
+
+
 @router.put("/{adr_id}", response_model=AdrResponse)
 async def update_adr(
     project_id: uuid.UUID,
@@ -379,16 +408,51 @@ async def update_adr(
     if not adr:
         raise HTTPException(404, "ADR not found")
 
-    if body.title is not None:
-        adr.title = body.title
-        adr.slug = Adr.make_slug(body.title)
     if body.content is not None:
         adr.content = body.content
+        extracted = _extract_title_from_content(body.content)
+        if extracted:
+            adr.title = extracted
+            adr.slug = Adr.make_slug(extracted)
+    elif body.title is not None:
+        adr.title = body.title
+        adr.slug = Adr.make_slug(body.title)
+
     if body.status is not None:
         try:
-            adr.status = AdrStatus(body.status)
+            new_status = AdrStatus(body.status)
         except ValueError:
             raise HTTPException(400, f"Invalid status: {body.status}")
+
+        if new_status != adr.status:
+            allowed = list(_ALLOWED_TRANSITIONS.get(adr.status, []))
+            location = _adr_location(adr)
+            if adr.status == AdrStatus.PROPOSED and new_status == AdrStatus.REJECTED:
+                if location in ("in_repo", "removed_from_repo"):
+                    raise HTTPException(
+                        400,
+                        "Cannot reject an ADR that has been in the repository. "
+                        "Use deprecated or superseded instead.",
+                    )
+            if new_status not in allowed:
+                raise HTTPException(
+                    400,
+                    f"Cannot change status from '{adr.status.value}' to '{new_status.value}'. "
+                    f"Allowed transitions: {', '.join(s.value for s in allowed) or 'none (terminal state)'}.",
+                )
+
+            if new_status == AdrStatus.SUPERSEDED:
+                if not body.superseded_by_id:
+                    raise HTTPException(400, "superseded_by_id is required when setting status to superseded.")
+                target = await db.execute(
+                    select(Adr).where(Adr.id == body.superseded_by_id, Adr.project_id == project_id)
+                )
+                if not target.scalar_one_or_none():
+                    raise HTTPException(400, "The superseding ADR was not found in this project.")
+                adr.superseded_by_id = body.superseded_by_id
+
+            adr.status = new_status
+
     adr.updated_at = datetime.now(timezone.utc)
 
     await db.commit()
@@ -496,6 +560,15 @@ async def supersede_adr(
     if not adr:
         raise HTTPException(404, "ADR not found")
 
+    if adr.status != AdrStatus.ACCEPTED:
+        raise HTTPException(400, f"Only accepted ADRs can be superseded (current: {adr.status.value}).")
+
+    target = await db.execute(
+        select(Adr).where(Adr.id == new_adr_id, Adr.project_id == project_id)
+    )
+    if not target.scalar_one_or_none():
+        raise HTTPException(400, "The superseding ADR was not found in this project.")
+
     adr.status = AdrStatus.SUPERSEDED
     adr.superseded_by_id = new_adr_id
     adr.updated_at = datetime.now(timezone.utc)
@@ -560,7 +633,6 @@ async def generate_adr(
     for line in generated_content.split("\n"):
         if line.strip().startswith("# "):
             title_line = line.strip()[2:].strip()
-            import re
             num_prefix = re.match(r"\d+\.\s*", title_line)
             if num_prefix:
                 title_line = title_line[num_prefix.end():]

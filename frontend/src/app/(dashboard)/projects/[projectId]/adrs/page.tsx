@@ -22,6 +22,7 @@ import { api } from "@/lib/api-client";
 import { queryKeys } from "@/lib/query-keys";
 import { cn } from "@/lib/utils";
 import { useProject } from "@/hooks/use-projects";
+import { ConfirmDialog } from "@/components/confirm-dialog";
 import type { Adr, AdrTemplate, AdrConfig } from "@/lib/types";
 
 const STATUS_OPTIONS = ["all", "proposed", "accepted", "deprecated", "superseded", "rejected"];
@@ -34,6 +35,17 @@ function statusColor(s: string) {
     case "superseded": return "bg-purple-500/15 text-purple-700 dark:text-purple-400";
     case "rejected": return "bg-red-500/15 text-red-700 dark:text-red-400";
     default: return "bg-muted text-muted-foreground";
+  }
+}
+
+function locationBadge(location: Adr["location"]) {
+  switch (location) {
+    case "in_repo":
+      return <Badge variant="secondary" className="text-[10px] bg-green-500/15 text-green-700 dark:text-green-400">In Repo</Badge>;
+    case "removed_from_repo":
+      return <Badge variant="secondary" className="text-[10px] bg-orange-500/15 text-orange-700 dark:text-orange-400">Removed</Badge>;
+    default:
+      return <Badge variant="secondary" className="text-[10px] bg-muted text-muted-foreground">Draft</Badge>;
   }
 }
 
@@ -58,6 +70,7 @@ export default function AdrsPage({ params }: { params: Promise<{ projectId: stri
   const [configRepoId, setConfigRepoId] = useState("");
   const [configDir, setConfigDir] = useState("docs/adr");
   const [configNaming, setConfigNaming] = useState("{number:04d}-{slug}.md");
+  const [deleteTarget, setDeleteTarget] = useState<Adr | null>(null);
 
   const { data: config } = useQuery({
     queryKey: queryKeys.adrs.config(projectId),
@@ -81,9 +94,7 @@ export default function AdrsPage({ params }: { params: Promise<{ projectId: stri
   });
 
   const invalidate = useCallback(() => {
-    qc.invalidateQueries({ queryKey: queryKeys.adrs.list(projectId) });
-    qc.invalidateQueries({ queryKey: queryKeys.adrs.config(projectId) });
-    qc.invalidateQueries({ queryKey: queryKeys.adrs.templates(projectId) });
+    qc.invalidateQueries({ queryKey: ["adrs", projectId] });
   }, [qc, projectId]);
 
   const createAdr = useMutation({
@@ -133,7 +144,7 @@ export default function AdrsPage({ params }: { params: Promise<{ projectId: stri
 
   const deleteAdr = useMutation({
     mutationFn: (id: string) => api.deleteAdr(projectId, id),
-    onSuccess: invalidate,
+    onSuccess: () => { invalidate(); setDeleteTarget(null); },
   });
 
   if (!project) return <Skeleton className="h-96" />;
@@ -219,6 +230,7 @@ export default function AdrsPage({ params }: { params: Promise<{ projectId: stri
                     <TableHead className="w-16">#</TableHead>
                     <TableHead>Title</TableHead>
                     <TableHead>Status</TableHead>
+                    <TableHead>Location</TableHead>
                     <TableHead>Created</TableHead>
                     <TableHead>PR</TableHead>
                     <TableHead className="w-16"></TableHead>
@@ -226,7 +238,7 @@ export default function AdrsPage({ params }: { params: Promise<{ projectId: stri
                 </TableHeader>
                 <TableBody>
                   {adrs.map((adr: Adr) => (
-                    <TableRow key={adr.id}>
+                    <TableRow key={adr.id} className={cn(adr.location === "removed_from_repo" && "opacity-60")}>
                       <TableCell className="font-mono text-muted-foreground">{adr.adr_number}</TableCell>
                       <TableCell>
                         <Link href={`/projects/${projectId}/adrs/${adr.id}`} className="font-medium hover:underline">
@@ -241,6 +253,7 @@ export default function AdrsPage({ params }: { params: Promise<{ projectId: stri
                           {adr.status}
                         </Badge>
                       </TableCell>
+                      <TableCell>{locationBadge(adr.location)}</TableCell>
                       <TableCell className="text-sm text-muted-foreground">
                         {new Date(adr.created_at).toLocaleDateString()}
                       </TableCell>
@@ -252,7 +265,7 @@ export default function AdrsPage({ params }: { params: Promise<{ projectId: stri
                         )}
                       </TableCell>
                       <TableCell>
-                        <Button variant="ghost" size="sm" className="text-destructive" onClick={() => deleteAdr.mutate(adr.id)}>
+                        <Button variant="ghost" size="sm" className="text-destructive" onClick={() => setDeleteTarget(adr)}>
                           <Trash2 className="h-3.5 w-3.5" />
                         </Button>
                       </TableCell>
@@ -384,6 +397,16 @@ export default function AdrsPage({ params }: { params: Promise<{ projectId: stri
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* Delete Confirmation */}
+      <ConfirmDialog
+        open={!!deleteTarget}
+        onOpenChange={(open) => { if (!open) setDeleteTarget(null); }}
+        title="Delete ADR"
+        description={<>Are you sure you want to delete <strong>ADR-{deleteTarget?.adr_number}: {deleteTarget?.title}</strong>? This action cannot be undone.</>}
+        confirmLabel="Delete"
+        onConfirm={() => deleteTarget && deleteAdr.mutate(deleteTarget.id)}
+      />
 
       {/* Config Dialog */}
       <Dialog open={configOpen} onOpenChange={setConfigOpen}>

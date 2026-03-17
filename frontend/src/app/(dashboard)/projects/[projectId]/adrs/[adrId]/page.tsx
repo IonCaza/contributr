@@ -1,6 +1,6 @@
 "use client";
 
-import { use, useState, useCallback } from "react";
+import { use, useState, useCallback, useMemo } from "react";
 import Link from "next/link";
 import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
 import {
@@ -16,6 +16,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { api } from "@/lib/api-client";
@@ -23,8 +24,6 @@ import { queryKeys } from "@/lib/query-keys";
 import { cn } from "@/lib/utils";
 import { useRouter } from "next/navigation";
 import type { Adr } from "@/lib/types";
-
-const STATUS_OPTIONS = ["proposed", "accepted", "deprecated", "superseded", "rejected"];
 
 function statusColor(s: string) {
   switch (s) {
@@ -37,16 +36,38 @@ function statusColor(s: string) {
   }
 }
 
+function extractTitle(md: string): string {
+  const match = md.match(/^#\s+(.+)$/m);
+  return match ? match[1].trim() : "";
+}
+
+function allowedStatuses(current: string, location: string): string[] {
+  const wasInMain = location === "in_repo" || location === "removed_from_repo";
+  switch (current) {
+    case "proposed":
+      return wasInMain ? ["proposed", "accepted"] : ["proposed", "rejected"];
+    case "accepted":
+      return ["accepted", "deprecated", "superseded"];
+    case "deprecated":
+    case "superseded":
+    case "rejected":
+      return [current];
+    default:
+      return [current];
+  }
+}
+
 export default function AdrEditorPage({ params }: { params: Promise<{ projectId: string; adrId: string }> }) {
   const { projectId, adrId } = use(params);
   const qc = useQueryClient();
   const router = useRouter();
-  const [title, setTitle] = useState<string | null>(null);
   const [content, setContent] = useState<string | null>(null);
   const [status, setStatus] = useState<string | null>(null);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [showPreview, setShowPreview] = useState(true);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [supersedeOpen, setSupersedeOpen] = useState(false);
+  const [supersedeSearch, setSupersedeSearch] = useState("");
 
   const { data: adr, isLoading } = useQuery({
     queryKey: queryKeys.adrs.detail(projectId, adrId),
@@ -54,27 +75,39 @@ export default function AdrEditorPage({ params }: { params: Promise<{ projectId:
     enabled: !!projectId && !!adrId,
   });
 
-  const invalidate = useCallback(() => {
-    qc.invalidateQueries({ queryKey: queryKeys.adrs.detail(projectId, adrId) });
-    qc.invalidateQueries({ queryKey: queryKeys.adrs.list(projectId) });
-  }, [qc, projectId, adrId]);
+  const { data: allAdrs = [] } = useQuery({
+    queryKey: queryKeys.adrs.list(projectId, { _supersede: true }),
+    queryFn: () => api.listAdrs(projectId),
+    enabled: !!projectId && supersedeOpen,
+  });
 
-  const activeTitle = title ?? adr?.title ?? "";
+  const invalidate = useCallback(() => {
+    qc.invalidateQueries({ queryKey: ["adrs", projectId] });
+  }, [qc, projectId]);
+
   const activeContent = content ?? adr?.content ?? "";
+  const activeTitle = useMemo(() => extractTitle(activeContent), [activeContent]);
   const activeStatus = status ?? adr?.status ?? "proposed";
 
-  const hasChanges = (title !== null && title !== adr?.title)
-    || (content !== null && content !== adr?.content)
+  const hasChanges = (content !== null && content !== adr?.content)
     || (status !== null && status !== adr?.status);
+
+  function setTitleInContent(newTitle: string) {
+    const c = content ?? adr?.content ?? "";
+    const headingRe = /^#\s+.+$/m;
+    if (headingRe.test(c)) {
+      setContent(c.replace(headingRe, `# ${newTitle}`));
+    } else {
+      setContent(`# ${newTitle}\n\n${c}`);
+    }
+  }
 
   const saveAdr = useMutation({
     mutationFn: () => api.updateAdr(projectId, adrId, {
-      title: title ?? undefined,
       content: content ?? undefined,
       status: status ?? undefined,
     }),
-    onSuccess: (data) => {
-      setTitle(null);
+    onSuccess: () => {
       setContent(null);
       setStatus(null);
       invalidate();
@@ -107,6 +140,25 @@ export default function AdrEditorPage({ params }: { params: Promise<{ projectId:
     onError: onActionError,
   });
 
+  const supersedeAdr = useMutation({
+    mutationFn: (newAdrId: string) => api.supersedeAdr(projectId, adrId, newAdrId),
+    onSuccess: () => {
+      setActionError(null);
+      setSupersedeOpen(false);
+      setStatus(null);
+      invalidate();
+    },
+    onError: onActionError,
+  });
+
+  function handleStatusChange(newStatus: string) {
+    if (newStatus === "superseded") {
+      setSupersedeOpen(true);
+      return;
+    }
+    setStatus(newStatus);
+  }
+
   if (isLoading || !adr) {
     return (
       <div className="space-y-6">
@@ -115,6 +167,10 @@ export default function AdrEditorPage({ params }: { params: Promise<{ projectId:
       </div>
     );
   }
+
+  const statusOptions = allowedStatuses(adr.status, adr.location);
+  const isArchivePending = (adr.status === "deprecated" || adr.status === "superseded")
+    && adr.file_path && !adr.file_path.includes("/archive/");
 
   return (
     <div className="space-y-4">
@@ -126,23 +182,55 @@ export default function AdrEditorPage({ params }: { params: Promise<{ projectId:
         <ArrowLeft className="h-3.5 w-3.5" /> Back to ADRs
       </Link>
 
+      {/* Removed-from-repo banner */}
+      {adr.location === "removed_from_repo" && (
+        <Card className="border-orange-500/30 bg-orange-500/5 p-3 flex items-center justify-between">
+          <p className="text-sm text-orange-700 dark:text-orange-400">
+            This ADR was removed from the repository{adr.removed_from_repo_at ? ` on ${new Date(adr.removed_from_repo_at).toLocaleDateString()}` : ""}. Click <strong>Commit</strong> to restore it.
+          </p>
+        </Card>
+      )}
+
+      {/* Deprecated / superseded archive banner */}
+      {adr.status === "deprecated" && isArchivePending && (
+        <Card className="border-amber-500/30 bg-amber-500/5 p-3">
+          <p className="text-sm text-amber-700 dark:text-amber-400">
+            This ADR is deprecated. Click <strong>Commit</strong> to archive it in the repository.
+          </p>
+        </Card>
+      )}
+      {adr.status === "superseded" && isArchivePending && (
+        <Card className="border-purple-500/30 bg-purple-500/5 p-3">
+          <p className="text-sm text-purple-700 dark:text-purple-400">
+            This ADR is superseded{adr.superseded_by_id && <> by <Link href={`/projects/${projectId}/adrs/${adr.superseded_by_id}`} className="underline font-medium">another ADR</Link></>}. Click <strong>Commit</strong> to archive it in the repository.
+          </p>
+        </Card>
+      )}
+
       {/* Toolbar */}
       <div className="flex items-center gap-2 flex-wrap">
-        <div className="flex items-center gap-2 mr-auto">
-          <span className="text-muted-foreground font-mono text-sm">ADR-{adr.adr_number}</span>
+        <div className="flex items-center gap-2 mr-auto min-w-0 flex-1">
+          <span className="text-muted-foreground font-mono text-sm shrink-0">ADR-{adr.adr_number}</span>
+          <Badge variant="secondary" className={cn("text-[10px] shrink-0",
+            adr.location === "in_repo" ? "bg-green-500/15 text-green-700 dark:text-green-400" :
+            adr.location === "removed_from_repo" ? "bg-orange-500/15 text-orange-700 dark:text-orange-400" :
+            "bg-muted text-muted-foreground"
+          )}>
+            {adr.location === "in_repo" ? "In Repo" : adr.location === "removed_from_repo" ? "Removed" : "Draft"}
+          </Badge>
           <Input
             value={activeTitle}
-            onChange={(e) => setTitle(e.target.value)}
-            className="text-lg font-bold w-96 border-none shadow-none p-0 h-auto focus-visible:ring-0"
+            onChange={(e) => setTitleInContent(e.target.value)}
+            className="text-lg font-bold flex-1 min-w-0 border-none shadow-none p-0 h-auto focus-visible:ring-0"
           />
         </div>
 
-        <Select value={activeStatus} onValueChange={(v) => setStatus(v)}>
+        <Select value={activeStatus} onValueChange={handleStatusChange}>
           <SelectTrigger className="w-36">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            {STATUS_OPTIONS.map((s) => (
+            {statusOptions.map((s) => (
               <SelectItem key={s} value={s}>
                 <span className="capitalize">{s}</span>
               </SelectItem>
@@ -249,6 +337,18 @@ export default function AdrEditorPage({ params }: { params: Promise<{ projectId:
                   {new Date(adr.updated_at).toLocaleDateString()}
                 </div>
               )}
+              {adr.committed_to_repo_at && (
+                <div>
+                  <span className="text-muted-foreground">Committed to repo:</span>{" "}
+                  {new Date(adr.committed_to_repo_at).toLocaleDateString()}
+                </div>
+              )}
+              {adr.removed_from_repo_at && (
+                <div>
+                  <span className="text-muted-foreground">Removed from repo:</span>{" "}
+                  {new Date(adr.removed_from_repo_at).toLocaleDateString()}
+                </div>
+              )}
               {adr.file_path && (
                 <div>
                   <span className="text-muted-foreground">File:</span>{" "}
@@ -295,6 +395,46 @@ export default function AdrEditorPage({ params }: { params: Promise<{ projectId:
         confirmLabel="Delete"
         onConfirm={() => deleteAdr.mutate()}
       />
+
+      {/* Supersede dialog */}
+      <Dialog open={supersedeOpen} onOpenChange={(open) => { if (!open) setSupersedeOpen(false); }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Supersede ADR-{adr.adr_number}</DialogTitle>
+            <DialogDescription>Select the ADR that replaces this one.</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <Input
+              placeholder="Search ADRs..."
+              value={supersedeSearch}
+              onChange={(e) => setSupersedeSearch(e.target.value)}
+            />
+            <div className="max-h-64 overflow-y-auto space-y-1">
+              {allAdrs
+                .filter((a: Adr) => a.id !== adrId)
+                .filter((a: Adr) =>
+                  !supersedeSearch || a.title.toLowerCase().includes(supersedeSearch.toLowerCase())
+                  || `ADR-${a.adr_number}`.toLowerCase().includes(supersedeSearch.toLowerCase())
+                )
+                .map((a: Adr) => (
+                  <button
+                    key={a.id}
+                    onClick={() => supersedeAdr.mutate(a.id)}
+                    disabled={supersedeAdr.isPending}
+                    className="w-full text-left px-3 py-2 rounded-md hover:bg-muted transition-colors text-sm"
+                  >
+                    <span className="font-mono text-muted-foreground mr-2">ADR-{a.adr_number}</span>
+                    {a.title}
+                  </button>
+                ))
+              }
+              {allAdrs.filter((a: Adr) => a.id !== adrId).length === 0 && (
+                <p className="text-sm text-muted-foreground text-center py-4">No other ADRs in this project.</p>
+              )}
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

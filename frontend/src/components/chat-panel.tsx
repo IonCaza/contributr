@@ -1,8 +1,7 @@
 "use client";
 
-import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
+import { createContext, useCallback, useContext, useRef, useState } from "react";
 import { Bot, ChevronDown, GripVertical, PanelRightOpen } from "lucide-react";
-import { useAuiState } from "@assistant-ui/react";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Thread } from "@/components/assistant-ui/thread";
@@ -25,21 +24,10 @@ const MAX_ACTIVITY_PCT = 70;
 const DEFAULT_ACTIVITY_PCT = 50;
 
 function ChatPanelInner() {
-  const { activityVisible, setActivityVisible, resetActivity } = useChildAgentActivity();
+  const { activityVisible, setActivityVisible } = useChildAgentActivity();
   const [activityPct, setActivityPct] = useState(DEFAULT_ACTIVITY_PCT);
   const containerRef = useRef<HTMLDivElement>(null);
   const dragging = useRef(false);
-
-  const mainThreadId = useAuiState(
-    (s: { threads?: { mainThreadId?: string } }) => s.threads?.mainThreadId,
-  );
-  const prevThreadId = useRef(mainThreadId);
-  useEffect(() => {
-    if (prevThreadId.current !== mainThreadId) {
-      prevThreadId.current = mainThreadId;
-      resetActivity();
-    }
-  }, [mainThreadId, resetActivity]);
 
   const toggleActivity = useCallback(() => {
     setActivityVisible(!activityVisible);
