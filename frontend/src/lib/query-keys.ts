@@ -6,6 +6,7 @@ export const queryKeys = {
     detail: (id: string) => ["projects", id] as const,
     stats: (id: string, range?: { from?: string; to?: string }) => ["projects", id, "stats", range] as const,
     prStats: (id: string) => ["projects", id, "prStats"] as const,
+    schedule: (id: string) => ["projects", id, "schedule"] as const,
   },
   repos: {
     list: (projectId: string) => ["projects", projectId, "repos"] as const,

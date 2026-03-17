@@ -38,6 +38,7 @@ from app.api import (
     oidc_auth as oidc_auth_api,
     pull_requests as pull_requests_api,
     adrs as adrs_api,
+    project_schedules as project_schedules_api,
 )
 from app.api.repositories import _parse_platform_fields
 from app.agents.builtin import get_builtin_agents
@@ -375,6 +376,7 @@ app.include_router(oidc_providers_api.router, prefix="/api")
 app.include_router(oidc_auth_api.router, prefix="/api")
 app.include_router(pull_requests_api.router, prefix="/api")
 app.include_router(adrs_api.router, prefix="/api")
+app.include_router(project_schedules_api.router)
 
 
 @app.get("/api/health")

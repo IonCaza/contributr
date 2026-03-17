@@ -1,8 +1,8 @@
 "use client";
 
-import { use, useMemo, useState, useCallback, useRef } from "react";
+import { use, useMemo, useState, useCallback, useRef, useEffect } from "react";
 import Link from "next/link";
-import { ArrowLeft, ExternalLink, Pencil, X, Save, Loader2, ChevronLeft, ChevronRight, Clock, User2, ArrowRightLeft, FileEdit, RefreshCw, AlertTriangle } from "lucide-react";
+import { ArrowLeft, ExternalLink, Pencil, X, Save, Loader2, ChevronLeft, ChevronRight, Clock, User2, ArrowRightLeft, FileEdit, RefreshCw, AlertTriangle, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -15,7 +15,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { useWorkItemDetail, useUpdateWorkItem, usePullWorkItem, useWorkItemActivities } from "@/hooks/use-delivery";
+import { useWorkItemDetail, useUpdateWorkItem, usePullWorkItem, useAcceptDraft, useDiscardDraft, useWorkItemActivities } from "@/hooks/use-delivery";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -28,6 +28,8 @@ import {
 } from "@/components/ui/alert-dialog";
 import { useCustomFields } from "@/hooks/use-custom-fields";
 import { RichTextEditor } from "@/components/rich-text-editor";
+import { DescriptionDiffEditor } from "@/components/description-diff-editor";
+import { useChatTrigger } from "@/hooks/use-chat-trigger";
 import type { WorkItemActivityEntry } from "@/lib/types";
 
 const TYPE_COLORS: Record<string, string> = {
@@ -85,12 +87,20 @@ export default function WorkItemDetailPage({
   params: Promise<{ projectId: string; workItemId: string }>;
 }) {
   const { projectId, workItemId } = use(params);
-  const { data: item, isLoading } = useWorkItemDetail(projectId, workItemId);
+
+  const [editing, setEditing] = useState(false);
+  const [aiEditing, setAiEditing] = useState(false);
+
+  const { data: item, isLoading } = useWorkItemDetail(projectId, workItemId, {
+    refetchInterval: aiEditing ? 3000 : false,
+  });
   const { data: customFieldConfigs = [] } = useCustomFields(projectId);
   const updateMutation = useUpdateWorkItem(projectId, workItemId);
   const pullMutation = usePullWorkItem(projectId, workItemId);
-
-  const [editing, setEditing] = useState(false);
+  const acceptDraftMutation = useAcceptDraft(projectId, workItemId);
+  const discardDraftMutation = useDiscardDraft(projectId, workItemId);
+  const { openChat } = useChatTrigger();
+  const [proposedHtml, setProposedHtml] = useState("");
   const [editTitle, setEditTitle] = useState("");
   const [editDescription, setEditDescription] = useState("");
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -112,7 +122,9 @@ export default function WorkItemDetailPage({
     return item.description
       .replace(/\s*style="[^"]*"/gi, "")
       .replace(/<font[^>]*>/gi, "")
-      .replace(/<\/font>/gi, "");
+      .replace(/<\/font>/gi, "")
+      .replace(/<span[^>]*>\s*<\/span>/gi, "")
+      .replace(/(<div><br\s*\/?><\/div>\s*){2,}/gi, "<div><br/></div>");
   }, [item?.description]);
 
   const handleEdit = useCallback(() => {
@@ -208,6 +220,51 @@ export default function WorkItemDetailPage({
     });
   }, [pullMutation, editing]);
 
+  // Sync draft_description from server into local state while AI editing
+  useEffect(() => {
+    if (aiEditing && item?.draft_description && item.draft_description !== proposedHtml) {
+      setProposedHtml(item.draft_description);
+    }
+  }, [aiEditing, item?.draft_description]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handleAiEdit = useCallback(() => {
+    if (!item) return;
+    setAiEditing(true);
+    setProposedHtml(item.draft_description || "");
+    openChat(
+      "delivery-analyst",
+      `I'm looking at work item #${item.platform_work_item_id}: "${item.title}". Help me improve its description. Use read_work_item_description to see the current content, then propose an improved version.`,
+    );
+  }, [item, openChat]);
+
+  const handleAcceptDraft = useCallback(
+    (html: string) => {
+      if (!item) return;
+      acceptDraftMutation.mutate(undefined, {
+        onSuccess: () => setAiEditing(false),
+      });
+    },
+    [item, acceptDraftMutation],
+  );
+
+  const handleKeepOriginal = useCallback(() => {
+    discardDraftMutation.mutate(undefined, {
+      onSuccess: () => {
+        setAiEditing(false);
+        setProposedHtml("");
+      },
+    });
+  }, [discardDraftMutation]);
+
+  const handleDiscardAi = useCallback(() => {
+    discardDraftMutation.mutate(undefined, {
+      onSuccess: () => {
+        setAiEditing(false);
+        setProposedHtml("");
+      },
+    });
+  }, [discardDraftMutation]);
+
   if (isLoading) {
     return (
       <div className="flex items-center gap-2 text-muted-foreground">
@@ -252,11 +309,17 @@ export default function WorkItemDetailPage({
             <RefreshCw className={`mr-1.5 h-3.5 w-3.5 ${pullMutation.isPending ? "animate-spin" : ""}`} />
             {pullMutation.isPending ? "Pulling..." : "Pull Latest"}
           </Button>
-          {!editing && (
-            <Button variant="outline" size="sm" onClick={handleEdit}>
-              <Pencil className="mr-1.5 h-3.5 w-3.5" />
-              Edit
-            </Button>
+          {!editing && !aiEditing && (
+            <>
+              <Button variant="outline" size="sm" onClick={handleAiEdit}>
+                <Sparkles className="mr-1.5 h-3.5 w-3.5" />
+                Edit with AI
+              </Button>
+              <Button variant="outline" size="sm" onClick={handleEdit}>
+                <Pencil className="mr-1.5 h-3.5 w-3.5" />
+                Edit
+              </Button>
+            </>
           )}
         </div>
       </div>
@@ -303,7 +366,17 @@ export default function WorkItemDetailPage({
       </div>
 
       {/* Description */}
-      {editing ? (
+      {aiEditing ? (
+        <DescriptionDiffEditor
+          originalHtml={item.description || ""}
+          proposedHtml={proposedHtml}
+          onProposedChange={setProposedHtml}
+          onAccept={handleAcceptDraft}
+          onKeepOriginal={handleKeepOriginal}
+          onDiscard={handleDiscardAi}
+          isLoading={acceptDraftMutation.isPending || discardDraftMutation.isPending}
+        />
+      ) : editing ? (
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-3">
             <CardTitle className="text-base">Description</CardTitle>
@@ -336,7 +409,7 @@ export default function WorkItemDetailPage({
           </CardHeader>
           <CardContent>
             <div
-              className="prose prose-sm dark:prose-invert max-w-none prose-headings:text-foreground prose-a:text-primary prose-code:rounded prose-code:bg-muted prose-code:px-1.5 prose-code:py-0.5 prose-code:text-sm prose-code:before:content-none prose-code:after:content-none prose-img:rounded-md"
+              className="prose prose-sm dark:prose-invert max-w-none ado-description prose-headings:text-foreground prose-a:text-primary prose-code:rounded prose-code:bg-muted prose-code:px-1.5 prose-code:py-0.5 prose-code:text-sm prose-code:before:content-none prose-code:after:content-none prose-img:rounded-md"
               dangerouslySetInnerHTML={{ __html: cleanDescription }}
             />
           </CardContent>

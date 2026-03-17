@@ -27,12 +27,17 @@ export function useRepoStats(id: string, filters?: { branches?: string[]; from?:
   });
 }
 
-export function useSyncJobs(repoId: string, activeJobId: string | null) {
+export function useSyncJobs(repoId: string) {
   return useQuery({
     queryKey: queryKeys.repos.syncJobs(repoId),
     queryFn: () => api.listSyncJobs(repoId),
     enabled: !!repoId,
-    refetchInterval: activeJobId ? 3000 : false,
+    refetchInterval: (query) => {
+      const jobs = query.state.data;
+      return jobs?.some((j: { status: string }) => j.status === "queued" || j.status === "running")
+        ? 3000
+        : false;
+    },
   });
 }
 

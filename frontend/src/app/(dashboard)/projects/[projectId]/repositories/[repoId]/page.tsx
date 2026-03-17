@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { useActiveRunTracking } from "@/hooks/use-active-run-tracking";
 import { useParams } from "next/navigation";
@@ -78,7 +78,6 @@ export default function RepoDetailPage() {
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
   const [filesBranchOverride, setFilesBranchOverride] = useState<string | null>(null);
   const [activeJobId, setActiveJobId] = useState<string | null>(null);
-  const [syncing, setSyncing] = useState(false);
   const [commitPage, setCommitPage] = useState(1);
   const [commitSearch, setCommitSearch] = useState("");
   const debouncedSearch = useDebouncedValue(commitSearch);
@@ -109,7 +108,8 @@ export default function RepoDetailPage() {
   }), [repoId, branchParam, dateRange]);
   const { data: daily = [] } = useDailyStats(dailyParams);
 
-  const { data: syncJobs = [] } = useSyncJobs(repoId, activeJobId);
+  const { data: syncJobs = [] } = useSyncJobs(repoId);
+  const syncing = syncJobs.some((j) => j.status === "queued" || j.status === "running");
   const { data: branches = [] } = useRepoBranches(repoId);
   const { data: contributors = [] } = useRepoContributors(repoId, branchParam);
   const filesBranch = filesBranchOverride ?? repo?.default_branch ?? undefined;
@@ -126,11 +126,12 @@ export default function RepoDetailPage() {
   const syncMutation = useSyncRepo();
   const cancelMutation = useCancelSync(repoId);
 
+  const wasSyncing = useRef(false);
   useEffect(() => {
-    if (!activeJobId) return;
-    const currentJob = syncJobs.find((j) => j.id === activeJobId);
-    if (currentJob && (currentJob.status === "completed" || currentJob.status === "failed" || currentJob.status === "cancelled")) {
-      setSyncing(false);
+    if (syncing) {
+      wasSyncing.current = true;
+    } else if (wasSyncing.current) {
+      wasSyncing.current = false;
       setActiveJobId(null);
       qc.invalidateQueries({ queryKey: queryKeys.repos.detail(repoId) });
       qc.invalidateQueries({ queryKey: queryKeys.repos.stats(repoId) });
@@ -139,23 +140,19 @@ export default function RepoDetailPage() {
       qc.invalidateQueries({ queryKey: queryKeys.repos.fileTree(repoId) });
       qc.invalidateQueries({ queryKey: queryKeys.daily(dailyParams) });
     }
-  }, [syncJobs, activeJobId, repoId, qc, dailyParams]);
+  }, [syncing, repoId, qc, dailyParams]);
 
   async function handleSync() {
     if (syncing) return;
-    setSyncing(true);
     try {
       const job = await syncMutation.mutateAsync(repoId);
       setActiveJobId(job.id);
-    } catch {
-      setSyncing(false);
-    }
+    } catch { /* mutation error handled by React Query */ }
   }
 
   async function handleCancel() {
     if (!activeJobId) return;
     await cancelMutation.mutateAsync(activeJobId);
-    setSyncing(false);
     setActiveJobId(null);
   }
 
@@ -539,14 +536,16 @@ export default function RepoDetailPage() {
             <TableBody>
               {syncJobs.map((j) => (
                 <TableRow key={j.id}>
-                  <TableCell className="flex items-center gap-2">
-                    {STATUS_ICON[j.status] || null}
-                    <span className="capitalize">{j.status}</span>
+                  <TableCell className="align-top">
+                    <span className="inline-flex items-center gap-2">
+                      {STATUS_ICON[j.status] || null}
+                      <span className="capitalize">{j.status}</span>
+                    </span>
                   </TableCell>
-                  <TableCell>{j.started_at ? new Date(j.started_at).toLocaleString() : "-"}</TableCell>
-                  <TableCell>{j.finished_at ? new Date(j.finished_at).toLocaleString() : "-"}</TableCell>
-                  <TableCell className="max-w-xs truncate text-destructive">{j.error_message || "-"}</TableCell>
-                  <TableCell>
+                  <TableCell className="align-top">{j.started_at ? new Date(j.started_at).toLocaleString() : "-"}</TableCell>
+                  <TableCell className="align-top">{j.finished_at ? new Date(j.finished_at).toLocaleString() : "-"}</TableCell>
+                  <TableCell className="align-top max-w-xs truncate text-destructive">{j.error_message || "-"}</TableCell>
+                  <TableCell className="align-top">
                     <ViewLogsButton repoId={repoId} jobId={j.id} />
                   </TableCell>
                 </TableRow>

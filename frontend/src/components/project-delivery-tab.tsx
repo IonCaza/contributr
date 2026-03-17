@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useCallback, useEffect } from "react";
+import { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import Link from "next/link";
 import {
@@ -146,7 +146,6 @@ export function ProjectDeliveryTab({ projectId }: { projectId: string }) {
   });
 
   // ── Sync state ──────────────────────────────────────────────────
-  const [syncing, setSyncing] = useState(false);
   const qc = useQueryClient();
   const syncMutation = useTriggerDeliverySync(projectId);
   const purgeMutation = usePurgeDelivery(projectId);
@@ -203,27 +202,27 @@ export function ProjectDeliveryTab({ projectId }: { projectId: string }) {
     { ...workItemFilters, max_items: 2000 },
     { enabled: workItemsView === "tree" },
   );
-  const { data: syncJobs = [] } = useDeliverySyncJobs(projectId, syncing);
+  const { data: syncJobs = [] } = useDeliverySyncJobs(projectId);
+  const syncing = syncJobs.some((j) => j.status === "queued" || j.status === "running");
 
   // ── Drill-down state ───────────────────────────────────────────
   const [drillDown, setDrillDown] = useState<{ title: string; metric: string } | null>(null);
   const { data: itemDetailRows, isLoading: itemDetailsLoading } = useItemDetails(projectId, deliveryFilters, !!drillDown);
   const { data: contribSummary, isLoading: contribSummaryLoading } = useContributorDeliverySummary(projectId, deliveryFilters, !!drillDown);
 
-  // ── Sync polling ────────────────────────────────────────────────
+  // ── Refresh delivery data when sync finishes ───────────────────
+  const wasSyncing = useRef(false);
   useEffect(() => {
-    if (!syncing) return;
-    const active = syncJobs.find((j) => j.status === "queued" || j.status === "running");
-    if (!active && syncJobs.length > 0) {
-      setSyncing(false);
+    if (syncing) {
+      wasSyncing.current = true;
+    } else if (wasSyncing.current) {
+      wasSyncing.current = false;
       qc.invalidateQueries({ queryKey: ["delivery", projectId] });
     }
-  }, [syncJobs, syncing, qc, projectId]);
+  }, [syncing, qc, projectId]);
 
   const handleSync = useCallback(() => {
-    syncMutation.mutate(undefined, {
-      onSuccess: () => setSyncing(true),
-    });
+    syncMutation.mutate();
   }, [syncMutation]);
 
   const handlePurgeDelivery = useCallback(() => {
@@ -1126,20 +1125,22 @@ export function ProjectDeliveryTab({ projectId }: { projectId: string }) {
             <TableBody>
               {syncJobs.map((j) => (
                 <TableRow key={j.id}>
-                  <TableCell className="flex items-center gap-2">
-                    {STATUS_ICON[j.status] || null}
-                    <span className="capitalize">{j.status}</span>
+                  <TableCell className="align-top">
+                    <span className="inline-flex items-center gap-2">
+                      {STATUS_ICON[j.status] || null}
+                      <span className="capitalize">{j.status}</span>
+                    </span>
                   </TableCell>
-                  <TableCell>
+                  <TableCell className="align-top">
                     {j.started_at ? new Date(j.started_at).toLocaleString() : "-"}
                   </TableCell>
-                  <TableCell>
+                  <TableCell className="align-top">
                     {j.finished_at ? new Date(j.finished_at).toLocaleString() : "-"}
                   </TableCell>
-                  <TableCell className="max-w-xs truncate text-destructive">
+                  <TableCell className="align-top max-w-xs truncate text-destructive">
                     {j.error_message || "-"}
                   </TableCell>
-                  <TableCell>
+                  <TableCell className="align-top">
                     <ViewLogsButton logUrl={api.getDeliverySyncLogUrl(projectId)} />
                   </TableCell>
                 </TableRow>

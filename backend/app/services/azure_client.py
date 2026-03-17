@@ -7,7 +7,7 @@ from azure.devops.v7_1.git.models import GitPullRequestSearchCriteria
 from git import Repo as GitRepo
 from msrest.authentication import BasicAuthentication
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, update
+from sqlalchemy import select, update, delete
 
 from app.db.models import Repository, PullRequest, Review, PRComment
 from app.db.models.pull_request import PRState
@@ -322,3 +322,132 @@ def _extract_reviewer_comments(
                 if email:
                     counts[email] = counts.get(email, 0) + 1
     return counts
+
+
+async def sync_single_azure_pr(
+    db: AsyncSession, repo: Repository, platform_pr_id: int,
+    org_url: str | None = None, token: str | None = None,
+) -> PullRequest | None:
+    """Re-fetch a single PR from Azure DevOps, replacing existing reviews & comments."""
+    if not org_url or not token or not repo.platform_owner or not repo.platform_repo:
+        return None
+
+    credentials = BasicAuthentication("", token)
+    connection = Connection(base_url=org_url, creds=credentials)
+    git_client = connection.clients.get_git_client()
+    project, repo_name = _parse_project_and_repo(repo)
+    bare_path = os.path.join(settings.repos_cache_dir, str(repo.id))
+
+    try:
+        pr = git_client.get_pull_request(repo_name, platform_pr_id, project=project)
+    except Exception as e:
+        logger.error("Azure DevOps API error fetching PR #%d: %s", platform_pr_id, e)
+        return None
+
+    result = await db.execute(
+        select(PullRequest).where(
+            PullRequest.repository_id == repo.id,
+            PullRequest.platform_pr_id == platform_pr_id,
+        )
+    )
+    db_pr = result.scalar_one_or_none()
+
+    author_name = pr.created_by.display_name or "unknown"
+    author_email = pr.created_by.unique_name or f"{author_name}@azure.com"
+    contributor = await resolve_contributor(db, author_name, author_email)
+
+    if pr.status == "completed":
+        state = PRState.MERGED
+    elif pr.status == "abandoned":
+        state = PRState.CLOSED
+    else:
+        state = PRState.OPEN
+
+    comment_count, first_review_at, raw_comments = _fetch_threads(
+        git_client, project, repo_name, pr.pull_request_id
+    )
+    iteration_count = _fetch_iteration_count(
+        git_client, project, repo_name, pr.pull_request_id
+    )
+
+    source_commit = getattr(pr, "last_merge_source_commit", None)
+    target_commit = getattr(pr, "last_merge_target_commit", None)
+    source_sha = getattr(source_commit, "commit_id", None) if source_commit else None
+    target_sha = getattr(target_commit, "commit_id", None) if target_commit else None
+    lines_added, lines_deleted = _git_diff_stats(bare_path, source_sha, target_sha)
+
+    if db_pr:
+        db_pr.title = (pr.title or "")[:1024]
+        db_pr.state = state
+        db_pr.contributor_id = contributor.id
+        db_pr.lines_added = lines_added
+        db_pr.lines_deleted = lines_deleted
+        db_pr.comment_count = comment_count
+        db_pr.iteration_count = iteration_count
+        db_pr.created_at = pr.creation_date
+        db_pr.merged_at = pr.closed_date if state == PRState.MERGED else None
+        db_pr.closed_at = pr.closed_date
+        db_pr.first_review_at = first_review_at
+        await db.execute(delete(Review).where(Review.pull_request_id == db_pr.id))
+        await db.execute(delete(PRComment).where(PRComment.pull_request_id == db_pr.id))
+    else:
+        db_pr = PullRequest(
+            repository_id=repo.id,
+            contributor_id=contributor.id,
+            platform_pr_id=pr.pull_request_id,
+            title=(pr.title or "")[:1024],
+            state=state,
+            lines_added=lines_added,
+            lines_deleted=lines_deleted,
+            comment_count=comment_count,
+            iteration_count=iteration_count,
+            created_at=pr.creation_date,
+            merged_at=pr.closed_date if state == PRState.MERGED else None,
+            closed_at=pr.closed_date,
+            first_review_at=first_review_at,
+        )
+        db.add(db_pr)
+        await db.flush()
+
+    for rc in raw_comments:
+        author_contributor = None
+        if rc["author_email"]:
+            author_contributor = await resolve_contributor(db, rc["author_name"], rc["author_email"])
+        ctype = PRCommentType.INLINE if rc["comment_type"] == "inline" else PRCommentType.GENERAL
+        db.add(PRComment(
+            pull_request_id=db_pr.id,
+            author_name=rc["author_name"],
+            author_id=author_contributor.id if author_contributor else None,
+            body=rc["body"],
+            thread_id=rc["thread_id"],
+            file_path=rc["file_path"],
+            line_number=rc["line_number"],
+            comment_type=ctype,
+            platform_comment_id=rc["platform_comment_id"],
+            created_at=rc["created_at"] or pr.creation_date,
+            updated_at=rc.get("updated_at"),
+        ))
+
+    reviewer_comments = _extract_reviewer_comments(
+        git_client, project, repo_name, pr.pull_request_id
+    )
+    for reviewer_info in pr.reviewers or []:
+        vote = reviewer_info.vote or 0
+        if vote == 0:
+            continue
+        review_state = VOTE_MAP.get(vote, ReviewState.COMMENTED)
+        rev_email = reviewer_info.unique_name or f"{reviewer_info.display_name}@azure.com"
+        rev_contributor = await resolve_contributor(
+            db, reviewer_info.display_name or "unknown", rev_email
+        )
+        rev_comment_count = reviewer_comments.get(rev_email.lower(), 0)
+        db.add(Review(
+            pull_request_id=db_pr.id,
+            reviewer_id=rev_contributor.id,
+            state=review_state,
+            comment_count=rev_comment_count,
+            submitted_at=first_review_at or pr.creation_date,
+        ))
+
+    await db.flush()
+    return db_pr

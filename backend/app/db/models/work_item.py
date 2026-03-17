@@ -50,6 +50,7 @@ class WorkItem(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, comment="Timestamp when the work item was created on the platform")
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, comment="Timestamp of the last modification on the platform")
     description: Mapped[str | None] = mapped_column(Text, comment="Full description or acceptance criteria of the work item. May contain HTML (Azure DevOps) or markdown depending on the source platform.")
+    draft_description: Mapped[str | None] = mapped_column(Text, comment="Agent-proposed description awaiting user review. Cleared on accept or discard.")
     custom_fields: Mapped[dict | None] = mapped_column(JSONB, comment="Dynamic key-value store for non-standard platform fields. Keys are field reference names (e.g. 'Custom.RiskLevel'), values are raw platform values. Allows schema-less storage of any field added or removed in the source platform without migration.")
     original_estimate: Mapped[float | None] = mapped_column(Float, comment="Original time estimate in hours (from Microsoft.VSTS.Scheduling.OriginalEstimate)")
     remaining_work: Mapped[float | None] = mapped_column(Float, comment="Remaining work in hours (from Microsoft.VSTS.Scheduling.RemainingWork)")

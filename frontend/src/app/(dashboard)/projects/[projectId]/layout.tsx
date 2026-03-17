@@ -15,6 +15,7 @@ const TABS = [
   { label: "Dependencies", href: "dependencies" },
   { label: "Standards", href: "adrs" },
   { label: "Insights", href: "insights" },
+  { label: "Settings", href: "settings" },
 ] as const;
 
 export default function ProjectLayout({

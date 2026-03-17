@@ -743,6 +743,7 @@ export interface TeamMemberCodeStats {
 
 export interface WorkItemDetail extends WorkItem {
   description: string | null;
+  draft_description: string | null;
   custom_fields: Record<string, unknown> | null;
   original_estimate: number | null;
   remaining_work: number | null;
@@ -1293,4 +1294,19 @@ export interface Adr {
   created_by_id: string;
   created_at: string;
   updated_at: string;
+}
+
+// ── Project Schedule ────────────────────────────────────────────────
+
+export interface ProjectSchedule {
+  repo_sync_interval: string;
+  repo_sync_last_run_at: string | null;
+  delivery_sync_interval: string;
+  delivery_sync_last_run_at: string | null;
+  security_scan_interval: string;
+  security_scan_last_run_at: string | null;
+  dependency_scan_interval: string;
+  dependency_scan_last_run_at: string | null;
+  insights_interval: string;
+  insights_last_run_at: string | null;
 }

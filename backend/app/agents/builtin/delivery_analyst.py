@@ -52,5 +52,8 @@ SPEC = BuiltinAgentSpec(
         # Code-Delivery Intersection
         "get_code_delivery_intersection",
         "get_work_item_linked_commits",
+        # Work Item Description Editing
+        "read_work_item_description",
+        "propose_work_item_description",
     ],
 )

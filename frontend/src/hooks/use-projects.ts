@@ -61,3 +61,22 @@ export function useUpdateProject(projectId: string) {
     },
   });
 }
+
+export function useProjectSchedule(projectId: string) {
+  return useQuery({
+    queryKey: queryKeys.projects.schedule(projectId),
+    queryFn: () => api.getProjectSchedule(projectId),
+    enabled: !!projectId,
+  });
+}
+
+export function useUpdateProjectSchedule(projectId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (data: Record<string, string>) =>
+      api.updateProjectSchedule(projectId, data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: queryKeys.projects.schedule(projectId) });
+    },
+  });
+}

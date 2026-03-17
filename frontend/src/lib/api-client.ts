@@ -543,6 +543,14 @@ export const api = {
     request<WorkItemDetail>(`/projects/${projectId}/delivery/work-items/${workItemId}/pull`, {
       method: "POST",
     }),
+  acceptWorkItemDraft: (projectId: string, workItemId: string) =>
+    request<WorkItemDetail>(`/projects/${projectId}/delivery/work-items/${workItemId}/accept-draft`, {
+      method: "POST",
+    }),
+  discardWorkItemDraft: (projectId: string, workItemId: string) =>
+    request<void>(`/projects/${projectId}/delivery/work-items/${workItemId}/discard-draft`, {
+      method: "POST",
+    }),
   getWorkItemCommits: (projectId: string, workItemId: string) =>
     request<LinkedCommit[]>(`/projects/${projectId}/delivery/work-items/${workItemId}/commits`),
   getWorkItemActivities: (projectId: string, workItemId: string, params?: { page?: number; page_size?: number }) =>
@@ -812,6 +820,8 @@ export const api = {
   ),
   getPullRequest: (projectId: string, prId: string) =>
     request<import("./types").PRDetail>(`/projects/${projectId}/pull-requests/${prId}`),
+  syncPullRequest: (projectId: string, prId: string) =>
+    request<import("./types").PRDetail>(`/projects/${projectId}/pull-requests/${prId}/sync`, { method: "POST" }),
   getPRAnalytics: (projectId: string, params?: {
     from_date?: string; to_date?: string; repository_id?: string;
   }) => request<import("./types").PRAnalytics>(
@@ -861,6 +871,12 @@ export const api = {
     request<import("./types").Adr>(`/projects/${projectId}/adrs/${adrId}/supersede?new_adr_id=${newAdrId}`, { method: "POST" }),
   generateAdr: (projectId: string, data: { text: string; template_id?: string }) =>
     request<import("./types").Adr>(`/projects/${projectId}/adrs/generate`, { method: "POST", body: JSON.stringify(data) }),
+
+  // Project Schedules
+  getProjectSchedule: (projectId: string) =>
+    request<import("./types").ProjectSchedule>(`/projects/${projectId}/schedules`),
+  updateProjectSchedule: (projectId: string, data: Record<string, string>) =>
+    request<import("./types").ProjectSchedule>(`/projects/${projectId}/schedules`, { method: "PUT", body: JSON.stringify(data) }),
 
   getApiBase: () => API_BASE,
   getAuthToken: () => getToken(),

@@ -1,5 +1,4 @@
 from celery import Celery
-from celery.schedules import crontab
 
 from app.config import settings
 
@@ -14,9 +13,9 @@ celery.conf.update(
     worker_hijack_root_logger=False,
     include=["app.workers.tasks"],
     beat_schedule={
-        "run-project-insights-daily": {
-            "task": "schedule_all_project_insights",
-            "schedule": crontab(hour=2, minute=0),
+        "scheduler-tick": {
+            "task": "scheduler_tick",
+            "schedule": 60.0,
         },
     },
 )

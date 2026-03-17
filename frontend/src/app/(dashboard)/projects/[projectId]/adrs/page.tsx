@@ -22,6 +22,7 @@ import { api } from "@/lib/api-client";
 import { queryKeys } from "@/lib/query-keys";
 import { cn } from "@/lib/utils";
 import { useProject } from "@/hooks/use-projects";
+import { useChatTrigger } from "@/hooks/use-chat-trigger";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import type { Adr, AdrTemplate, AdrConfig } from "@/lib/types";
 
@@ -59,8 +60,6 @@ export default function AdrsPage({ params }: { params: Promise<{ projectId: stri
   const [newOpen, setNewOpen] = useState(false);
   const [newTitle, setNewTitle] = useState("");
   const [newTemplate, setNewTemplate] = useState("__none__");
-  const [genOpen, setGenOpen] = useState(false);
-  const [genText, setGenText] = useState("");
   const [configOpen, setConfigOpen] = useState(false);
   const [templateOpen, setTemplateOpen] = useState(false);
   const [editTmpl, setEditTmpl] = useState<AdrTemplate | null>(null);
@@ -105,10 +104,7 @@ export default function AdrsPage({ params }: { params: Promise<{ projectId: stri
     onSuccess: () => { invalidate(); setNewOpen(false); setNewTitle(""); setNewTemplate("__none__"); },
   });
 
-  const generateAdr = useMutation({
-    mutationFn: () => api.generateAdr(projectId, { text: genText }),
-    onSuccess: () => { invalidate(); setGenOpen(false); setGenText(""); },
-  });
+  const { openChat } = useChatTrigger();
 
   const syncAdrs = useMutation({
     mutationFn: () => api.syncAdrs(projectId),
@@ -195,7 +191,7 @@ export default function AdrsPage({ params }: { params: Promise<{ projectId: stri
           {syncAdrs.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />}
           Sync from Repo
         </Button>
-        <Button variant="outline" size="sm" onClick={() => setGenOpen(true)}>
+        <Button variant="outline" size="sm" onClick={() => openChat("adr-architect", `Generate a new ADR for the project "${project?.name ?? "this project"}". Ask me what architectural decision I'd like to document.`)}>
           <Sparkles className="mr-2 h-4 w-4" /> Generate with AI
         </Button>
         <Button size="sm" onClick={() => setNewOpen(true)}>
@@ -370,29 +366,6 @@ export default function AdrsPage({ params }: { params: Promise<{ projectId: stri
             </div>
             <Button onClick={() => createAdr.mutate()} disabled={!newTitle || createAdr.isPending} className="w-full">
               {createAdr.isPending ? "Creating..." : "Create ADR"}
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
-
-      {/* Generate ADR Dialog */}
-      <Dialog open={genOpen} onOpenChange={setGenOpen}>
-        <DialogContent className="max-w-lg">
-          <DialogHeader>
-            <DialogTitle>Generate ADR with AI</DialogTitle>
-            <DialogDescription>Paste or type your decision context, and AI will structure it into an ADR.</DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4">
-            <div className="space-y-1">
-              <Label>Input Text</Label>
-              <Textarea value={genText} onChange={(e) => setGenText(e.target.value)} rows={8} placeholder="We decided to use PostgreSQL instead of MongoDB because..." />
-            </div>
-            <Button onClick={() => generateAdr.mutate()} disabled={!genText || generateAdr.isPending} className="w-full">
-              {generateAdr.isPending ? (
-                <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Generating...</>
-              ) : (
-                <><Sparkles className="mr-2 h-4 w-4" /> Generate ADR</>
-              )}
             </Button>
           </div>
         </DialogContent>

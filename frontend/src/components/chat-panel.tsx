@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useCallback, useContext, useRef, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
 import { Bot, ChevronDown, GripVertical, PanelRightOpen } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -9,6 +9,8 @@ import { ThreadList } from "@/components/assistant-ui/thread-list";
 import { ContributrChatRuntime, useChildAgentActivity } from "@/components/contributr-chat-runtime";
 import { AgentActivityPanel } from "@/components/agent-activity-panel";
 import { useAgents } from "@/hooks/use-settings";
+import { useComposerRuntime } from "@assistant-ui/react";
+import { useChatTrigger } from "@/hooks/use-chat-trigger";
 import { cn } from "@/lib/utils";
 
 const AgentNameContext = createContext<string>("Contributr AI");
@@ -114,10 +116,40 @@ function ChatPanelInner() {
   );
 }
 
+function ChatAutoSender({ message }: { message: string | null }) {
+  const composer = useComposerRuntime();
+  const sent = useRef(false);
+
+  useEffect(() => {
+    if (!message || sent.current) return;
+    sent.current = true;
+    requestAnimationFrame(() => {
+      composer.setText(message);
+      composer.send();
+    });
+  }, [message, composer]);
+
+  useEffect(() => {
+    sent.current = false;
+  }, [message]);
+
+  return null;
+}
+
 export function ChatPanel({ open, onClose }: ChatPanelProps) {
   const { data: agents = [] } = useAgents();
   const enabledAgents = agents.filter((a) => a.enabled);
   const [agentSlug, setAgentSlug] = useState("contribution-analyst");
+  const { pending, consume } = useChatTrigger();
+  const [autoMessage, setAutoMessage] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!open || !pending) return;
+    const req = consume();
+    if (!req) return;
+    setAgentSlug(req.agentSlug);
+    setAutoMessage(req.message);
+  }, [open, pending, consume]);
 
   const agentName =
     enabledAgents.find((a) => a.slug === agentSlug)?.name ?? "Contributr AI";
@@ -127,6 +159,7 @@ export function ChatPanel({ open, onClose }: ChatPanelProps) {
   return (
     <ContributrChatRuntime agentSlug={agentSlug}>
       <AgentNameContext.Provider value={agentName}>
+        <ChatAutoSender message={autoMessage} />
         <div className="flex h-full flex-col bg-background">
           <div className="flex h-10 shrink-0 items-center justify-between border-b px-4">
             <div className="flex items-center gap-2">

@@ -8,8 +8,8 @@ SPEC = BuiltinAgentSpec(
     name="ADR Architect",
     description=(
         "Expert in Architecture Decision Records. Creates, manages, and generates "
-        "ADRs from freeform text. Helps teams document and reason about "
-        "architectural decisions using established templates."
+        "ADRs from freeform text or pull request discussions. Helps teams document "
+        "and reason about architectural decisions using established templates."
     ),
     system_prompt=ADR_ARCHITECT_PROMPT,
     tool_slugs=[
@@ -21,5 +21,11 @@ SPEC = BuiltinAgentSpec(
         "update_adr",
         "generate_adr_from_text",
         "suggest_adr",
+        "analyze_pr_for_adrs",
+        "list_pull_requests",
+        "get_pr_review_comments",
+        "get_pr_changed_files",
+        "get_pr_file_diff",
+        "read_file",
     ],
 )

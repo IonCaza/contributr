@@ -96,12 +96,17 @@ export function useDeliveryTrends(projectId: string) {
   });
 }
 
-export function useDeliverySyncJobs(projectId: string, polling = false) {
+export function useDeliverySyncJobs(projectId: string) {
   return useQuery({
     queryKey: queryKeys.delivery.syncJobs(projectId),
     queryFn: () => api.listDeliverySyncJobs(projectId),
     enabled: !!projectId,
-    refetchInterval: polling ? 3000 : false,
+    refetchInterval: (query) => {
+      const jobs = query.state.data;
+      return jobs?.some((j: { status: string }) => j.status === "queued" || j.status === "running")
+        ? 3000
+        : false;
+    },
   });
 }
 
@@ -157,11 +162,12 @@ export function useIntersectionMetrics(projectId: string, filters?: DeliveryFilt
   });
 }
 
-export function useWorkItemDetail(projectId: string, workItemId: string) {
+export function useWorkItemDetail(projectId: string, workItemId: string, opts?: { refetchInterval?: number | false }) {
   return useQuery({
     queryKey: queryKeys.delivery.workItemDetail(projectId, workItemId),
     queryFn: () => api.getWorkItemDetail(projectId, workItemId),
     enabled: !!projectId && !!workItemId,
+    refetchInterval: opts?.refetchInterval,
   });
 }
 
@@ -180,6 +186,26 @@ export function usePullWorkItem(projectId: string, workItemId: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: () => api.pullWorkItem(projectId, workItemId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: queryKeys.delivery.workItemDetail(projectId, workItemId) });
+    },
+  });
+}
+
+export function useAcceptDraft(projectId: string, workItemId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.acceptWorkItemDraft(projectId, workItemId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: queryKeys.delivery.workItemDetail(projectId, workItemId) });
+    },
+  });
+}
+
+export function useDiscardDraft(projectId: string, workItemId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.discardWorkItemDraft(projectId, workItemId),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: queryKeys.delivery.workItemDetail(projectId, workItemId) });
     },

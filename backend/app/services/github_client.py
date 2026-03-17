@@ -2,7 +2,7 @@ import logging
 
 from github import Github, GithubException
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, delete
 
 from app.db.models import Repository, PullRequest, Review, Contributor, PRComment
 from app.db.models.pull_request import PRState
@@ -126,3 +126,122 @@ async def fetch_github_prs(
     await db.flush()
     gh.close()
     return new_count
+
+
+async def sync_single_github_pr(
+    db: AsyncSession, repo: Repository, platform_pr_id: int, token: str | None = None,
+) -> PullRequest | None:
+    """Re-fetch a single PR from GitHub, replacing existing reviews & comments."""
+    if not repo.platform_owner or not repo.platform_repo:
+        return None
+
+    gh = Github(token) if token else Github()
+    try:
+        gh_repo = gh.get_repo(f"{repo.platform_owner}/{repo.platform_repo}")
+        pr = gh_repo.get_pull(platform_pr_id)
+    except GithubException as e:
+        logger.error("GitHub API error fetching PR #%d: %s", platform_pr_id, e)
+        gh.close()
+        return None
+
+    result = await db.execute(
+        select(PullRequest).where(
+            PullRequest.repository_id == repo.id,
+            PullRequest.platform_pr_id == platform_pr_id,
+        )
+    )
+    db_pr = result.scalar_one_or_none()
+
+    author_email = pr.user.email or f"{pr.user.login}@github.com"
+    contributor = await resolve_contributor(db, pr.user.login, author_email)
+    state = PRState.MERGED if pr.merged else STATE_MAP.get(pr.state, PRState.OPEN)
+
+    if db_pr:
+        db_pr.title = (pr.title or "")[:1024]
+        db_pr.state = state
+        db_pr.contributor_id = contributor.id
+        db_pr.lines_added = pr.additions or 0
+        db_pr.lines_deleted = pr.deletions or 0
+        db_pr.created_at = pr.created_at
+        db_pr.merged_at = pr.merged_at
+        db_pr.closed_at = pr.closed_at
+        await db.execute(delete(Review).where(Review.pull_request_id == db_pr.id))
+        await db.execute(delete(PRComment).where(PRComment.pull_request_id == db_pr.id))
+    else:
+        db_pr = PullRequest(
+            repository_id=repo.id,
+            contributor_id=contributor.id,
+            platform_pr_id=pr.number,
+            title=(pr.title or "")[:1024],
+            state=state,
+            lines_added=pr.additions or 0,
+            lines_deleted=pr.deletions or 0,
+            created_at=pr.created_at,
+            merged_at=pr.merged_at,
+            closed_at=pr.closed_at,
+        )
+        db.add(db_pr)
+        await db.flush()
+
+    comment_count = 0
+    first_review_at = None
+
+    for review in pr.get_reviews():
+        review_state = REVIEW_STATE_MAP.get(review.state)
+        if not review_state:
+            continue
+        reviewer_email = (review.user.email if review.user else None) or f"{review.user.login}@github.com"
+        reviewer = await resolve_contributor(db, review.user.login, reviewer_email)
+        db.add(Review(
+            pull_request_id=db_pr.id,
+            reviewer_id=reviewer.id,
+            state=review_state,
+            submitted_at=review.submitted_at,
+        ))
+        if first_review_at is None or review.submitted_at < first_review_at:
+            first_review_at = review.submitted_at
+
+    try:
+        for rc in pr.get_review_comments():
+            c_user = rc.user
+            c_email = (c_user.email if c_user else None) or f"{c_user.login}@github.com"
+            c_name = c_user.login if c_user else "unknown"
+            c_contributor = await resolve_contributor(db, c_name, c_email)
+            db.add(PRComment(
+                pull_request_id=db_pr.id,
+                author_name=c_name,
+                author_id=c_contributor.id,
+                body=rc.body or "",
+                thread_id=str(rc.pull_request_review_id) if rc.pull_request_review_id else None,
+                file_path=rc.path,
+                line_number=rc.original_line or rc.line,
+                comment_type=PRCommentType.INLINE if rc.path else PRCommentType.GENERAL,
+                platform_comment_id=str(rc.id),
+                created_at=rc.created_at,
+                updated_at=rc.updated_at,
+            ))
+            comment_count += 1
+        for ic in pr.get_issue_comments():
+            ic_user = ic.user
+            ic_email = (ic_user.email if ic_user else None) or f"{ic_user.login}@github.com"
+            ic_name = ic_user.login if ic_user else "unknown"
+            ic_contributor = await resolve_contributor(db, ic_name, ic_email)
+            db.add(PRComment(
+                pull_request_id=db_pr.id,
+                author_name=ic_name,
+                author_id=ic_contributor.id,
+                body=ic.body or "",
+                comment_type=PRCommentType.GENERAL,
+                platform_comment_id=f"issue_{ic.id}",
+                created_at=ic.created_at,
+                updated_at=ic.updated_at,
+            ))
+            comment_count += 1
+    except GithubException as e:
+        logger.warning("Could not fetch comments for PR %d: %s", platform_pr_id, e)
+
+    db_pr.comment_count = comment_count
+    db_pr.first_review_at = first_review_at
+    await db.flush()
+    gh.close()
+    return db_pr

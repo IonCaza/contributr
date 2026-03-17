@@ -863,3 +863,123 @@ def run_dependency_scan(scan_id: str, repository_id: str) -> dict:
     logger.info("Celery task run_dependency_scan: scan=%s repo=%s", scan_id, repository_id)
     asyncio.run(_run_dependency_scan(scan_id, repository_id))
     return {"scan_id": scan_id, "repository_id": repository_id}
+
+
+# ---------------------------------------------------------------------------
+# Project scheduling engine
+# ---------------------------------------------------------------------------
+
+from datetime import timedelta
+from app.db.models.project_schedule import ProjectSchedule, ScheduleInterval
+
+_INTERVAL_MAP: dict[str, timedelta] = {
+    ScheduleInterval.EVERY_HOUR.value: timedelta(hours=1),
+    ScheduleInterval.EVERY_6_HOURS.value: timedelta(hours=6),
+    ScheduleInterval.EVERY_12_HOURS.value: timedelta(hours=12),
+    ScheduleInterval.DAILY.value: timedelta(days=1),
+    ScheduleInterval.EVERY_2_DAYS.value: timedelta(days=2),
+    ScheduleInterval.WEEKLY.value: timedelta(weeks=1),
+    ScheduleInterval.MONTHLY.value: timedelta(days=30),
+}
+
+
+def _is_due(interval: str, last_run_at: datetime | None) -> bool:
+    if interval == ScheduleInterval.DISABLED.value:
+        return False
+    td = _INTERVAL_MAP.get(interval)
+    if td is None:
+        return False
+    if last_run_at is None:
+        return True
+    return datetime.now(timezone.utc) >= last_run_at + td
+
+
+async def _dispatch_scheduled_tasks() -> dict:
+    from sqlalchemy.orm import selectinload
+    from app.db.models.insight import InsightRun, InsightRunStatus
+    from app.db.models.sast import SastScanRun, SastScanStatus
+    from app.db.models.dependency import DepScanRun, DepScanStatus
+    from app.db.models.delivery_sync_job import DeliverySyncJob
+
+    Session = _get_session()
+    dispatched: dict[str, int] = {
+        "repo_sync": 0, "delivery_sync": 0,
+        "security_scan": 0, "dependency_scan": 0, "insights": 0,
+    }
+
+    async with Session() as db:
+        result = await db.execute(
+            select(ProjectSchedule)
+            .options(selectinload(ProjectSchedule.project).selectinload(Project.repositories))
+        )
+        schedules = result.scalars().all()
+        now = datetime.now(timezone.utc)
+
+        for sched in schedules:
+            project = sched.project
+            if not project:
+                continue
+
+            if _is_due(sched.repo_sync_interval, sched.repo_sync_last_run_at):
+                for repo in project.repositories:
+                    job = SyncJob(repository_id=repo.id, status=SyncStatus.QUEUED)
+                    db.add(job)
+                    await db.flush()
+                    sync_repository.delay(str(repo.id), str(job.id))
+                    dispatched["repo_sync"] += 1
+                sched.repo_sync_last_run_at = now
+
+            if _is_due(sched.delivery_sync_interval, sched.delivery_sync_last_run_at):
+                job = DeliverySyncJob(project_id=project.id, status=SyncStatus.QUEUED)
+                db.add(job)
+                await db.flush()
+                sync_delivery.delay(str(project.id), str(job.id))
+                sched.delivery_sync_last_run_at = now
+                dispatched["delivery_sync"] += 1
+
+            if _is_due(sched.security_scan_interval, sched.security_scan_last_run_at):
+                for repo in project.repositories:
+                    scan_run = SastScanRun(
+                        repository_id=repo.id,
+                        project_id=project.id,
+                        status=SastScanStatus.QUEUED,
+                    )
+                    db.add(scan_run)
+                    await db.flush()
+                    run_sast_scan.delay(str(scan_run.id), str(repo.id))
+                    dispatched["security_scan"] += 1
+                sched.security_scan_last_run_at = now
+
+            if _is_due(sched.dependency_scan_interval, sched.dependency_scan_last_run_at):
+                for repo in project.repositories:
+                    dep_run = DepScanRun(
+                        repository_id=repo.id,
+                        project_id=project.id,
+                        status=DepScanStatus.QUEUED,
+                    )
+                    db.add(dep_run)
+                    await db.flush()
+                    run_dependency_scan.delay(str(dep_run.id), str(repo.id))
+                    dispatched["dependency_scan"] += 1
+                sched.dependency_scan_last_run_at = now
+
+            if _is_due(sched.insights_interval, sched.insights_last_run_at):
+                run = InsightRun(project_id=project.id, status=InsightRunStatus.RUNNING)
+                db.add(run)
+                await db.flush()
+                run_project_insights.delay(str(run.id), str(project.id))
+                sched.insights_last_run_at = now
+                dispatched["insights"] += 1
+
+        await db.commit()
+
+    return dispatched
+
+
+@celery.task(name="scheduler_tick")
+def scheduler_tick() -> dict:
+    dispatched = asyncio.run(_dispatch_scheduled_tasks())
+    total = sum(dispatched.values())
+    if total:
+        logger.info("Scheduler tick dispatched %d tasks: %s", total, dispatched)
+    return dispatched

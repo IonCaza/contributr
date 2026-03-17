@@ -126,3 +126,53 @@
     @apply bg-background text-foreground;
   }
 }
+
+/*
+ * Tighter prose overrides for HTML imported from Azure DevOps.
+ * ADO uses <div>, <br>, and inline <b>/<i> rather than semantic <p>
+ * blocks, so the default prose spacing creates excessive whitespace.
+ */
+.ado-description {
+  & > div {
+    margin-top: 0.125rem;
+    margin-bottom: 0.125rem;
+  }
+  & > div:empty,
+  & > div:has(> br:only-child) {
+    margin-top: 0.375rem;
+    margin-bottom: 0.375rem;
+  }
+  & p {
+    margin-top: 0.25rem;
+    margin-bottom: 0.25rem;
+  }
+  & h1, & h2, & h3 {
+    margin-top: 0.75rem;
+    margin-bottom: 0.25rem;
+  }
+  & h1:first-child, & h2:first-child, & h3:first-child {
+    margin-top: 0;
+  }
+  & ul, & ol {
+    margin-top: 0.25rem;
+    margin-bottom: 0.25rem;
+    padding-left: 1.5rem;
+  }
+  & li {
+    margin-top: 0.125rem;
+    margin-bottom: 0.125rem;
+  }
+  & hr {
+    margin-top: 0.5rem;
+    margin-bottom: 0.5rem;
+  }
+  & table {
+    margin-top: 0.5rem;
+    margin-bottom: 0.5rem;
+  }
+  & br {
+    content: "";
+    display: block;
+    margin-top: 0.25rem;
+  }
+}

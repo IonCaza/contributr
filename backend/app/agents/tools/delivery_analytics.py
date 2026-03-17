@@ -80,6 +80,9 @@ DEFINITIONS = [
     # H. Code-Delivery Intersection
     ToolDefinition("get_code_delivery_intersection", "Code-Delivery Intersection", "Link coverage %, commits per story point, first-commit-to-resolution time", CATEGORY),
     ToolDefinition("get_work_item_linked_commits", "Work Item Linked Commits", "Commits linked to a specific work item", CATEGORY),
+    # I. Work Item Description Editing
+    ToolDefinition("read_work_item_description", "Read Work Item Description", "Return the full HTML description and metadata of a work item", CATEGORY),
+    ToolDefinition("propose_work_item_description", "Propose Work Item Description", "Write an agent-generated HTML description as a draft for user review", CATEGORY),
 ]
 
 
@@ -1435,6 +1438,74 @@ def _build_delivery_tools(db: AsyncSession) -> list:
         return await _safe(db, _impl())
 
     # ================================================================
+    # I. Work Item Description Editing
+    # ================================================================
+
+    @tool
+    async def read_work_item_description(work_item_id: str, project_name: Optional[str] = None) -> str:
+        """Return the full HTML description and metadata of a work item.
+
+        Args:
+            work_item_id: Platform work item ID (#12345) or title substring.
+            project_name: Optional project name to narrow the search.
+        """
+        async def _impl():
+            stmt = select(WorkItem)
+            cleaned = work_item_id.lstrip("#")
+            if cleaned.isdigit():
+                stmt = stmt.where(WorkItem.platform_work_item_id == int(cleaned))
+            else:
+                stmt = stmt.where(WorkItem.title.ilike(f"%{work_item_id}%"))
+            if project_name:
+                p = await _resolve_project(db, project_name)
+                if p:
+                    stmt = stmt.where(WorkItem.project_id == p.id)
+            wi = (await db.execute(stmt.limit(1))).scalar_one_or_none()
+            if not wi:
+                return f"Work item not found: {work_item_id}"
+            desc = wi.description or "(no description)"
+            draft_note = ""
+            if wi.draft_description:
+                draft_note = f"\n\n**Draft proposal currently pending review.**\nDraft:\n{wi.draft_description}"
+            return (
+                f"**#{wi.platform_work_item_id}: {wi.title}**\n"
+                f"Type: {wi.work_item_type.value if hasattr(wi.work_item_type, 'value') else wi.work_item_type} | "
+                f"State: {wi.state}\n\n"
+                f"## Current Description\n{desc}{draft_note}"
+            )
+        return await _safe(db, _impl())
+
+    @tool
+    async def propose_work_item_description(work_item_id: str, proposed_html: str) -> str:
+        """Write an agent-generated HTML description as a draft for user review.
+
+        The draft is stored on the work item and displayed side-by-side with the
+        original in the UI. The user decides whether to accept or discard.
+
+        Args:
+            work_item_id: Platform work item ID (#12345).
+            proposed_html: The full proposed description as valid HTML.
+        """
+        from app.db.base import async_session as _session_factory
+
+        async with _session_factory() as s:
+            cleaned = work_item_id.lstrip("#")
+            if not cleaned.isdigit():
+                return f"work_item_id must be a numeric platform ID, got: {work_item_id}"
+            stmt = select(WorkItem).where(
+                WorkItem.platform_work_item_id == int(cleaned)
+            ).limit(1)
+            wi = (await s.execute(stmt)).scalar_one_or_none()
+            if not wi:
+                return f"Work item #{cleaned} not found."
+            wi.draft_description = proposed_html
+            await s.commit()
+            return (
+                f"Draft description proposed for #{wi.platform_work_item_id}: {wi.title}. "
+                f"The user can now see it side-by-side with the original and choose to accept or discard."
+            )
+
+    # ================================================================
     # Return all tools
     # ================================================================
 
@@ -1454,6 +1525,7 @@ def _build_delivery_tools(db: AsyncSession) -> list:
         get_team_delivery_overview, get_team_workload, get_team_members_delivery,
         get_bug_metrics, get_quality_summary, get_bug_trend_data,
         get_code_delivery_intersection, get_work_item_linked_commits,
+        read_work_item_description, propose_work_item_description,
     ]
 
 

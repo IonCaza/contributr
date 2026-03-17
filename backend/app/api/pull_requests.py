@@ -1,18 +1,22 @@
+import logging
 import uuid
 from datetime import date, datetime
 from typing import Literal
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy import select, func, case, extract
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.db.base import get_db
-from app.db.models import PullRequest, Review, PRComment, Repository, Contributor, User
+from app.db.models import PullRequest, Review, PRComment, Repository, Contributor, User, PlatformCredential
 from app.db.models.pull_request import PRState
 from app.db.models.review import ReviewState
+from app.db.models.repository import Platform
 from app.auth.dependencies import get_current_user
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/projects/{project_id}/pull-requests", tags=["pull-requests"])
 
@@ -439,3 +443,93 @@ async def get_pull_request(
         reviews=reviews,
         comments=comments,
     )
+
+
+# ── Sync ──────────────────────────────────────────────────────────────
+
+async def _resolve_platform_token(
+    db: AsyncSession, platform: Platform | None,
+) -> tuple[str | None, str | None]:
+    """Look up the most recent credential for *platform*."""
+    if not platform:
+        return None, None
+
+    from app.api.platform_credentials import decrypt_token
+
+    result = await db.execute(
+        select(PlatformCredential)
+        .where(PlatformCredential.platform == platform)
+        .order_by(PlatformCredential.created_at.desc())
+        .limit(1)
+    )
+    cred = result.scalar_one_or_none()
+    if not cred:
+        return None, None
+    try:
+        return decrypt_token(cred.token_encrypted), cred.base_url
+    except Exception:
+        return None, None
+
+
+@router.post("/{pr_id}/sync", response_model=PRDetailResponse)
+async def sync_pull_request(
+    project_id: uuid.UUID,
+    pr_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    _user: User = Depends(get_current_user),
+):
+    """Re-fetch a single PR from its platform, updating all fields, reviews, and comments."""
+    result = await db.execute(
+        select(PullRequest)
+        .where(PullRequest.id == pr_id)
+        .options(selectinload(PullRequest.repository))
+    )
+    pr = result.scalar_one_or_none()
+    if not pr:
+        raise HTTPException(404, "Pull request not found")
+
+    repo = pr.repository
+    if not repo:
+        raise HTTPException(400, "Repository not found for this pull request")
+
+    repo_ids = (await db.execute(
+        select(Repository.id).where(Repository.project_id == project_id)
+    )).scalars().all()
+    if repo.id not in set(repo_ids):
+        raise HTTPException(404, "Pull request does not belong to this project")
+
+    token, base_url = await _resolve_platform_token(db, repo.platform)
+    if not token:
+        raise HTTPException(
+            400,
+            f"No platform credential configured for {repo.platform.value if repo.platform else 'unknown'}. "
+            "Add one in Settings > Platform Credentials.",
+        )
+
+    updated_pr: PullRequest | None = None
+
+    if repo.platform == Platform.GITHUB:
+        from app.services.github_client import sync_single_github_pr
+        updated_pr = await sync_single_github_pr(db, repo, pr.platform_pr_id, token=token)
+
+    elif repo.platform == Platform.GITLAB:
+        from app.services.gitlab_client import sync_single_gitlab_mr
+        gl_url = base_url or "https://gitlab.com"
+        updated_pr = await sync_single_gitlab_mr(db, repo, pr.platform_pr_id, token=token, url=gl_url)
+
+    elif repo.platform == Platform.AZURE:
+        from app.services.azure_client import sync_single_azure_pr
+        org_url = base_url
+        if not org_url:
+            owner = repo.platform_owner or ""
+            parts = owner.split("/", 1)
+            org = parts[0] if parts else ""
+            org_url = f"https://dev.azure.com/{org}" if org else None
+        updated_pr = await sync_single_azure_pr(db, repo, pr.platform_pr_id, org_url=org_url, token=token)
+
+    if not updated_pr:
+        raise HTTPException(502, "Failed to fetch PR data from the platform")
+
+    await db.commit()
+
+    return await get_pull_request(project_id, pr_id, db, _user)

@@ -423,6 +423,7 @@ async def get_work_item(
         "created_at": wi.created_at.isoformat() if wi.created_at else "",
         "updated_at": wi.updated_at.isoformat() if wi.updated_at else "",
         "platform_url": wi.platform_url,
+        "draft_description": wi.draft_description,
         "parent": {
             "id": str(parent.id),
             "title": parent.title,
@@ -463,6 +464,22 @@ async def update_work_item(
     )).scalar_one_or_none()
     if not wi:
         raise HTTPException(404, "Work item not found")
+
+    # draft_description is local-only, never pushed to ADO
+    if "draft_description" in body:
+        wi.draft_description = body["draft_description"]
+        if list(body.keys()) == ["draft_description"]:
+            await db.commit()
+            await db.refresh(wi)
+            return {
+                "id": str(wi.id),
+                "platform_work_item_id": wi.platform_work_item_id,
+                "title": wi.title,
+                "description": wi.description,
+                "draft_description": wi.draft_description,
+                "state": wi.state,
+                "updated_at": wi.updated_at.isoformat() if wi.updated_at else "",
+            }
 
     ado_fields: dict[str, str | None] = {}
     if "title" in body:
@@ -516,6 +533,8 @@ async def update_work_item(
         wi.title = body["title"]
     if "description" in body:
         wi.description = body["description"]
+    if "draft_description" in body:
+        wi.draft_description = body["draft_description"]
     await db.commit()
     await db.refresh(wi)
 
@@ -524,6 +543,7 @@ async def update_work_item(
         "platform_work_item_id": wi.platform_work_item_id,
         "title": wi.title,
         "description": wi.description,
+        "draft_description": wi.draft_description,
         "state": wi.state,
         "updated_at": wi.updated_at.isoformat() if wi.updated_at else "",
     }
@@ -612,6 +632,107 @@ async def pull_work_item(
         "tags": wi.tags or [],
         "updated_at": wi.updated_at.isoformat() if wi.updated_at else "",
     }
+
+
+@router.post("/work-items/{work_item_id}/accept-draft")
+async def accept_work_item_draft(
+    project_id: uuid.UUID,
+    work_item_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    _user: User = Depends(get_current_user),
+):
+    """Accept the agent-proposed draft description: push it to Azure DevOps and
+    promote it to the canonical description."""
+    import asyncio
+    from app.db.models.project import Project
+    from app.db.models.platform_credential import PlatformCredential
+    from app.db.models.repository import Platform
+    from app.api.platform_credentials import decrypt_token
+    from app.services.azure_workitems_client import update_ado_work_item_fields
+
+    wi = (await db.execute(
+        select(WorkItem).where(WorkItem.id == work_item_id, WorkItem.project_id == project_id)
+    )).scalar_one_or_none()
+    if not wi:
+        raise HTTPException(404, "Work item not found")
+    if not wi.draft_description:
+        raise HTTPException(400, "No draft description to accept")
+
+    proj = (await db.execute(
+        select(Project).options(selectinload(Project.repositories)).where(Project.id == project_id)
+    )).scalar_one_or_none()
+    if not proj:
+        raise HTTPException(404, "Project not found")
+
+    azure_repo = next(
+        (r for r in proj.repositories if r.platform and r.platform.value == "azure"), None
+    )
+    if not azure_repo:
+        raise HTTPException(400, "No Azure DevOps repository linked to this project")
+
+    cred = (await db.execute(
+        select(PlatformCredential)
+        .where(PlatformCredential.platform == Platform.AZURE)
+        .order_by(PlatformCredential.created_at.desc())
+        .limit(1)
+    )).scalar_one_or_none()
+    if not cred:
+        raise HTTPException(400, "No Azure DevOps credential configured")
+
+    try:
+        token = decrypt_token(cred.token_encrypted)
+    except Exception:
+        raise HTTPException(500, "Failed to decrypt Azure DevOps credential")
+
+    owner = azure_repo.platform_owner or ""
+    org = owner.split("/", 1)[0] if "/" in owner else owner
+    org_url = cred.base_url or (f"https://dev.azure.com/{org}" if org else None)
+    if not org_url:
+        raise HTTPException(400, "Cannot determine Azure DevOps org URL")
+
+    try:
+        await asyncio.to_thread(
+            update_ado_work_item_fields,
+            org_url, token, wi.platform_work_item_id,
+            {"System.Description": wi.draft_description},
+        )
+    except Exception as exc:
+        raise HTTPException(502, f"Azure DevOps update failed: {exc}")
+
+    wi.description = wi.draft_description
+    wi.draft_description = None
+    await db.commit()
+    await db.refresh(wi)
+
+    return {
+        "id": str(wi.id),
+        "platform_work_item_id": wi.platform_work_item_id,
+        "title": wi.title,
+        "description": wi.description,
+        "draft_description": wi.draft_description,
+        "state": wi.state,
+        "updated_at": wi.updated_at.isoformat() if wi.updated_at else "",
+    }
+
+
+@router.post("/work-items/{work_item_id}/discard-draft")
+async def discard_work_item_draft(
+    project_id: uuid.UUID,
+    work_item_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    _user: User = Depends(get_current_user),
+):
+    """Discard the agent-proposed draft description without pushing to ADO."""
+    wi = (await db.execute(
+        select(WorkItem).where(WorkItem.id == work_item_id, WorkItem.project_id == project_id)
+    )).scalar_one_or_none()
+    if not wi:
+        raise HTTPException(404, "Work item not found")
+
+    wi.draft_description = None
+    await db.commit()
+
+    return {"ok": True}
 
 
 @router.get("/work-items/{work_item_id}/commits")

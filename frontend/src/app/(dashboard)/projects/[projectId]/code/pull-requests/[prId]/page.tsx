@@ -1,21 +1,23 @@
 "use client";
 
-import { use, useMemo } from "react";
+import { use, useCallback, useMemo, useState } from "react";
 import Link from "next/link";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   GitPullRequest, MessageSquare, Clock, FileCode, Users,
-  ArrowLeft, CheckCircle2, XCircle, AlertCircle,
+  ArrowLeft, CheckCircle2, XCircle, AlertCircle, Sparkles, RefreshCw,
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Skeleton } from "@/components/ui/skeleton";
 import { api } from "@/lib/api-client";
 import { queryKeys } from "@/lib/query-keys";
 import { cn } from "@/lib/utils";
+import { useChatTrigger } from "@/hooks/use-chat-trigger";
 import type { PRDetail, PRCommentItem, PRReview } from "@/lib/types";
 
 function stateColor(state: string) {
@@ -54,6 +56,31 @@ export default function PRDetailPage({
     queryFn: () => api.getPullRequest(projectId, prId),
     enabled: !!projectId && !!prId,
   });
+
+  const queryClient = useQueryClient();
+  const [syncing, setSyncing] = useState(false);
+
+  const handleSync = useCallback(async () => {
+    setSyncing(true);
+    try {
+      await api.syncPullRequest(projectId, prId);
+      await queryClient.invalidateQueries({ queryKey: queryKeys.pullRequests.detail(projectId, prId) });
+    } catch (e) {
+      console.error("PR sync failed", e);
+    } finally {
+      setSyncing(false);
+    }
+  }, [projectId, prId, queryClient]);
+
+  const { openChat } = useChatTrigger();
+
+  const handleGenerateAdr = useCallback(() => {
+    if (!pr) return;
+    const prompt =
+      `Analyze PR #${pr.platform_pr_id} in repository "${pr.repository_name}" for architectural decision candidates. ` +
+      `Present the candidates and let me choose which ones to turn into ADRs.`;
+    openChat("adr-architect", prompt);
+  }, [pr, openChat]);
 
   const groupedComments = useMemo(() => {
     if (!pr?.comments) return { general: [], byFile: new Map<string, PRCommentItem[]>() };
@@ -98,11 +125,36 @@ export default function PRDetailPage({
       <div>
         <div className="flex items-start gap-3">
           <GitPullRequest className="h-6 w-6 mt-1 text-muted-foreground" />
-          <div>
-            <h1 className="text-2xl font-bold tracking-tight">
-              <span className="text-muted-foreground mr-2">#{pr.platform_pr_id}</span>
-              {pr.title || "(no title)"}
-            </h1>
+          <div className="flex-1">
+            <div className="flex items-start justify-between gap-4">
+              <h1 className="text-2xl font-bold tracking-tight">
+                <span className="text-muted-foreground mr-2">#{pr.platform_pr_id}</span>
+                {pr.title || "(no title)"}
+              </h1>
+              <div className="flex items-center gap-2 shrink-0">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="gap-1.5"
+                  onClick={handleSync}
+                  disabled={syncing}
+                >
+                  <RefreshCw className={cn("h-3.5 w-3.5", syncing && "animate-spin")} />
+                  {syncing ? "Syncing..." : "Sync PR"}
+                </Button>
+                {pr.comments.length > 0 && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="gap-1.5"
+                    onClick={handleGenerateAdr}
+                  >
+                    <Sparkles className="h-3.5 w-3.5" />
+                    Generate ADR from Comments
+                  </Button>
+                )}
+              </div>
+            </div>
             <div className="flex items-center gap-3 mt-1 text-sm text-muted-foreground">
               <Badge variant="secondary" className={cn("text-xs", stateColor(pr.state))}>
                 {pr.state}
@@ -241,6 +293,22 @@ export default function PRDetailPage({
             <p className="text-sm text-muted-foreground py-8 text-center">No comments.</p>
           ) : (
             <>
+              <Card className="flex items-center justify-between gap-3 border-dashed p-3">
+                <div className="text-sm text-muted-foreground">
+                  <span className="font-medium text-foreground">{pr.comments.length}</span> comment{pr.comments.length !== 1 ? "s" : ""} found.
+                  Use the ADR Architect to analyze these for architectural decisions.
+                </div>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  className="shrink-0 gap-1.5"
+                  onClick={handleGenerateAdr}
+                >
+                  <Sparkles className="h-3.5 w-3.5" />
+                  Analyze for ADRs
+                </Button>
+              </Card>
+
               {/* General comments */}
               {groupedComments.general.length > 0 && (
                 <div>
