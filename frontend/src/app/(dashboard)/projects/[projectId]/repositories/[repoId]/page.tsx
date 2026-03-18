@@ -278,7 +278,7 @@ export default function RepoDetailPage() {
       </div>
 
       {syncing && activeJobId && (
-        <SyncLogViewer repoId={repoId} jobId={activeJobId} onDone={() => { setSyncing(false); setActiveJobId(null); }} />
+        <SyncLogViewer repoId={repoId} jobId={activeJobId} onDone={() => { setActiveJobId(null); qc.invalidateQueries({ queryKey: queryKeys.repos.syncJobs(repoId) }); }} />
       )}
 
       <div className="flex flex-wrap items-center gap-3 rounded-lg border border-border bg-muted/30 px-4 py-3">
