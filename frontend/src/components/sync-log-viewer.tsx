@@ -64,13 +64,12 @@ export function SyncLogViewer({ repoId, jobId, logUrl, compact = false, title = 
   const connect = useCallback(() => {
     const token = typeof window !== "undefined" ? localStorage.getItem("access_token") : null;
     const tokenSuffix = token ? `?token=${encodeURIComponent(token)}` : "";
-    let rawUrl: string;
+    let url: string;
     if (logUrl) {
-      rawUrl = logUrl;
+      url = `${logUrl}${tokenSuffix}`;
     } else {
-      rawUrl = `/api/repositories/${repoId}/sync-jobs/${jobId}/logs`;
+      url = `/api/repositories/${repoId}/sync-jobs/${jobId}/logs${tokenSuffix}`;
     }
-    const url = rawUrl.replace(/^\/api\//, "/api/sse/") + tokenSuffix;
 
     const es = new EventSource(url);
     esRef.current = es;

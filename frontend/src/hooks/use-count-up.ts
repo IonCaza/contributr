@@ -16,6 +16,8 @@ export function useCountUp(target: number, duration = 600): number {
       return;
     }
 
+    const decimals = (target.toString().split(".")[1] || "").length;
+    const factor = Math.pow(10, decimals);
     const start = performance.now();
     const from = 0;
 
@@ -23,7 +25,7 @@ export function useCountUp(target: number, duration = 600): number {
       const elapsed = now - start;
       const progress = Math.min(elapsed / duration, 1);
       const eased = 1 - Math.pow(1 - progress, 3);
-      setValue(Math.round(from + (target - from) * eased));
+      setValue(Math.round((from + (target - from) * eased) * factor) / factor);
       if (progress < 1) {
         rafId.current = requestAnimationFrame(tick);
       }
