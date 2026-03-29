@@ -39,6 +39,7 @@ from app.db.models.oidc_provider import OidcProvider
 from app.db.models.pr_comment import PRComment, PRCommentType
 from app.db.models.adr import AdrRepository, AdrTemplate, Adr, AdrStatus
 from app.db.models.project_schedule import ProjectSchedule, ScheduleInterval
+from app.db.models.presentation import PresentationTemplate, Presentation, PresentationVersion
 
 __all__ = [
     "User",
@@ -104,4 +105,7 @@ __all__ = [
     "AdrStatus",
     "ProjectSchedule",
     "ScheduleInterval",
+    "PresentationTemplate",
+    "Presentation",
+    "PresentationVersion",
 ]

@@ -460,4 +460,4 @@ def _git_snippet(bare_path: str, ref: str, file_path: str, line: int) -> str:
         return ""
 
 
-register_tool_category(CATEGORY, DEFINITIONS, _build_adr_tools)
+register_tool_category(CATEGORY, DEFINITIONS, _build_adr_tools, session_safe=True)

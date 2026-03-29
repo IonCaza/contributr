@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Sequence
 
-from langchain_core.messages import BaseMessage, SystemMessage
+from langchain_core.messages import AIMessage, BaseMessage, SystemMessage
 
 from app.agents.context.manager import (
     RESPONSE_RESERVE,
@@ -30,6 +30,30 @@ def _msg_text(msg: BaseMessage) -> str:
     if isinstance(msg.content, str):
         return msg.content
     return str(msg.content)
+
+
+def _strip_thinking_blocks(messages: list[BaseMessage]) -> list[BaseMessage]:
+    """Remove ``thinking`` content blocks from AI messages.
+
+    Anthropic's extended-thinking API requires a ``signature`` field on
+    thinking blocks when they appear in conversation history.  LangChain's
+    message serialisation does not preserve this field, so replayed
+    thinking blocks cause ``400 Bad Request`` errors.  Stripping them is
+    safe because thinking is already captured during streaming.
+    """
+    cleaned: list[BaseMessage] = []
+    for msg in messages:
+        if isinstance(msg, AIMessage) and isinstance(msg.content, list):
+            new_content = [
+                block for block in msg.content
+                if not (isinstance(block, dict) and block.get("type") == "thinking")
+            ]
+            if len(new_content) != len(msg.content):
+                msg = msg.model_copy(update={
+                    "content": new_content if new_content else "",
+                })
+        cleaned.append(msg)
+    return cleaned
 
 
 def make_state_modifier(
@@ -56,7 +80,7 @@ def make_state_modifier(
                 result.append(SystemMessage(content=f"Previous conversation context:\n{summary}"))
             if messages:
                 result.append(messages[-1])
-            return result
+            return _strip_thinking_blocks(result)
 
         keep: list[BaseMessage] = []
         keep_tokens = 0
@@ -73,6 +97,6 @@ def make_state_modifier(
                 SystemMessage(content=f"Previous conversation context:\n{summary}")
             )
         result.extend(keep)
-        return result
+        return _strip_thinking_blocks(result)
 
     return _modifier

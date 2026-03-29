@@ -16,6 +16,7 @@ logger = logging.getLogger(__name__)
 
 litellm.num_retries = 3
 litellm.request_timeout = 120
+litellm.modify_params = True
 
 
 def _fernet() -> Fernet:
@@ -47,6 +48,15 @@ def build_llm_from_provider(provider: LlmProvider, *, streaming: bool = True) ->
             kwargs["api_key"] = api_key
     if provider.base_url:
         kwargs["api_base"] = provider.base_url
+
+    try:
+        if litellm.supports_reasoning(model=provider.model):
+            kwargs.setdefault("model_kwargs", {})["reasoning_effort"] = "medium"
+            kwargs["temperature"] = 1
+            logger.debug("Reasoning enabled for model %s", provider.model)
+    except Exception:
+        logger.debug("Could not check reasoning support for %s", provider.model)
+
     return ChatLiteLLM(**kwargs)
 
 

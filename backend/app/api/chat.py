@@ -192,6 +192,8 @@ async def send_message(
                 if etype == "token":
                     collected += evt["content"]
                     yield {"event": "token", "data": json.dumps({"content": evt["content"]})}
+                elif etype == "thinking":
+                    yield {"event": "thinking", "data": json.dumps({"content": evt["content"]})}
                 elif etype == "agent_start":
                     activities[evt["run_id"]] = {
                         "slug": evt["slug"],
@@ -211,6 +213,8 @@ async def send_message(
                     if act:
                         act["finished_at"] = datetime.now(timezone.utc)
                     yield {"event": "agent_done", "data": json.dumps({"run_id": evt["run_id"]})}
+                elif etype == "presentation_update":
+                    yield {"event": "presentation_update", "data": json.dumps({"presentation_id": evt["presentation_id"]})}
             yield {"event": "done", "data": json.dumps({"content": collected})}
         except Exception as exc:
             logger.exception("Agent streaming error")

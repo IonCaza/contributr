@@ -84,13 +84,18 @@ function makeChatModelAdapter(
   sessionIdRef: React.MutableRefObject<string | undefined>,
   onAgentEvent: React.RefObject<AgentEventCallback | undefined>,
   onRunStart: React.RefObject<((userText: string) => void) | undefined>,
+  messageTransformRef: React.RefObject<((text: string) => string) | undefined>,
 ): ChatModelAdapter {
   return {
     async *run({ messages, abortSignal }) {
       const sessionId = sessionIdRef.current;
       const lastUserMsg = messages.findLast((m) => m.role === "user");
-      const text =
+      let text =
         lastUserMsg?.content.find((c) => c.type === "text")?.text ?? "";
+
+      if (messageTransformRef.current) {
+        text = messageTransformRef.current(text);
+      }
 
       onRunStart.current?.(text);
 
@@ -122,6 +127,7 @@ function makeChatModelAdapter(
       let buffer = "";
       let currentEvent = "";
       let accumulated = "";
+      let thinkingAccumulated = "";
 
       while (true) {
         const { done, value } = await reader.read();
@@ -139,13 +145,23 @@ function makeChatModelAdapter(
 
               if (currentEvent === "session" && data.session_id) {
                 sessionIdRef.current = data.session_id;
+              } else if (currentEvent === "thinking" && data.content !== undefined) {
+                thinkingAccumulated += data.content;
+                const display = thinkingAccumulated
+                  ? `<think>\n${thinkingAccumulated}\n</think>\n\n${accumulated}`
+                  : accumulated;
+                yield { content: [{ type: "text" as const, text: display }] };
               } else if (currentEvent === "token" && data.content !== undefined) {
                 accumulated += data.content;
-                yield { content: [{ type: "text" as const, text: accumulated }] };
+                const display = thinkingAccumulated
+                  ? `<think>\n${thinkingAccumulated}\n</think>\n\n${accumulated}`
+                  : accumulated;
+                yield { content: [{ type: "text" as const, text: display }] };
               } else if (
                 currentEvent === "agent_start" ||
                 currentEvent === "agent_token" ||
-                currentEvent === "agent_done"
+                currentEvent === "agent_done" ||
+                currentEvent === "presentation_update"
               ) {
                 onAgentEvent.current?.(currentEvent, data);
               } else if (currentEvent === "error") {
@@ -183,7 +199,7 @@ function buildActivityGroups(
 
     const triggerId = msg.agent_activities[0].trigger_message_id;
     const triggerMsg = msgById.get(triggerId);
-    const triggerContent = triggerMsg?.content ?? "";
+    const triggerContent = stripContextPrefix(triggerMsg?.content ?? "");
 
     groups.push({
       triggerMessageId: triggerId,
@@ -202,6 +218,12 @@ function buildActivityGroups(
 /* ------------------------------------------------------------------ */
 /*  History adapter                                                    */
 /* ------------------------------------------------------------------ */
+
+const CONTEXT_PREFIX_RE = /^\[context:[\s\S]*?\]\n\n/;
+
+function stripContextPrefix(text: string): string {
+  return text.replace(CONTEXT_PREFIX_RE, "");
+}
 
 function useHistoryAdapter(
   remoteId: string | undefined,
@@ -222,7 +244,10 @@ function useHistoryAdapter(
         return ExportedMessageRepository.fromArray(
           msgs.map((m) => ({
             role: m.role as "user" | "assistant",
-            content: [{ type: "text" as const, text: m.content }],
+            content: [{
+              type: "text" as const,
+              text: m.role === "user" ? stripContextPrefix(m.content) : m.content,
+            }],
           })),
         );
       },
@@ -234,10 +259,20 @@ function useHistoryAdapter(
 
 function useThreadListAdapter(
   sessionIdRef: React.MutableRefObject<string | undefined>,
+  fixedSessionId?: string,
 ): unstable_RemoteThreadListAdapter {
   return useMemo(
     () => ({
       async list() {
+        if (fixedSessionId) {
+          return {
+            threads: [{
+              status: "regular" as const,
+              remoteId: fixedSessionId,
+              title: "Presentation Chat",
+            }],
+          };
+        }
         const sessions = await api.listChatSessions();
         return {
           threads: sessions.map((s) => ({
@@ -248,6 +283,10 @@ function useThreadListAdapter(
         };
       },
       async initialize() {
+        if (fixedSessionId) {
+          sessionIdRef.current = fixedSessionId;
+          return { remoteId: fixedSessionId, externalId: undefined };
+        }
         const session = await api.createChatSession();
         sessionIdRef.current = session.id;
         return { remoteId: session.id, externalId: undefined };
@@ -256,12 +295,15 @@ function useThreadListAdapter(
         await api.renameChatSession(remoteId, newTitle);
       },
       async archive(remoteId: string) {
+        if (fixedSessionId) return;
         await api.archiveChatSession(remoteId);
       },
       async unarchive(remoteId: string) {
+        if (fixedSessionId) return;
         await api.unarchiveChatSession(remoteId);
       },
       async delete(remoteId: string) {
+        if (fixedSessionId) return;
         await api.deleteChatSession(remoteId);
       },
       async generateTitle(remoteId: string, messages: readonly any[]) {
@@ -278,6 +320,13 @@ function useThreadListAdapter(
         });
       },
       async fetch(remoteId: string) {
+        if (fixedSessionId) {
+          return {
+            status: "regular" as const,
+            remoteId: fixedSessionId,
+            title: "Presentation Chat",
+          };
+        }
         const sessions = await api.listChatSessions();
         const s = sessions.find((sess) => sess.id === remoteId);
         if (!s) throw new Error("Session not found");
@@ -288,7 +337,7 @@ function useThreadListAdapter(
         };
       },
     }),
-    [sessionIdRef],
+    [sessionIdRef, fixedSessionId],
   );
 }
 
@@ -299,6 +348,8 @@ function RuntimeHook({
   onActivitiesLoadedRef,
   onRunStartRef,
   onThreadSwitchRef,
+  messageTransformRef,
+  fixedSessionId,
 }: {
   agentSlugRef: React.RefObject<string>;
   sessionIdRef: React.MutableRefObject<string | undefined>;
@@ -306,30 +357,37 @@ function RuntimeHook({
   onActivitiesLoadedRef: React.RefObject<((groups: ActivityGroup[]) => void) | undefined>;
   onRunStartRef: React.RefObject<((userText: string) => void) | undefined>;
   onThreadSwitchRef: React.RefObject<(() => void) | undefined>;
+  messageTransformRef: React.RefObject<((text: string) => string) | undefined>;
+  fixedSessionId?: string;
 }) {
   const remoteId = useAuiState(
     (s: { threadListItem: { remoteId?: string } }) =>
       s.threadListItem.remoteId,
   );
-  sessionIdRef.current = remoteId;
+  const effectiveRemoteId = remoteId ?? fixedSessionId;
+  sessionIdRef.current = effectiveRemoteId;
 
   useEffect(() => {
     onThreadSwitchRef.current?.();
-  }, [remoteId, onThreadSwitchRef]);
+  }, [effectiveRemoteId, onThreadSwitchRef]);
 
-  const history = useHistoryAdapter(remoteId, onActivitiesLoadedRef);
+  const history = useHistoryAdapter(effectiveRemoteId, onActivitiesLoadedRef);
   const adapter = useMemo(
-    () => makeChatModelAdapter(agentSlugRef, sessionIdRef, onAgentEventRef, onRunStartRef),
-    [agentSlugRef, sessionIdRef, onAgentEventRef, onRunStartRef],
+    () => makeChatModelAdapter(agentSlugRef, sessionIdRef, onAgentEventRef, onRunStartRef, messageTransformRef),
+    [agentSlugRef, sessionIdRef, onAgentEventRef, onRunStartRef, messageTransformRef],
   );
   return useLocalRuntime(adapter, { adapters: { history } });
 }
 
 interface ContributrChatRuntimeProps extends PropsWithChildren {
   agentSlug: string;
+  onPresentationUpdate?: (presentationId: string) => void;
+  messageTransform?: (text: string) => string;
+  /** When set, the runtime binds to this single session instead of the global thread list. */
+  fixedSessionId?: string;
 }
 
-export function ContributrChatRuntime({ children, agentSlug }: ContributrChatRuntimeProps) {
+export function ContributrChatRuntime({ children, agentSlug, onPresentationUpdate, messageTransform, fixedSessionId }: ContributrChatRuntimeProps) {
   const agentSlugRef = useRef(agentSlug);
   agentSlugRef.current = agentSlug;
 
@@ -384,6 +442,8 @@ export function ContributrChatRuntime({ children, agentSlug }: ContributrChatRun
         }
         return next;
       });
+    } else if (event === "presentation_update" && data.presentation_id) {
+      onPresentationUpdate?.(data.presentation_id);
     }
   };
 
@@ -396,7 +456,7 @@ export function ContributrChatRuntime({ children, agentSlug }: ContributrChatRun
   const onRunStartRef = useRef<((userText: string) => void) | undefined>(undefined);
   onRunStartRef.current = (userText: string) => {
     clearLive();
-    setLivePrompt(userText);
+    setLivePrompt(stripContextPrefix(userText));
   };
 
   const onThreadSwitchRef = useRef<(() => void) | undefined>(undefined);
@@ -405,6 +465,9 @@ export function ContributrChatRuntime({ children, agentSlug }: ContributrChatRun
     setHistoricalActivities([]);
     setActivityVisible(false);
   };
+
+  const messageTransformRef = useRef<((text: string) => string) | undefined>(undefined);
+  messageTransformRef.current = messageTransform;
 
   const ctxValue = useMemo<ChildAgentContextValue>(
     () => ({
@@ -419,9 +482,9 @@ export function ContributrChatRuntime({ children, agentSlug }: ContributrChatRun
     [liveAgentMap, historicalActivities, activityVisible, clearLive, resetActivity, livePrompt],
   );
 
-  const threadListAdapter = useThreadListAdapter(sessionIdRef);
+  const threadListAdapter = useThreadListAdapter(sessionIdRef, fixedSessionId);
   const runtime = unstable_useRemoteThreadListRuntime({
-    runtimeHook: () => RuntimeHook({ agentSlugRef, sessionIdRef, onAgentEventRef, onActivitiesLoadedRef, onRunStartRef, onThreadSwitchRef }),
+    runtimeHook: () => RuntimeHook({ agentSlugRef, sessionIdRef, onAgentEventRef, onActivitiesLoadedRef, onRunStartRef, onThreadSwitchRef, messageTransformRef, fixedSessionId }),
     adapter: threadListAdapter,
   });
 

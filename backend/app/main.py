@@ -39,6 +39,7 @@ from app.api import (
     pull_requests as pull_requests_api,
     adrs as adrs_api,
     project_schedules as project_schedules_api,
+    presentations as presentations_api,
 )
 from app.api.repositories import _parse_platform_fields
 from app.agents.builtin import get_builtin_agents
@@ -103,6 +104,7 @@ async def _seed_builtin_agents():
                     name=spec.name,
                     description=spec.description,
                     system_prompt=spec.system_prompt,
+                    max_iterations=spec.max_iterations or 10,
                     is_builtin=True,
                     enabled=True,
                 )
@@ -113,8 +115,11 @@ async def _seed_builtin_agents():
                 changed = True
                 logger.info("Seeded builtin agent: %s", spec.slug)
             else:
-                if not agent.system_prompt or agent.system_prompt == "":
+                if agent.system_prompt != spec.system_prompt:
                     agent.system_prompt = spec.system_prompt
+                    changed = True
+                if spec.max_iterations and agent.max_iterations != spec.max_iterations:
+                    agent.max_iterations = spec.max_iterations
                     changed = True
                 existing_slugs = {a.tool_slug for a in agent.tool_assignments}
                 for slug in set(spec.tool_slugs) - existing_slugs:
@@ -136,6 +141,7 @@ async def _seed_builtin_agents():
                     description=spec.description,
                     system_prompt=spec.system_prompt,
                     agent_type="supervisor",
+                    max_iterations=spec.max_iterations or 10,
                     is_builtin=True,
                     enabled=True,
                 )
@@ -158,9 +164,21 @@ async def _seed_builtin_agents():
                 if agent.agent_type != "supervisor":
                     agent.agent_type = "supervisor"
                     changed = True
-                if not agent.system_prompt or agent.system_prompt == "":
+                if agent.system_prompt != spec.system_prompt:
                     agent.system_prompt = spec.system_prompt
                     changed = True
+                if spec.max_iterations and agent.max_iterations != spec.max_iterations:
+                    agent.max_iterations = spec.max_iterations
+                    changed = True
+                existing_slugs = {a.tool_slug for a in agent.tool_assignments}
+                desired_slugs = set(spec.tool_slugs)
+                for slug in desired_slugs - existing_slugs:
+                    db.add(AgentToolAssignment(agent_id=agent.id, tool_slug=slug))
+                    changed = True
+                for assignment in list(agent.tool_assignments):
+                    if assignment.tool_slug not in desired_slugs:
+                        await db.delete(assignment)
+                        changed = True
                 existing_member_ids = {
                     r.member_agent_id for r in (await db.execute(
                         select(SupervisorMember)
@@ -377,6 +395,7 @@ app.include_router(oidc_auth_api.router, prefix="/api")
 app.include_router(pull_requests_api.router, prefix="/api")
 app.include_router(adrs_api.router, prefix="/api")
 app.include_router(project_schedules_api.router)
+app.include_router(presentations_api.router, prefix="/api")
 
 
 @app.get("/api/health")

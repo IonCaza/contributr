@@ -14,6 +14,7 @@ const TABS = [
   { label: "Security", href: "security" },
   { label: "Dependencies", href: "dependencies" },
   { label: "Standards", href: "adrs" },
+  { label: "Presentations", href: "presentations" },
   { label: "Insights", href: "insights" },
   { label: "Settings", href: "settings" },
 ] as const;

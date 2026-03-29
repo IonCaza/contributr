@@ -9,11 +9,62 @@ import {
   useIsMarkdownCodeBlock,
 } from "@assistant-ui/react-markdown";
 import remarkGfm from "remark-gfm";
-import { type FC, memo, useState } from "react";
-import { CheckIcon, CopyIcon } from "lucide-react";
+import { type FC, memo, useEffect, useRef, useState } from "react";
+import { CheckIcon, ChevronRightIcon, CopyIcon } from "lucide-react";
 
 import { TooltipIconButton } from "@/components/assistant-ui/tooltip-icon-button";
 import { cn } from "@/lib/utils";
+
+export const THINK_RE = /^<think>\n([\s\S]*?)\n<\/think>\n\n/;
+
+export function stripThinkingTags(text: string): string {
+  return text.replace(THINK_RE, "");
+}
+
+export function extractThinking(text: string): string | null {
+  const match = text.match(THINK_RE);
+  return match ? match[1] : null;
+}
+
+export const ThinkingBlock: FC<{ content: string; hasResponse: boolean }> = ({
+  content,
+  hasResponse,
+}) => {
+  const [isOpen, setIsOpen] = useState(true);
+  const autoCollapsed = useRef(false);
+
+  useEffect(() => {
+    if (hasResponse && !autoCollapsed.current) {
+      setIsOpen(false);
+      autoCollapsed.current = true;
+    }
+  }, [hasResponse]);
+
+  return (
+    <div className="mb-3">
+      <button
+        onClick={() => setIsOpen(!isOpen)}
+        className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
+        type="button"
+      >
+        <ChevronRightIcon
+          className={cn(
+            "size-3 transition-transform duration-200",
+            isOpen && "rotate-90",
+          )}
+        />
+        <span className="font-medium">
+          {!hasResponse ? "Thinking\u2026" : "Thought process"}
+        </span>
+      </button>
+      {isOpen && (
+        <div className="thinking-block-content ml-4 mt-1.5 border-l-2 border-muted-foreground/20 pl-3 text-xs text-muted-foreground leading-relaxed whitespace-pre-wrap">
+          {content}
+        </div>
+      )}
+    </div>
+  );
+};
 
 const MarkdownTextImpl = () => {
   return (
@@ -21,6 +72,7 @@ const MarkdownTextImpl = () => {
       remarkPlugins={[remarkGfm]}
       className="aui-md"
       components={defaultComponents}
+      preprocess={stripThinkingTags}
     />
   );
 };

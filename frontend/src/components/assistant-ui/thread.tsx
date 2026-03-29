@@ -3,7 +3,12 @@ import {
   ComposerAttachments,
   UserMessageAttachments,
 } from "@/components/assistant-ui/attachment";
-import { MarkdownText } from "@/components/assistant-ui/markdown-text";
+import {
+  MarkdownText,
+  ThinkingBlock,
+  extractThinking,
+  THINK_RE,
+} from "@/components/assistant-ui/markdown-text";
 import { ToolFallback } from "@/components/assistant-ui/tool-fallback";
 import { TooltipIconButton } from "@/components/assistant-ui/tooltip-icon-button";
 import { Button } from "@/components/ui/button";
@@ -25,6 +30,7 @@ import {
   MessagePrimitive,
   SuggestionPrimitive,
   ThreadPrimitive,
+  useMessage,
 } from "@assistant-ui/react";
 import {
   ArrowDownIcon,
@@ -207,6 +213,16 @@ const MessageError: FC = () => {
 
 const AssistantMessage: FC = () => {
   const agentName = useAgentName();
+  const rawText = useMessage((s) => {
+    const part = s.content?.find(
+      (p: { type: string }) => p.type === "text",
+    ) as { text?: string } | undefined;
+    return part?.text ?? "";
+  });
+  const thinkingContent = extractThinking(rawText);
+  const hasResponse =
+    thinkingContent !== null &&
+    rawText.replace(THINK_RE, "").trim().length > 0;
 
   return (
     <MessagePrimitive.Root
@@ -218,6 +234,12 @@ const AssistantMessage: FC = () => {
         {agentName}
       </div>
       <div className="aui-assistant-message-content wrap-break-word px-2 text-foreground leading-relaxed">
+        {thinkingContent !== null && (
+          <ThinkingBlock
+            content={thinkingContent}
+            hasResponse={hasResponse}
+          />
+        )}
         <MessagePrimitive.Parts
           components={{
             Text: MarkdownText,

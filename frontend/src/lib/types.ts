@@ -1310,3 +1310,49 @@ export interface ProjectSchedule {
   insights_interval: string;
   insights_last_run_at: string | null;
 }
+
+// ── Presentations ──────────────────────────────────────────────────
+
+export interface PresentationListItem {
+  id: string;
+  title: string;
+  description: string | null;
+  prompt: string;
+  status: string;
+  template_version: number;
+  created_at: string;
+  updated_at: string | null;
+}
+
+export interface PresentationDetail {
+  id: string;
+  project_id: string;
+  title: string;
+  description: string | null;
+  component_code: string;
+  template_version: number;
+  prompt: string;
+  chat_session_id: string | null;
+  created_by_id: string;
+  status: string;
+  created_at: string;
+  updated_at: string | null;
+}
+
+export interface PresentationVersion {
+  id: string;
+  presentation_id: string;
+  version_number: number;
+  component_code: string;
+  template_version: number;
+  change_summary: string | null;
+  created_at: string;
+}
+
+export interface PresentationTemplate {
+  id: string;
+  version: number;
+  template_html: string;
+  description: string;
+  created_at: string;
+}

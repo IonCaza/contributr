@@ -5,7 +5,7 @@ import logging
 import uuid
 from typing import Any, AsyncIterator
 
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import HumanMessage, ToolMessage
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -74,7 +74,7 @@ async def run_agent_stream(
 
     extra_tools = []
     if session_id is not None:
-        extra_tools.append(build_search_chat_history_tool(db, session_id))
+        extra_tools.append(build_search_chat_history_tool(session_id))
         extra_tools.append(build_report_capability_gap_tool(session_id, agent_slug))
     if user_id is not None and mem_settings.memory_enabled:
         extra_tools.extend(build_memory_tools(user_id))
@@ -83,7 +83,7 @@ async def run_agent_stream(
     if is_supervisor:
         member_agents = getattr(agent_config, "member_agents", [])
         if member_agents:
-            delegation_tools = build_delegation_tools(db, member_agents, provider)
+            delegation_tools = build_delegation_tools(member_agents, provider)
             extra_tools.extend(delegation_tools)
             logger.info(
                 "Supervisor %s: %d delegation tools for members %s",
@@ -102,7 +102,41 @@ async def run_agent_stream(
         "recursion_limit": (max_iterations or 25) * 2,
     }
 
+    try:
+        snapshot = await agent.aget_state(run_config)
+        if snapshot and snapshot.values:
+            msgs = snapshot.values.get("messages", [])
+            orphaned = []
+            tool_msg_call_ids = {
+                getattr(m, "tool_call_id", None) for m in msgs if m.type == "tool"
+            }
+            for m in msgs:
+                if m.type == "ai" and getattr(m, "tool_calls", None):
+                    for tc in m.tool_calls:
+                        if tc.get("id") and tc["id"] not in tool_msg_call_ids:
+                            orphaned.append(tc)
+            if orphaned:
+                logger.warning(
+                    "Repairing %d orphaned tool_calls in checkpoint %s",
+                    len(orphaned), thread_id,
+                )
+                repair_msgs = [
+                    ToolMessage(
+                        content="[Tool call interrupted — no result available]",
+                        tool_call_id=tc["id"],
+                        name=tc.get("name", "unknown"),
+                    )
+                    for tc in orphaned
+                ]
+                await agent.aupdate_state(
+                    run_config, {"messages": repair_msgs}
+                )
+    except Exception:
+        logger.debug("Pre-flight checkpoint repair skipped", exc_info=True)
+
     active_delegations: dict[str, dict[str, str]] = {}
+    _PRES_TOOLS = {"save_presentation", "update_presentation"}
+    pending_pres_ids: dict[str, str] = {}
     collected = ""
     pending_separator = False
 
@@ -121,10 +155,28 @@ async def run_agent_stream(
             active_delegations[run_id] = {"slug": slug}
             yield {"type": "agent_start", "run_id": run_id, "slug": slug}
 
+        elif kind == "on_tool_start" and name in _PRES_TOOLS:
+            tool_input = event.get("data", {}).get("input", {})
+            pid = tool_input.get("presentation_id", "") if isinstance(tool_input, dict) else ""
+            if pid:
+                pending_pres_ids[run_id] = pid
+
         elif kind == "on_tool_end" and name.startswith(DELEGATION_PREFIX):
             info = active_delegations.pop(run_id, None)
             if info:
                 yield {"type": "agent_done", "run_id": run_id}
+            if collected:
+                pending_separator = True
+
+        elif kind == "on_tool_end" and name in _PRES_TOOLS:
+            tool_output = str(event.get("data", {}).get("output", ""))
+            pres_id = None
+            if "ID:" in tool_output:
+                pres_id = tool_output.split("ID:")[1].strip().split()[0]
+            if not pres_id:
+                pres_id = pending_pres_ids.pop(run_id, None)
+            if pres_id and not tool_output.startswith("Error:"):
+                yield {"type": "presentation_update", "presentation_id": pres_id}
             if collected:
                 pending_separator = True
 
@@ -135,27 +187,46 @@ async def run_agent_stream(
         elif kind == "on_chat_model_stream":
             chunk = event["data"]["chunk"]
             content = getattr(chunk, "content", "")
+
+            thinking_text = ""
+            text_content = ""
+
             if isinstance(content, list):
-                content = "".join(
-                    c.get("text", "") if isinstance(c, dict) else str(c)
-                    for c in content
-                )
-            if not isinstance(content, str) or not content:
+                for block in content:
+                    if isinstance(block, dict):
+                        if block.get("type") == "thinking":
+                            thinking_text += block.get("thinking", "")
+                        else:
+                            text_content += block.get("text", "")
+                    elif isinstance(block, str):
+                        text_content += block
+            elif isinstance(content, str):
+                text_content = content
+
+            if not thinking_text and not text_content:
                 continue
 
             child_run = next(
                 (pid for pid in parent_ids if pid in active_delegations),
                 None,
             )
-            if child_run:
-                yield {"type": "agent_token", "run_id": child_run, "content": content}
-            else:
-                if pending_separator:
-                    collected += "\n\n"
-                    yield {"type": "token", "content": "\n\n"}
-                    pending_separator = False
-                collected += content
-                yield {"type": "token", "content": content}
+
+            if thinking_text:
+                if child_run:
+                    yield {"type": "agent_token", "run_id": child_run, "content": thinking_text}
+                else:
+                    yield {"type": "thinking", "content": thinking_text}
+
+            if text_content:
+                if child_run:
+                    yield {"type": "agent_token", "run_id": child_run, "content": text_content}
+                else:
+                    if pending_separator:
+                        collected += "\n\n"
+                        yield {"type": "token", "content": "\n\n"}
+                        pending_separator = False
+                    collected += text_content
+                    yield {"type": "token", "content": text_content}
 
     if not collected:
         try:

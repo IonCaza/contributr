@@ -12,6 +12,7 @@ class BuiltinAgentSpec:
     tool_slugs: list[str] = field(default_factory=list)
     agent_type: str = "standard"
     member_slugs: list[str] = field(default_factory=list)
+    max_iterations: int | None = None
 
 
 def get_builtin_agents() -> list[BuiltinAgentSpec]:
@@ -26,6 +27,7 @@ def get_builtin_agents() -> list[BuiltinAgentSpec]:
     from app.agents.builtin.code_reviewer import SPEC as code_reviewer
     from app.agents.builtin.supervisor import SPEC as supervisor
     from app.agents.builtin.adr_architect import SPEC as adr_architect
+    from app.agents.builtin.presentation_designer import SPEC as presentation_designer
 
     return [
         contribution_analyst,
@@ -37,5 +39,6 @@ def get_builtin_agents() -> list[BuiltinAgentSpec]:
         sast_analyst,
         code_reviewer,
         adr_architect,
+        presentation_designer,
         supervisor,
     ]

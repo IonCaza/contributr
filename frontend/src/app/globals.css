@@ -176,3 +176,10 @@
     margin-top: 0.25rem;
   }
 }
+
+.thinking-block-content {
+  max-height: 20rem;
+  overflow-y: auto;
+  mask-image: linear-gradient(to bottom, black 85%, transparent 100%);
+  -webkit-mask-image: linear-gradient(to bottom, black 85%, transparent 100%);
+}

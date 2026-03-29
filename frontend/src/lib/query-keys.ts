@@ -148,4 +148,11 @@ export const queryKeys = {
     list: (projectId: string, filters?: Record<string, unknown>) => ["adrs", projectId, "list", filters] as const,
     detail: (projectId: string, adrId: string) => ["adrs", projectId, adrId] as const,
   },
+  presentations: {
+    list: (projectId: string) => ["presentations", projectId, "list"] as const,
+    detail: (projectId: string, presId: string) => ["presentations", projectId, presId] as const,
+    versions: (projectId: string, presId: string) => ["presentations", projectId, presId, "versions"] as const,
+    template: (version: number) => ["presentationTemplates", version] as const,
+    templateLatest: ["presentationTemplates", "latest"] as const,
+  },
 };

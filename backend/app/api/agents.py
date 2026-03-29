@@ -11,7 +11,7 @@ from sqlalchemy.orm import selectinload
 from app.auth.dependencies import get_current_user, require_admin
 from app.db.base import get_db
 from app.db.models.agent_config import AgentConfig, AgentToolAssignment, SupervisorMember
-from app.db.models.knowledge_graph import AgentKnowledgeGraphAssignment
+from app.db.models.knowledge_graph import AgentKnowledgeGraphAssignment, KnowledgeGraph
 from app.db.models.user import User
 
 router = APIRouter(prefix="/ai/agents", tags=["ai"])
@@ -168,7 +168,8 @@ async def create_agent(
     for slug in body.tool_slugs:
         db.add(AgentToolAssignment(agent_id=row.id, tool_slug=slug))
     for kg_id in body.knowledge_graph_ids:
-        db.add(AgentKnowledgeGraphAssignment(agent_id=row.id, knowledge_graph_id=kg_id))
+        if await db.get(KnowledgeGraph, kg_id):
+            db.add(AgentKnowledgeGraphAssignment(agent_id=row.id, knowledge_graph_id=kg_id))
 
     if body.agent_type == "supervisor" and body.member_agent_ids:
         await _sync_members(db, row.id, body.member_agent_ids)
@@ -222,7 +223,8 @@ async def update_agent(
             await db.delete(existing)
         await db.flush()
         for kg_id in body.knowledge_graph_ids:
-            db.add(AgentKnowledgeGraphAssignment(agent_id=row.id, knowledge_graph_id=kg_id))
+            if await db.get(KnowledgeGraph, kg_id):
+                db.add(AgentKnowledgeGraphAssignment(agent_id=row.id, knowledge_graph_id=kg_id))
 
     if body.member_agent_ids is not None:
         await _sync_members(db, row.id, body.member_agent_ids)

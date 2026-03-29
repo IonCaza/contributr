@@ -3,7 +3,6 @@ import uuid
 
 from langchain_core.messages import HumanMessage
 from langchain_core.tools import BaseTool, StructuredTool
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents.base import build_agent
 from app.db.base import async_session
@@ -47,14 +46,14 @@ def _make_child_runner(member, provider):
 
 
 def build_delegation_tools(
-    db: AsyncSession,
     member_configs: list[AgentConfig],
     fallback_provider: LlmProvider,
 ) -> list[BaseTool]:
     """Wrap each member agent as a callable LangChain tool for the supervisor.
 
     Each tool runs the child agent's full tool-calling loop internally
-    and returns the final text response.
+    and returns the final text response.  Each invocation creates its
+    own database session so concurrent delegations don't conflict.
     """
     tools: list[BaseTool] = []
 

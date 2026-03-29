@@ -878,6 +878,26 @@ export const api = {
   updateProjectSchedule: (projectId: string, data: Record<string, string>) =>
     request<import("./types").ProjectSchedule>(`/projects/${projectId}/schedules`, { method: "PUT", body: JSON.stringify(data) }),
 
+  // Presentations
+  listPresentations: (projectId: string) =>
+    request<import("./types").PresentationListItem[]>(`/projects/${projectId}/presentations`),
+  createPresentation: (projectId: string, data: { title: string; description?: string; component_code?: string; prompt?: string; chat_session_id?: string; status?: string }) =>
+    request<import("./types").PresentationDetail>(`/projects/${projectId}/presentations`, { method: "POST", body: JSON.stringify(data) }),
+  getPresentation: (projectId: string, presId: string) =>
+    request<import("./types").PresentationDetail>(`/projects/${projectId}/presentations/${presId}`),
+  updatePresentation: (projectId: string, presId: string, data: { title?: string; description?: string; component_code?: string; template_version?: number; status?: string }) =>
+    request<import("./types").PresentationDetail>(`/projects/${projectId}/presentations/${presId}`, { method: "PATCH", body: JSON.stringify(data) }),
+  deletePresentation: (projectId: string, presId: string) =>
+    request<void>(`/projects/${projectId}/presentations/${presId}`, { method: "DELETE" }),
+  listPresentationVersions: (projectId: string, presId: string) =>
+    request<import("./types").PresentationVersion[]>(`/projects/${projectId}/presentations/${presId}/versions`),
+  getPresentationTemplate: (version: number) =>
+    request<import("./types").PresentationTemplate>(`/presentations/templates/${version}`),
+  getLatestPresentationTemplate: () =>
+    request<import("./types").PresentationTemplate>(`/presentations/templates/latest`),
+  executePresentationQuery: (projectId: string, toolSlug: string, params: Record<string, unknown>) =>
+    request<{ result: unknown }>(`/projects/${projectId}/presentations/data`, { method: "POST", body: JSON.stringify({ tool_slug: toolSlug, params }) }),
+
   getApiBase: () => API_BASE,
   getAuthToken: () => getToken(),
 };
