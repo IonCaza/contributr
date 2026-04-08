@@ -1121,6 +1121,13 @@ export interface DepFinding {
   dismissed_by_id: string | null;
 }
 
+export interface PaginatedDepFindings {
+  items: DepFinding[];
+  total: number;
+  page: number;
+  page_size: number;
+}
+
 export interface DepSummary {
   total_packages: number;
   vulnerable: number;
@@ -1355,4 +1362,42 @@ export interface PresentationTemplate {
   template_html: string;
   description: string;
   created_at: string;
+}
+
+export interface TaskItem {
+  id: string;
+  subject: string;
+  description: string | null;
+  status: "pending" | "in_progress" | "completed" | "blocked" | "cancelled";
+  owner_agent_slug: string | null;
+  blocked_by: string[];
+  blocks: string[];
+  created_at: string;
+}
+
+// ── Access policies (RBAC) ────────────────────────────────────────
+
+export interface AccessPolicy {
+  id: string;
+  scope_type: string;
+  scope_id: string | null;
+  data_scope: string | null;
+  agent_tool_rules: Record<string, unknown> | null;
+  sql_allowed_tables: string[] | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AccessPolicyCreate {
+  scope_type: string;
+  scope_id?: string | null;
+  data_scope?: string | null;
+  agent_tool_rules?: Record<string, unknown> | null;
+  sql_allowed_tables?: string[] | null;
+}
+
+export interface AccessPolicyUpdate {
+  data_scope?: string | null;
+  agent_tool_rules?: Record<string, unknown> | null;
+  sql_allowed_tables?: string[] | null;
 }

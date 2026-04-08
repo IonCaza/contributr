@@ -32,6 +32,7 @@ from app.services.delivery_metrics import (
 )
 from app.agents.tools.base import ToolDefinition
 from app.agents.tools.registry import register_tool_category
+from app.agents.tools.scoping import scoped_query
 
 logger = logging.getLogger(__name__)
 
@@ -150,7 +151,9 @@ async def _resolve_iteration(db: AsyncSession, name: str, project_id=None) -> It
     stmt = select(Iteration).where(Iteration.name.ilike(f"%{name}%"))
     if project_id:
         stmt = stmt.where(Iteration.project_id == project_id)
-    result = await db.execute(stmt.order_by(Iteration.start_date.desc()).limit(1))
+    stmt = stmt.order_by(Iteration.start_date.desc()).limit(1)
+    stmt = scoped_query(stmt, project_col=Iteration.project_id)
+    result = await db.execute(stmt)
     return result.scalar_one_or_none()
 
 
@@ -158,7 +161,9 @@ async def _resolve_team(db: AsyncSession, name: str, project_id=None) -> Team | 
     stmt = select(Team).where(Team.name.ilike(f"%{name}%"))
     if project_id:
         stmt = stmt.where(Team.project_id == project_id)
-    result = await db.execute(stmt.order_by(Team.name).limit(1))
+    stmt = stmt.order_by(Team.name).limit(1)
+    stmt = scoped_query(stmt, project_col=Team.project_id)
+    result = await db.execute(stmt)
     return result.scalar_one_or_none()
 
 
@@ -205,7 +210,8 @@ def _build_delivery_tools(db: AsyncSession) -> list:
                 p = await _resolve_project(db, project_name)
                 if p:
                     stmt = stmt.where(WorkItem.project_id == p.id)
-            result = await db.execute(stmt.limit(5))
+            stmt = scoped_query(stmt.limit(5), project_col=WorkItem.project_id)
+            result = await db.execute(stmt)
             items = result.scalars().all()
             if not items:
                 return f"No work items found matching '{id_or_title}'."
@@ -232,7 +238,9 @@ def _build_delivery_tools(db: AsyncSession) -> list:
             stmt = select(Iteration).where(Iteration.name.ilike(f"%{name}%"))
             if project_id:
                 stmt = stmt.where(Iteration.project_id == project_id)
-            result = await db.execute(stmt.order_by(Iteration.start_date.desc()).limit(5))
+            stmt = stmt.order_by(Iteration.start_date.desc()).limit(5)
+            stmt = scoped_query(stmt, project_col=Iteration.project_id)
+            result = await db.execute(stmt)
             iters = result.scalars().all()
             if not iters:
                 return f"No iterations found matching '{name}'."
@@ -262,7 +270,9 @@ def _build_delivery_tools(db: AsyncSession) -> list:
             stmt = select(Team).where(Team.name.ilike(f"%{name}%"))
             if project_id:
                 stmt = stmt.where(Team.project_id == project_id)
-            result = await db.execute(stmt.order_by(Team.name).limit(5))
+            stmt = stmt.order_by(Team.name).limit(5)
+            stmt = scoped_query(stmt, project_col=Team.project_id)
+            result = await db.execute(stmt)
             teams = result.scalars().all()
             if not teams:
                 return f"No teams found matching '{name}'."
@@ -292,22 +302,23 @@ def _build_delivery_tools(db: AsyncSession) -> list:
                 return f"Iteration '{iteration_name}' not found."
             wi = WorkItem.__table__
             base = wi.c.iteration_id == it.id
-            total = (await db.execute(select(func.count()).where(base))).scalar() or 0
-            completed = (await db.execute(select(func.count()).where(base, wi.c.resolved_at.isnot(None)))).scalar() or 0
-            total_sp = float((await db.execute(select(func.coalesce(func.sum(wi.c.story_points), 0)).where(base))).scalar() or 0)
-            completed_sp = float((await db.execute(select(func.coalesce(func.sum(wi.c.story_points), 0)).where(base, wi.c.resolved_at.isnot(None)))).scalar() or 0)
-            contrib_count = (await db.execute(select(func.count(func.distinct(wi.c.assigned_to_id))).where(base, wi.c.assigned_to_id.isnot(None)))).scalar() or 0
+            total = (await db.execute(scoped_query(select(func.count()).where(base), project_col=WorkItem.project_id))).scalar() or 0
+            completed = (await db.execute(scoped_query(select(func.count()).where(base, wi.c.resolved_at.isnot(None)), project_col=WorkItem.project_id))).scalar() or 0
+            total_sp = float((await db.execute(scoped_query(select(func.coalesce(func.sum(wi.c.story_points), 0)).where(base), project_col=WorkItem.project_id))).scalar() or 0)
+            completed_sp = float((await db.execute(scoped_query(select(func.coalesce(func.sum(wi.c.story_points), 0)).where(base, wi.c.resolved_at.isnot(None)), project_col=WorkItem.project_id))).scalar() or 0)
+            contrib_count = (await db.execute(scoped_query(select(func.count(func.distinct(wi.c.assigned_to_id))).where(base, wi.c.assigned_to_id.isnot(None)), project_col=WorkItem.project_id))).scalar() or 0
             pct = round(completed / total * 100, 1) if total > 0 else 0
             pct_sp = round(completed_sp / total_sp * 100, 1) if total_sp > 0 else 0
 
             ct = Contributor.__table__
-            top_q = (
+            top_q = scoped_query(
                 select(ct.c.canonical_name, func.coalesce(func.sum(wi.c.story_points), 0).label("pts"))
                 .select_from(wi.join(ct, wi.c.assigned_to_id == ct.c.id))
                 .where(base, wi.c.resolved_at.isnot(None))
                 .group_by(ct.c.canonical_name)
                 .order_by(func.sum(wi.c.story_points).desc())
-                .limit(5)
+                .limit(5),
+                project_col=WorkItem.project_id,
             )
             top_rows = (await db.execute(top_q)).all()
 
@@ -345,13 +356,16 @@ def _build_delivery_tools(db: AsyncSession) -> list:
 
             async def _stats(iter_id):
                 base = wi.c.iteration_id == iter_id
-                total = (await db.execute(select(func.count()).where(base))).scalar() or 0
-                completed = (await db.execute(select(func.count()).where(base, wi.c.resolved_at.isnot(None)))).scalar() or 0
-                sp = float((await db.execute(select(func.coalesce(func.sum(wi.c.story_points), 0)).where(base, wi.c.resolved_at.isnot(None)))).scalar() or 0)
-                contribs = (await db.execute(select(func.count(func.distinct(wi.c.assigned_to_id))).where(base, wi.c.assigned_to_id.isnot(None)))).scalar() or 0
-                cycle_q = select(
-                    func.percentile_cont(0.5).within_group(extract("epoch", wi.c.resolved_at - wi.c.activated_at) / 3600)
-                ).where(base, wi.c.activated_at.isnot(None), wi.c.resolved_at.isnot(None))
+                total = (await db.execute(scoped_query(select(func.count()).where(base), project_col=WorkItem.project_id))).scalar() or 0
+                completed = (await db.execute(scoped_query(select(func.count()).where(base, wi.c.resolved_at.isnot(None)), project_col=WorkItem.project_id))).scalar() or 0
+                sp = float((await db.execute(scoped_query(select(func.coalesce(func.sum(wi.c.story_points), 0)).where(base, wi.c.resolved_at.isnot(None)), project_col=WorkItem.project_id))).scalar() or 0)
+                contribs = (await db.execute(scoped_query(select(func.count(func.distinct(wi.c.assigned_to_id))).where(base, wi.c.assigned_to_id.isnot(None)), project_col=WorkItem.project_id))).scalar() or 0
+                cycle_q = scoped_query(
+                    select(
+                        func.percentile_cont(0.5).within_group(extract("epoch", wi.c.resolved_at - wi.c.activated_at) / 3600)
+                    ).where(base, wi.c.activated_at.isnot(None), wi.c.resolved_at.isnot(None)),
+                    project_col=WorkItem.project_id,
+                )
                 median_ct = (await db.execute(cycle_q)).scalar()
                 return {
                     "total_items": total, "completed": completed,
@@ -396,8 +410,9 @@ def _build_delivery_tools(db: AsyncSession) -> list:
                 p = await _resolve_project(db, project_name)
                 if p:
                     stmt = stmt.where(Iteration.project_id == p.id)
-            stmt = stmt.where(Iteration.end_date >= now).order_by(Iteration.start_date)
-            result = await db.execute(stmt.limit(10))
+            stmt = stmt.where(Iteration.end_date >= now).order_by(Iteration.start_date).limit(10)
+            stmt = scoped_query(stmt, project_col=Iteration.project_id)
+            result = await db.execute(stmt)
             iters = result.scalars().all()
             if not iters:
                 return "No active or upcoming sprints found."
@@ -407,9 +422,9 @@ def _build_delivery_tools(db: AsyncSession) -> list:
                 status = "upcoming"
                 if it.start_date and it.start_date <= now:
                     status = "active"
-                total = (await db.execute(select(func.count()).where(wi.c.iteration_id == it.id))).scalar() or 0
-                completed = (await db.execute(select(func.count()).where(wi.c.iteration_id == it.id, wi.c.resolved_at.isnot(None)))).scalar() or 0
-                sp = float((await db.execute(select(func.coalesce(func.sum(wi.c.story_points), 0)).where(wi.c.iteration_id == it.id))).scalar() or 0)
+                total = (await db.execute(scoped_query(select(func.count()).where(wi.c.iteration_id == it.id), project_col=WorkItem.project_id))).scalar() or 0
+                completed = (await db.execute(scoped_query(select(func.count()).where(wi.c.iteration_id == it.id, wi.c.resolved_at.isnot(None)), project_col=WorkItem.project_id))).scalar() or 0
+                sp = float((await db.execute(scoped_query(select(func.coalesce(func.sum(wi.c.story_points), 0)).where(wi.c.iteration_id == it.id), project_col=WorkItem.project_id))).scalar() or 0)
                 pct = round(completed / total * 100) if total else 0
                 rows.append((it.name, status, str(it.start_date), str(it.end_date), total, completed, f"{pct}%", round(sp, 1)))
             return _table(["Sprint", "Status", "Start", "End", "Items", "Done", "Progress", "Points"], rows)
@@ -431,9 +446,9 @@ def _build_delivery_tools(db: AsyncSession) -> list:
                 return "Iteration has no start date — cannot analyze scope change."
             wi = WorkItem.__table__
             base = wi.c.iteration_id == it.id
-            total = (await db.execute(select(func.count()).where(base))).scalar() or 0
+            total = (await db.execute(scoped_query(select(func.count()).where(base), project_col=WorkItem.project_id))).scalar() or 0
             added_after_start = (await db.execute(
-                select(func.count()).where(base, func.date(wi.c.created_at) > it.start_date)
+                scoped_query(select(func.count()).where(base, func.date(wi.c.created_at) > it.start_date), project_col=WorkItem.project_id)
             )).scalar() or 0
             original = total - added_after_start
             creep_pct = round(added_after_start / original * 100, 1) if original > 0 else 0
@@ -460,7 +475,7 @@ def _build_delivery_tools(db: AsyncSession) -> list:
                 return f"Iteration '{iteration_name}' not found."
             wi = WorkItem.__table__
             ct = Contributor.__table__
-            q = (
+            q = scoped_query(
                 select(
                     wi.c.platform_work_item_id, wi.c.title, wi.c.state,
                     wi.c.story_points, ct.c.canonical_name,
@@ -468,7 +483,8 @@ def _build_delivery_tools(db: AsyncSession) -> list:
                 .select_from(wi.outerjoin(ct, wi.c.assigned_to_id == ct.c.id))
                 .where(wi.c.iteration_id == it.id, wi.c.state.notin_(_COMPLETED_STATES))
                 .order_by(wi.c.priority.asc().nullslast())
-                .limit(30)
+                .limit(30),
+                project_col=WorkItem.project_id,
             )
             rows_data = (await db.execute(q)).all()
             if not rows_data:
@@ -606,12 +622,18 @@ def _build_delivery_tools(db: AsyncSession) -> list:
             max_v = max(points) if points else 0
 
             wi = WorkItem.__table__
-            remaining_q = select(func.coalesce(func.sum(wi.c.story_points), 0)).where(
-                wi.c.project_id == project_id, wi.c.state.notin_(_COMPLETED_STATES),
+            remaining_q = scoped_query(
+                select(func.coalesce(func.sum(wi.c.story_points), 0)).where(
+                    wi.c.project_id == project_id, wi.c.state.notin_(_COMPLETED_STATES),
+                ),
+                project_col=WorkItem.project_id,
             )
             remaining_sp = float((await db.execute(remaining_q)).scalar() or 0)
             remaining_items = (await db.execute(
-                select(func.count()).where(wi.c.project_id == project_id, wi.c.state.notin_(_COMPLETED_STATES))
+                scoped_query(
+                    select(func.count()).where(wi.c.project_id == project_id, wi.c.state.notin_(_COMPLETED_STATES)),
+                    project_col=WorkItem.project_id,
+                )
             )).scalar() or 0
 
             def sprints_to_clear(velocity):
@@ -646,7 +668,10 @@ def _build_delivery_tools(db: AsyncSession) -> list:
                 else:
                     return "No projects found."
 
-            teams_q = select(Team).where(Team.project_id == project_id).order_by(Team.name).limit(limit)
+            teams_q = scoped_query(
+                select(Team).where(Team.project_id == project_id).order_by(Team.name).limit(limit),
+                project_col=Team.project_id,
+            )
             teams = (await db.execute(teams_q)).scalars().all()
             if not teams:
                 return "No teams found in this project."
@@ -659,7 +684,7 @@ def _build_delivery_tools(db: AsyncSession) -> list:
                 if not member_ids:
                     rows.append((team.name, 0, 0, "—"))
                     continue
-                q = (
+                q = scoped_query(
                     select(it.c.name, func.coalesce(func.sum(wi.c.story_points), 0).label("pts"))
                     .select_from(wi.join(it, wi.c.iteration_id == it.c.id))
                     .where(
@@ -669,7 +694,8 @@ def _build_delivery_tools(db: AsyncSession) -> list:
                     )
                     .group_by(it.c.name, it.c.start_date)
                     .order_by(it.c.start_date.desc())
-                    .limit(3)
+                    .limit(3),
+                    project_col=WorkItem.project_id,
                 )
                 sprint_data = (await db.execute(q)).all()
                 pts = [float(r.pts) for r in sprint_data]
@@ -711,22 +737,26 @@ def _build_delivery_tools(db: AsyncSession) -> list:
             if td:
                 base.append(wi.c.resolved_at <= td)
 
-            q = select(
-                func.percentile_cont(0.5).within_group(hours_expr).label("p50"),
-                func.percentile_cont(0.75).within_group(hours_expr).label("p75"),
-                func.percentile_cont(0.9).within_group(hours_expr).label("p90"),
-                func.count().label("sample"),
-            ).where(*base)
+            q = scoped_query(
+                select(
+                    func.percentile_cont(0.5).within_group(hours_expr).label("p50"),
+                    func.percentile_cont(0.75).within_group(hours_expr).label("p75"),
+                    func.percentile_cont(0.9).within_group(hours_expr).label("p90"),
+                    func.count().label("sample"),
+                ).where(*base),
+                project_col=WorkItem.project_id,
+            )
             row = (await db.execute(q)).one_or_none()
 
-            type_q = (
+            type_q = scoped_query(
                 select(
                     wi.c.work_item_type,
                     func.percentile_cont(0.5).within_group(hours_expr).label("median"),
                     func.count().label("n"),
                 )
                 .where(*base)
-                .group_by(wi.c.work_item_type)
+                .group_by(wi.c.work_item_type),
+                project_col=WorkItem.project_id,
             )
             type_rows = (await db.execute(type_q)).all()
 
@@ -768,18 +798,22 @@ def _build_delivery_tools(db: AsyncSession) -> list:
             if td:
                 base.append(wi.c.closed_at <= td)
 
-            q = select(
-                func.percentile_cont(0.5).within_group(hours_expr).label("p50"),
-                func.percentile_cont(0.75).within_group(hours_expr).label("p75"),
-                func.percentile_cont(0.9).within_group(hours_expr).label("p90"),
-                func.count().label("sample"),
-            ).where(*base)
+            q = scoped_query(
+                select(
+                    func.percentile_cont(0.5).within_group(hours_expr).label("p50"),
+                    func.percentile_cont(0.75).within_group(hours_expr).label("p75"),
+                    func.percentile_cont(0.9).within_group(hours_expr).label("p90"),
+                    func.count().label("sample"),
+                ).where(*base),
+                project_col=WorkItem.project_id,
+            )
             row = (await db.execute(q)).one_or_none()
 
-            type_q = (
+            type_q = scoped_query(
                 select(wi.c.work_item_type, func.percentile_cont(0.5).within_group(hours_expr).label("median"), func.count().label("n"))
                 .where(*base)
-                .group_by(wi.c.work_item_type)
+                .group_by(wi.c.work_item_type),
+                project_col=WorkItem.project_id,
             )
             type_rows = (await db.execute(type_q)).all()
 
@@ -822,20 +856,29 @@ def _build_delivery_tools(db: AsyncSession) -> list:
                     if member_ids:
                         base.append(wi.c.assigned_to_id.in_(member_ids))
 
-            total_wip = (await db.execute(select(func.count()).where(*base))).scalar() or 0
+            total_wip = (await db.execute(scoped_query(select(func.count()).where(*base), project_col=WorkItem.project_id))).scalar() or 0
             by_state = (await db.execute(
-                select(wi.c.state, func.count()).where(*base).group_by(wi.c.state).order_by(func.count().desc())
+                scoped_query(
+                    select(wi.c.state, func.count()).where(*base).group_by(wi.c.state).order_by(func.count().desc()),
+                    project_col=WorkItem.project_id,
+                )
             )).all()
             by_type = (await db.execute(
-                select(wi.c.work_item_type, func.count()).where(*base).group_by(wi.c.work_item_type).order_by(func.count().desc())
+                scoped_query(
+                    select(wi.c.work_item_type, func.count()).where(*base).group_by(wi.c.work_item_type).order_by(func.count().desc()),
+                    project_col=WorkItem.project_id,
+                )
             )).all()
             by_assignee = (await db.execute(
-                select(ct.c.canonical_name, func.count().label("c"))
-                .select_from(wi.join(ct, wi.c.assigned_to_id == ct.c.id))
-                .where(*base).group_by(ct.c.canonical_name).order_by(func.count().desc()).limit(10)
+                scoped_query(
+                    select(ct.c.canonical_name, func.count().label("c"))
+                    .select_from(wi.join(ct, wi.c.assigned_to_id == ct.c.id))
+                    .where(*base).group_by(ct.c.canonical_name).order_by(func.count().desc()).limit(10),
+                    project_col=WorkItem.project_id,
+                )
             )).all()
             unassigned = (await db.execute(
-                select(func.count()).where(*base, wi.c.assigned_to_id.is_(None))
+                scoped_query(select(func.count()).where(*base, wi.c.assigned_to_id.is_(None)), project_col=WorkItem.project_id)
             )).scalar() or 0
 
             lines = [f"**Work In Progress: {total_wip} items**"]
@@ -945,15 +988,18 @@ def _build_delivery_tools(db: AsyncSession) -> list:
 
             wi = WorkItem.__table__
             base = [wi.c.project_id == project_id, wi.c.state.notin_(_COMPLETED_STATES)]
-            total_open = (await db.execute(select(func.count()).where(*base))).scalar() or 0
-            unestimated = (await db.execute(select(func.count()).where(*base, wi.c.story_points.is_(None)))).scalar() or 0
-            unassigned = (await db.execute(select(func.count()).where(*base, wi.c.assigned_to_id.is_(None)))).scalar() or 0
+            total_open = (await db.execute(scoped_query(select(func.count()).where(*base), project_col=WorkItem.project_id))).scalar() or 0
+            unestimated = (await db.execute(scoped_query(select(func.count()).where(*base, wi.c.story_points.is_(None)), project_col=WorkItem.project_id))).scalar() or 0
+            unassigned = (await db.execute(scoped_query(select(func.count()).where(*base, wi.c.assigned_to_id.is_(None)), project_col=WorkItem.project_id))).scalar() or 0
 
             stale_cutoff = datetime.now(timezone.utc) - timedelta(days=30)
-            stale = (await db.execute(select(func.count()).where(*base, wi.c.updated_at < stale_cutoff))).scalar() or 0
+            stale = (await db.execute(scoped_query(select(func.count()).where(*base, wi.c.updated_at < stale_cutoff), project_col=WorkItem.project_id))).scalar() or 0
 
             by_priority = (await db.execute(
-                select(wi.c.priority, func.count()).where(*base).group_by(wi.c.priority).order_by(wi.c.priority.asc().nullslast())
+                scoped_query(
+                    select(wi.c.priority, func.count()).where(*base).group_by(wi.c.priority).order_by(wi.c.priority.asc().nullslast()),
+                    project_col=WorkItem.project_id,
+                )
             )).all()
 
             health_deductions = 0
@@ -999,12 +1045,13 @@ def _build_delivery_tools(db: AsyncSession) -> list:
             wi = WorkItem.__table__
             ct = Contributor.__table__
             cutoff = datetime.now(timezone.utc) - timedelta(days=days)
-            q = (
+            q = scoped_query(
                 select(wi.c.platform_work_item_id, wi.c.title, wi.c.state, wi.c.work_item_type, wi.c.updated_at, ct.c.canonical_name)
                 .select_from(wi.outerjoin(ct, wi.c.assigned_to_id == ct.c.id))
                 .where(wi.c.project_id == project_id, wi.c.state.notin_(_COMPLETED_STATES), wi.c.updated_at < cutoff)
                 .order_by(wi.c.updated_at.asc())
-                .limit(limit)
+                .limit(limit),
+                project_col=WorkItem.project_id,
             )
             rows_data = (await db.execute(q)).all()
             if not rows_data:
@@ -1035,9 +1082,24 @@ def _build_delivery_tools(db: AsyncSession) -> list:
 
             wi = WorkItem.__table__
             base = [wi.c.project_id == project_id, wi.c.state.notin_(_COMPLETED_STATES)]
-            by_type = (await db.execute(select(wi.c.work_item_type, func.count()).where(*base).group_by(wi.c.work_item_type).order_by(func.count().desc()))).all()
-            by_state = (await db.execute(select(wi.c.state, func.count()).where(*base).group_by(wi.c.state).order_by(func.count().desc()))).all()
-            by_priority = (await db.execute(select(wi.c.priority, func.count()).where(*base).group_by(wi.c.priority).order_by(wi.c.priority.asc().nullslast()))).all()
+            by_type = (await db.execute(
+                scoped_query(
+                    select(wi.c.work_item_type, func.count()).where(*base).group_by(wi.c.work_item_type).order_by(func.count().desc()),
+                    project_col=WorkItem.project_id,
+                )
+            )).all()
+            by_state = (await db.execute(
+                scoped_query(
+                    select(wi.c.state, func.count()).where(*base).group_by(wi.c.state).order_by(func.count().desc()),
+                    project_col=WorkItem.project_id,
+                )
+            )).all()
+            by_priority = (await db.execute(
+                scoped_query(
+                    select(wi.c.priority, func.count()).where(*base).group_by(wi.c.priority).order_by(wi.c.priority.asc().nullslast()),
+                    project_col=WorkItem.project_id,
+                )
+            )).all()
 
             lines = ["**By Type**", _table(["Type", "Count"], [(r[0], r[1]) for r in by_type])]
             lines += ["\n**By State**", _table(["State", "Count"], [(r[0], r[1]) for r in by_state])]
@@ -1149,26 +1211,33 @@ def _build_delivery_tools(db: AsyncSession) -> list:
             if member_ids:
                 base.append(wi.c.assigned_to_id.in_(member_ids))
 
-            active = (await db.execute(select(func.count()).where(*base, wi.c.state.notin_(_COMPLETED_STATES)))).scalar() or 0
+            active = (await db.execute(scoped_query(select(func.count()).where(*base, wi.c.state.notin_(_COMPLETED_STATES)), project_col=WorkItem.project_id))).scalar() or 0
             completed_30d = (await db.execute(
-                select(func.count()).where(*base, wi.c.resolved_at.isnot(None), wi.c.resolved_at >= datetime.now(timezone.utc) - timedelta(days=30))
+                scoped_query(
+                    select(func.count()).where(*base, wi.c.resolved_at.isnot(None), wi.c.resolved_at >= datetime.now(timezone.utc) - timedelta(days=30)),
+                    project_col=WorkItem.project_id,
+                )
             )).scalar() or 0
 
-            velocity_q = (
+            velocity_q = scoped_query(
                 select(func.coalesce(func.sum(wi.c.story_points), 0).label("pts"))
                 .select_from(wi.join(it, wi.c.iteration_id == it.c.id))
                 .where(*base, wi.c.resolved_at.isnot(None))
                 .group_by(it.c.id, it.c.start_date)
                 .order_by(it.c.start_date.desc())
-                .limit(3)
+                .limit(3),
+                project_col=WorkItem.project_id,
             )
             vel_rows = (await db.execute(velocity_q)).all()
             pts = [float(r.pts) for r in vel_rows]
             avg_vel = round(sum(pts) / len(pts), 1) if pts else 0
 
-            cycle_q = select(
-                func.percentile_cont(0.5).within_group(extract("epoch", wi.c.resolved_at - wi.c.activated_at) / 3600)
-            ).where(*base, wi.c.activated_at.isnot(None), wi.c.resolved_at.isnot(None))
+            cycle_q = scoped_query(
+                select(
+                    func.percentile_cont(0.5).within_group(extract("epoch", wi.c.resolved_at - wi.c.activated_at) / 3600)
+                ).where(*base, wi.c.activated_at.isnot(None), wi.c.resolved_at.isnot(None)),
+                project_col=WorkItem.project_id,
+            )
             median_ct = (await db.execute(cycle_q)).scalar()
 
             return _kv_block({
@@ -1199,7 +1268,7 @@ def _build_delivery_tools(db: AsyncSession) -> list:
 
             wi = WorkItem.__table__
             ct = Contributor.__table__
-            q = (
+            q = scoped_query(
                 select(
                     ct.c.canonical_name,
                     func.count().filter(wi.c.state.notin_(_COMPLETED_STATES)).label("active"),
@@ -1209,7 +1278,8 @@ def _build_delivery_tools(db: AsyncSession) -> list:
                 .select_from(wi.join(ct, wi.c.assigned_to_id == ct.c.id))
                 .where(wi.c.project_id == t.project_id, wi.c.assigned_to_id.in_(member_ids))
                 .group_by(ct.c.canonical_name)
-                .order_by(func.count().filter(wi.c.state.notin_(_COMPLETED_STATES)).desc())
+                .order_by(func.count().filter(wi.c.state.notin_(_COMPLETED_STATES)).desc()),
+                project_col=WorkItem.project_id,
             )
             rows_data = (await db.execute(q)).all()
             if not rows_data:
@@ -1236,7 +1306,7 @@ def _build_delivery_tools(db: AsyncSession) -> list:
 
             wi = WorkItem.__table__
             ct = Contributor.__table__
-            q = (
+            q = scoped_query(
                 select(
                     ct.c.canonical_name,
                     func.count().filter(wi.c.resolved_at.isnot(None)).label("completed"),
@@ -1249,7 +1319,8 @@ def _build_delivery_tools(db: AsyncSession) -> list:
                 .select_from(wi.join(ct, wi.c.assigned_to_id == ct.c.id))
                 .where(wi.c.project_id == t.project_id, wi.c.assigned_to_id.in_(member_ids))
                 .group_by(ct.c.canonical_name)
-                .order_by(func.coalesce(func.sum(wi.c.story_points).filter(wi.c.resolved_at.isnot(None)), 0).desc())
+                .order_by(func.coalesce(func.sum(wi.c.story_points).filter(wi.c.resolved_at.isnot(None)), 0).desc()),
+                project_col=WorkItem.project_id,
             )
             rows_data = (await db.execute(q)).all()
             if not rows_data:
@@ -1281,8 +1352,8 @@ def _build_delivery_tools(db: AsyncSession) -> list:
 
             wi = WorkItem.__table__
             base = [wi.c.project_id == project_id, wi.c.work_item_type == "bug"]
-            open_bugs = (await db.execute(select(func.count()).where(*base, wi.c.state.notin_(_COMPLETED_STATES)))).scalar() or 0
-            total_bugs = (await db.execute(select(func.count()).where(*base))).scalar() or 0
+            open_bugs = (await db.execute(scoped_query(select(func.count()).where(*base, wi.c.state.notin_(_COMPLETED_STATES)), project_col=WorkItem.project_id))).scalar() or 0
+            total_bugs = (await db.execute(scoped_query(select(func.count()).where(*base), project_col=WorkItem.project_id))).scalar() or 0
 
             res = await get_bug_resolution_time(db, project_id)
             density = await get_defect_density(db, project_id)
@@ -1320,13 +1391,19 @@ def _build_delivery_tools(db: AsyncSession) -> list:
 
             base = [wi.c.project_id == project_id, wi.c.work_item_type == "bug"]
             recent_bugs = (await db.execute(
-                select(func.count()).where(*base, wi.c.created_at >= datetime.now(timezone.utc) - timedelta(days=30))
+                scoped_query(
+                    select(func.count()).where(*base, wi.c.created_at >= datetime.now(timezone.utc) - timedelta(days=30)),
+                    project_col=WorkItem.project_id,
+                )
             )).scalar() or 0
 
-            rework_q = select(func.count()).where(
-                wi.c.project_id == project_id,
-                wi.c.state.in_(("Active", "New", "In Progress")),
-                wi.c.resolved_at.isnot(None),
+            rework_q = scoped_query(
+                select(func.count()).where(
+                    wi.c.project_id == project_id,
+                    wi.c.state.in_(("Active", "New", "In Progress")),
+                    wi.c.resolved_at.isnot(None),
+                ),
+                project_col=WorkItem.project_id,
             )
             rework = (await db.execute(rework_q)).scalar() or 0
 
@@ -1414,19 +1491,25 @@ def _build_delivery_tools(db: AsyncSession) -> list:
                 p = await _resolve_project(db, project_name)
                 if p:
                     stmt = stmt.where(WorkItem.project_id == p.id)
-            wi_obj = (await db.execute(stmt.limit(1))).scalar_one_or_none()
+            stmt = scoped_query(stmt.limit(1), project_col=WorkItem.project_id)
+            wi_obj = (await db.execute(stmt)).scalar_one_or_none()
             if not wi_obj:
                 return f"Work item '{work_item_id_or_title}' not found."
 
             wic = WorkItemCommit.__table__
             cm = Commit.__table__
             ct = Contributor.__table__
-            q = (
+            q = scoped_query(
                 select(cm.c.sha, cm.c.message, ct.c.canonical_name, cm.c.authored_at, wic.c.link_type)
-                .select_from(wic.join(cm, wic.c.commit_id == cm.c.id).outerjoin(ct, cm.c.contributor_id == ct.c.id))
+                .select_from(
+                    wic.join(cm, wic.c.commit_id == cm.c.id)
+                    .join(WorkItem, WorkItem.id == wic.c.work_item_id)
+                    .outerjoin(ct, cm.c.contributor_id == ct.c.id)
+                )
                 .where(wic.c.work_item_id == wi_obj.id)
                 .order_by(cm.c.authored_at.desc())
-                .limit(25)
+                .limit(25),
+                project_col=WorkItem.project_id,
             )
             rows_data = (await db.execute(q)).all()
             if not rows_data:
@@ -1460,7 +1543,8 @@ def _build_delivery_tools(db: AsyncSession) -> list:
                 p = await _resolve_project(db, project_name)
                 if p:
                     stmt = stmt.where(WorkItem.project_id == p.id)
-            wi = (await db.execute(stmt.limit(1))).scalar_one_or_none()
+            stmt = scoped_query(stmt.limit(1), project_col=WorkItem.project_id)
+            wi = (await db.execute(stmt)).scalar_one_or_none()
             if not wi:
                 return f"Work item not found: {work_item_id}"
             desc = wi.description or "(no description)"
@@ -1495,6 +1579,7 @@ def _build_delivery_tools(db: AsyncSession) -> list:
             stmt = select(WorkItem).where(
                 WorkItem.platform_work_item_id == int(cleaned)
             ).limit(1)
+            stmt = scoped_query(stmt, project_col=WorkItem.project_id)
             wi = (await s.execute(stmt)).scalar_one_or_none()
             if not wi:
                 return f"Work item #{cleaned} not found."
@@ -1529,4 +1614,4 @@ def _build_delivery_tools(db: AsyncSession) -> list:
     ]
 
 
-register_tool_category(CATEGORY, DEFINITIONS, _build_delivery_tools)
+register_tool_category(CATEGORY, DEFINITIONS, _build_delivery_tools, concurrency_safe=True)

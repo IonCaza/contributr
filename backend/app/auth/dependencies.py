@@ -36,6 +36,20 @@ async def require_admin(user: User = Depends(get_current_user)) -> User:
     return user
 
 
+async def get_accessible_project_ids(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> set[uuid.UUID] | None:
+    """Return the set of project IDs this user can access, or None for admins (= all)."""
+    if user.is_admin:
+        return None
+    from app.db.models.project_membership import ProjectMembership
+    result = await db.execute(
+        select(ProjectMembership.project_id).where(ProjectMembership.user_id == user.id)
+    )
+    return set(result.scalars().all())
+
+
 async def get_mfa_setup_user(
     credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme),
     db: AsyncSession = Depends(get_db),

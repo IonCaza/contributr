@@ -930,7 +930,8 @@ const DEP_ECOSYSTEM_COLORS: Record<string, string> = {
 function RepoDependenciesSection({ repoId }: { repoId: string }) {
   const qc = useQueryClient();
   const { data: summary } = useDepSummary(repoId);
-  const { data: findings, isLoading } = useDepFindings(repoId);
+  const { data: findingsPage, isLoading } = useDepFindings(repoId);
+  const findings = findingsPage?.items;
   const { data: runs } = useDepRuns(repoId);
   const [viewFilter, setViewFilter] = useState<"all" | "vulnerable" | "outdated">("all");
 

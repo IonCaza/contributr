@@ -9,6 +9,7 @@ from langchain_core.tools import tool
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.agents.context import current_session_id, current_user_id
 from app.db.base import async_session as _session_factory
 from app.db.models.presentation import Presentation, PresentationTemplate, PresentationVersion
 from app.agents.tools.base import ToolDefinition
@@ -30,6 +31,7 @@ DEFINITIONS = [
         "Get Presentation",
         "Retrieve an existing presentation's component code and template version for viewing or editing.",
         CATEGORY,
+        concurrency_safe=True,
     ),
     ToolDefinition(
         "update_presentation",
@@ -42,6 +44,7 @@ DEFINITIONS = [
         "Get Presentation Template",
         "Retrieve the current latest template HTML to understand the available hooks, utilities, and bridge API.",
         CATEGORY,
+        concurrency_safe=True,
     ),
     ToolDefinition(
         "update_presentation_template",
@@ -132,7 +135,8 @@ def _build_presentation_tools(db: AsyncSession) -> list:
                 component_code=component_code,
                 template_version=tv,
                 prompt=prompt,
-                created_by_id=project.id,
+                chat_session_id=current_session_id.get(),
+                created_by_id=current_user_id.get(),
                 status="draft",
             )
             session.add(pres)

@@ -23,6 +23,8 @@ SPEC = BuiltinAgentSpec(
         "update_presentation",
         "get_presentation_template",
         "update_presentation_template",
+        "list_skills",
+        "use_skill",
     ],
     agent_type="supervisor",
     member_slugs=[
@@ -31,5 +33,5 @@ SPEC = BuiltinAgentSpec(
         "insights-analyst",
         "sast-analyst",
     ],
-    max_iterations=25,
+    max_iterations=50,
 )

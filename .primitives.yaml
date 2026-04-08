@@ -1,0 +1,243 @@
+primitives_repo: ~/git/primitives
+
+installed:
+  agentic-ai-engine:
+    version: "1.8.1"
+    applied_at: "2026-04-02"
+    file_mapping:
+      schema/models.py: backend/app/db/models/ # spread across multiple model files
+      schema/task_item.py: backend/app/db/models/task_item.py
+      schema/agent_memory.py: backend/app/db/models/agent_memory.py
+      schema/agent_skill.py: backend/app/db/models/agent_skill.py
+      backend/agents/base.py: backend/app/agents/base.py
+      backend/agents/coordinator.py: backend/app/agents/coordinator.py
+      backend/agents/runner.py: backend/app/agents/runner.py
+      backend/agents/supervisor.py: backend/app/agents/supervisor.py
+      backend/agents/registry.py: backend/app/agents/registry.py
+      backend/agents/settings_cache.py: backend/app/agents/settings_cache.py
+      backend/agents/skills.py: backend/app/agents/skills.py
+      backend/agents/builtin/__init__.py: backend/app/agents/builtin/__init__.py
+      backend/agents/builtin/supervisor.py: backend/app/agents/builtin/supervisor.py
+      backend/agents/builtin/text_to_sql.py: backend/app/agents/builtin/text_to_sql.py
+      backend/agents/builtin/verification_agent.py: backend/app/agents/builtin/verification_agent.py
+      backend/agents/__init__.py: backend/app/agents/__init__.py
+      backend/agents/context/__init__.py: backend/app/agents/context/__init__.py
+      backend/agents/context/manager.py: backend/app/agents/context/manager.py
+      backend/agents/context/summarizer.py: backend/app/agents/context/summarizer.py
+      backend/agents/prompts/coordinator.py: backend/app/agents/prompts/coordinator.py
+      backend/agents/memory/pool.py: backend/app/agents/memory/pool.py
+      backend/agents/memory/modifier.py: backend/app/agents/memory/modifier.py
+      backend/agents/memory/extraction.py: backend/app/agents/memory/extraction.py
+      backend/agents/memory/cleanup.py: backend/app/agents/memory/cleanup.py
+      backend/agents/memory/state.py: backend/app/agents/memory/state.py
+      backend/agents/memory/tools.py: backend/app/agents/memory/tools.py
+      backend/agents/memory/recall.py: backend/app/agents/memory/recall.py
+      backend/agents/memory/session_notes.py: backend/app/agents/memory/session_notes.py
+      backend/agents/memory/consolidation.py: backend/app/agents/memory/consolidation.py
+      backend/agents/llm/manager.py: backend/app/agents/llm/manager.py
+      backend/agents/tools/registry.py: backend/app/agents/tools/registry.py
+      backend/agents/tools/base.py: backend/app/agents/tools/base.py
+      backend/agents/tools/parallel_node.py: backend/app/agents/tools/parallel_node.py
+      backend/agents/tools/chat_history.py: backend/app/agents/tools/chat_history.py
+      backend/agents/tools/feedback_gap.py: backend/app/agents/tools/feedback_gap.py
+      backend/agents/tools/task_tools.py: backend/app/agents/tools/task_tools.py
+      backend/agents/tools/skill_tool.py: backend/app/agents/tools/skill_tool.py
+      backend/agents/knowledge/generator.py: backend/app/agents/knowledge/generator.py
+      backend/api/chat.py: backend/app/api/chat.py
+      frontend/components/chat-runtime.tsx: frontend/src/components/contributr-chat-runtime.tsx
+      frontend/components/chat-panel.tsx: frontend/src/components/chat-panel.tsx
+      frontend/components/agent-activity-panel.tsx: frontend/src/components/agent-activity-panel.tsx
+      frontend/components/task-board-panel.tsx: frontend/src/components/task-board-panel.tsx
+      frontend/components/assistant-ui/thread.tsx: frontend/src/components/assistant-ui/thread.tsx
+      frontend/components/assistant-ui/markdown-text.tsx: frontend/src/components/assistant-ui/markdown-text.tsx
+      frontend/components/assistant-ui/tool-fallback.tsx: frontend/src/components/assistant-ui/tool-fallback.tsx
+      frontend/components/assistant-ui/thread-list.tsx: frontend/src/components/assistant-ui/thread-list.tsx
+      frontend/components/assistant-ui/tooltip-icon-button.tsx: frontend/src/components/assistant-ui/tooltip-icon-button.tsx
+      frontend/components/assistant-ui/attachment.tsx: frontend/src/components/assistant-ui/attachment.tsx
+    customizations:
+      - "builtin/__init__.py has 12 domain agents vs primitive's 3 examples"
+      - "Domain-specific agents in backend/app/agents/builtin/ (contribution-analyst, delivery-analyst, etc.)"
+      - "Domain-specific tools in backend/app/agents/tools/ (contribution_analytics, delivery_analytics, etc.)"
+      - "Domain-specific prompts in backend/app/agents/prompts/defaults.py"
+      - "Domain-specific tool imports in agents/registry.py (8 domain tool modules)"
+      - "Supervisor builtin member_slugs includes domain-specific agents + verification-agent"
+      - "verification-agent seeded via get_builtin_agents() with generic VERIFICATION_PROMPT"
+      - "ChatRuntime exported as ContributrChatRuntime; import paths use contributr-chat-runtime"
+      - "Presentation-related SSE events and tools"
+      - "TaskBoardPanel/AgentActivityPanel import from contributr-chat-runtime"
+      - "Default agent slug 'contribution-analyst'; display name 'Contributr AI'"
+      - "localStorage key 'contributr:defaultAgent' (primitive uses 'ai-engine:defaultAgent')"
+      - "modifier.py COMPACTABLE_TOOLS includes 9 delivery-analytics tool slugs"
+      - "skills.py has extra presentation-specific builtin skills (dashboard-layout-patterns, chart-type-selector)"
+      - "skills.py data-exploration-workflow targeted to presentation-designer only (primitive targets all agents)"
+      - "runner.py uses lazy import for load_active_skills (primitive uses top-level)"
+      - "memory/tools.py uses lazy import for cast/SAString (primitive uses top-level)"
+      - "extraction.py docstring references LangMem migration history (primitive describes current behavior)"
+
+  authentication:
+    version: "1.0.0"
+    applied_at: "2026-03-31"
+    file_mapping:
+      # Schema (models)
+      schema/user.py: backend/app/db/models/user.py
+      schema/auth_settings.py: backend/app/db/models/auth_settings.py
+      schema/oidc_provider.py: backend/app/db/models/oidc_provider.py
+      schema/smtp_settings.py: backend/app/db/models/smtp_settings.py
+      schema/email_template.py: backend/app/db/models/email_template.py
+      schema/platform_credential.py: backend/app/db/models/platform_credential.py
+      schema/ssh_credential.py: backend/app/db/models/ssh_credential.py
+      # Backend - Core auth module
+      backend/auth/providers/base.py: backend/app/auth/providers/base.py
+      backend/auth/providers/local.py: backend/app/auth/providers/local.py
+      backend/auth/providers/oidc.py: backend/app/auth/providers/oidc.py
+      backend/auth/providers/__init__.py: backend/app/auth/providers/__init__.py
+      backend/auth/security.py: backend/app/auth/security.py
+      backend/auth/dependencies.py: backend/app/auth/dependencies.py
+      # Backend - Services
+      backend/services/encryption.py: backend/app/services/ssh_manager.py
+      backend/services/mfa.py: backend/app/services/mfa.py
+      backend/services/oidc.py: backend/app/services/oidc.py
+      backend/services/email.py: backend/app/services/email.py
+      # Backend - API routes
+      backend/api/auth.py: backend/app/api/auth.py
+      backend/api/mfa.py: backend/app/api/mfa.py
+      backend/api/oidc_auth.py: backend/app/api/oidc_auth.py
+      backend/api/oidc_providers.py: backend/app/api/oidc_providers.py
+      backend/api/auth_settings.py: backend/app/api/auth_settings.py
+      backend/api/smtp_settings.py: backend/app/api/smtp_settings.py
+      backend/api/email_templates.py: backend/app/api/email_templates.py
+      backend/api/platform_credentials.py: backend/app/api/platform_credentials.py
+      backend/api/ssh_keys.py: backend/app/api/ssh_keys.py
+      # Frontend
+      frontend/lib/auth-context.tsx: frontend/src/lib/auth-context.tsx
+      frontend/components/mfa-setup-dialog.tsx: frontend/src/components/mfa-setup-dialog.tsx
+      frontend/pages/login/page.tsx: frontend/src/app/(auth)/login/page.tsx
+      frontend/pages/setup/page.tsx: frontend/src/app/(auth)/setup/page.tsx
+      frontend/pages/mfa-setup/page.tsx: frontend/src/app/(auth)/mfa-setup/page.tsx
+      frontend/pages/change-password/page.tsx: frontend/src/app/(auth)/change-password/page.tsx
+      frontend/pages/oidc-callback/page.tsx: frontend/src/app/(auth)/auth/oidc/callback/page.tsx
+    customizations:
+      - "encryption.py is named ssh_manager.py in contributr (kept original name for backward compat)"
+      - "TOTP issuer is 'Contributr' instead of generic 'MyApp'"
+      - "SmtpSettings from_name defaults to 'Contributr'"
+      - "Login page uses FolderGit2 icon instead of generic Lock"
+      - "Login page says 'Sign in to your Contributr account'"
+      - "Setup page says 'Set up Contributr'"
+      - "Recovery codes download filename is 'contributr-recovery-codes.txt'"
+      - "Platform enum imported from app.db.models.repository with GitHub/GitLab/Azure values"
+      - "Platform credential test has GitHub/GitLab/Azure specific implementations"
+      - "send_templated_email uses contributr-branded templates seeded in DB"
+
+  presentation-studio:
+    version: "1.0.0"
+    applied_at: "2026-03-31"
+    file_mapping:
+      # Schema
+      schema/presentation.py: backend/app/db/models/presentation.py
+      # Backend - API
+      backend/api/presentations.py: backend/app/api/presentations.py
+      # Backend - Agent tools
+      backend/agents/tools/presentation.py: backend/app/agents/tools/presentation.py
+      # Backend - Builtin agent
+      backend/agents/builtin/presentation_designer.py: backend/app/agents/builtin/presentation_designer.py
+      # Backend - Prompt (extracted from defaults.py into standalone file in primitive)
+      backend/agents/prompts/presentation_designer.py: backend/app/agents/prompts/defaults.py  # PRESENTATION_DESIGNER_PROMPT constant
+      # Frontend - Components
+      frontend/components/presentation-studio.tsx: frontend/src/components/presentation-studio.tsx
+      frontend/components/presentation-sandbox.tsx: frontend/src/components/presentation-sandbox.tsx
+      # Frontend - Hooks
+      frontend/hooks/use-presentations.ts: frontend/src/hooks/use-presentations.ts
+      # Frontend - Pages
+      frontend/pages/presentations/page.tsx: frontend/src/app/(dashboard)/projects/[projectId]/presentations/page.tsx
+      frontend/pages/presentations/new/page.tsx: frontend/src/app/(dashboard)/projects/[projectId]/presentations/new/page.tsx
+      frontend/pages/presentations/[presentationId]/page.tsx: frontend/src/app/(dashboard)/projects/[projectId]/presentations/[presentationId]/page.tsx
+      # Config
+      config/v1-template.html: backend/alembic/versions/h5i6j7k8l9m0_add_presentations.py  # V1_TEMPLATE_HTML constant
+    customizations:
+      - "PostMessage protocol uses 'contributr_query' instead of canonical 'presentation_query'"
+      - "Bridge namespace is 'contributr' instead of canonical 'bridge' in template HTML"
+      - "CSS classes use 'contributr-loading'/'contributr-error' instead of 'studio-loading'/'studio-error'"
+      - "ALLOWED_TOOL_CATEGORIES includes domain-specific: contribution_analytics, delivery_analytics, sast_analytics, dependency_analytics"
+      - "presentation-designer member_slugs includes contribution-analyst, delivery-analyst, insights-analyst, sast-analyst"
+      - "PRESENTATION_DESIGNER_PROMPT lives in defaults.py rather than a standalone file"
+      - "Prompt references specific ask_*_analyst delegation tools"
+      - "Example prompts are contribution-analytics domain-specific"
+      - "Palette preset labeled 'Application' / 'Contributr app colors'"
+      - "ChatRuntime imported as ContributrChatRuntime"
+      - "PaletteMode uses 'application' instead of canonical 'default'"
+
+  cornerstone:
+    version: "1.0.0"
+    applied_at: "2026-03-31"
+    file_mapping:
+      config/docker-compose.yml: docker-compose.yml
+      config/docker-compose.dev.yml: docker-compose.dev.yml
+      config/.env.example: .env.example
+      config/.gitignore: .gitignore
+      config/Makefile: Makefile
+      backend/app/main.py: backend/app/main.py
+      backend/app/config.py: backend/app/config.py
+      backend/app/db/base.py: backend/app/db/base.py
+      backend/app/db/models/__init__.py: backend/app/db/models/__init__.py
+      backend/alembic.ini: backend/alembic.ini
+      backend/alembic/env.py: backend/alembic/env.py
+      backend/alembic/script.py.mako: backend/alembic/script.py.mako
+      backend/entrypoint.sh: backend/entrypoint.sh
+      backend/Dockerfile: backend/Dockerfile
+      backend/requirements.txt: backend/requirements.txt
+      frontend/package.json: frontend/package.json
+      frontend/next.config.ts: frontend/next.config.ts
+      frontend/postcss.config.mjs: frontend/postcss.config.mjs
+      frontend/components.json: frontend/components.json
+      frontend/tsconfig.json: frontend/tsconfig.json
+      frontend/src/app/globals.css: frontend/src/app/globals.css
+      frontend/src/app/layout.tsx: frontend/src/app/layout.tsx
+      frontend/src/app/page.tsx: frontend/src/app/page.tsx
+      frontend/src/lib/theme-provider.tsx: frontend/src/lib/theme-provider.tsx
+      frontend/src/lib/query-client.ts: frontend/src/lib/query-client.ts
+      frontend/src/lib/utils.ts: frontend/src/lib/utils.ts
+      frontend/src/lib/api-client.ts: frontend/src/lib/api-client.ts
+      frontend/Dockerfile: frontend/Dockerfile
+      frontend/Dockerfile.dev: frontend/Dockerfile.dev
+    customizations:
+      - "App name is 'Contributr' (title, metadata, FastAPI title)"
+      - "DB credentials use 'contributr' / 'contributr_secret' / 'contributr'"
+      - "main.py includes 40+ domain routers and startup hooks (seed agents, auth, SMTP, email templates, memory pool)"
+      - "config.py has repos_cache_dir, auto_sast_on_sync, auto_dep_scan_on_sync"
+      - "db/models/__init__.py populated with 40+ domain models"
+      - "requirements.txt includes celery, gitpython, langchain, semgrep, fpdf2, etc."
+      - "docker-compose includes worker service and repos_cache volume"
+      - "globals.css uses orange primary (oklch hue 47) + ADO prose styles + thinking block CSS"
+      - "layout.tsx uses separate ThemeProvider/QueryProvider/AuthProvider instead of single providers.tsx"
+      - "No single providers.tsx (split across layout.tsx, lib/query-provider.tsx, lib/auth-context.tsx)"
+      - "api-client.ts has 900+ lines of domain-specific API methods"
+      - "get_db does not auto-commit (manual commit in route handlers)"
+      - "Backend Dockerfile installs git and openssh-client for repo operations"
+
+  async-jobs:
+    version: "1.0.0"
+    applied_at: "2026-03-31"
+    file_mapping:
+      schema/job.py: backend/app/db/models/sync_job.py
+      backend/workers/celery_app.py: backend/app/workers/celery_app.py
+      backend/workers/base.py: backend/app/workers/tasks.py  # base patterns embedded in tasks.py
+      backend/workers/example_task.py: backend/app/workers/tasks.py  # 9 domain tasks in single file
+      backend/services/job_logger.py: backend/app/services/sync_logger.py
+      backend/api/jobs.py: backend/app/api/repositories.py  # SSE endpoint + trigger embedded in repo routes
+      frontend/components/job-log-viewer.tsx: frontend/src/components/sync-log-viewer.tsx
+      frontend/components/job-status-badge.tsx: ""  # no standalone component; inline badges
+      frontend/hooks/use-jobs.ts: frontend/src/hooks/use-repos.ts  # useSyncJobs/useSyncRepo in repo hooks
+      config/docker-compose.fragment.yml: docker-compose.yml  # worker service defined in main compose
+    customizations:
+      - "Job model is SyncJob with repository_id FK, not generic job_type field"
+      - "Multiple separate job models (SyncJob, DeliverySyncJob, SastScanRun, DepScanRun, InsightRun, etc.)"
+      - "Each model has its own status enum variant (SastScanStatus, DepScanStatus, etc.)"
+      - "SyncLogger uses 'sync:logs:{id}' prefix instead of 'job:logs:{id}'"
+      - "All tasks in single tasks.py file (986 lines) instead of per-task modules"
+      - "Celery app named 'contributr' instead of generic 'myapp'"
+      - "SSE endpoints scattered across 6+ route files (repositories.py, delivery.py, sast.py, etc.)"
+      - "Phase colors are domain-specific (clone, commits, branches, prs, stats, teams, iterations, etc.)"
+      - "SyncLogViewer uses 'access_token' localStorage key and '/api/repositories/{repoId}/sync-jobs/{jobId}/logs' URL"
+      - "Scheduler uses per-project ProjectSchedule model with 5 interval columns"
+      - "Auto-chaining: sync triggers SAST/dep scans if config flags enabled"
+      - "No JobEvent model; granular events not persisted to DB (only in Redis)"

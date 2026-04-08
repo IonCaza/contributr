@@ -1,0 +1,20 @@
+---
+description: Never run destructive data operations without explicit user permission
+alwaysApply: true
+---
+
+# No Destructive Data Operations Without Permission
+
+**NEVER** run any of the following without the user's **explicit, prior approval**:
+
+- `docker volume rm` / `docker volume prune`
+- `docker compose down -v`
+- `DROP DATABASE` / `DROP TABLE` / `TRUNCATE`
+- `rm -rf` on data directories
+- Any command that deletes, resets, or destroys persistent data (database volumes, caches, file stores)
+
+## What to do instead
+
+1. Propose the fix that **preserves data** (remount, migrate, reconfigure).
+2. If data loss is truly unavoidable, **state that clearly and wait for confirmation** before executing.
+3. Never combine a destructive command with a non-destructive one in a single chained shell invocation (e.g. `docker compose down && docker volume rm ...`) -- this removes the user's chance to intervene.

@@ -40,6 +40,13 @@ from app.db.models.pr_comment import PRComment, PRCommentType
 from app.db.models.adr import AdrRepository, AdrTemplate, Adr, AdrStatus
 from app.db.models.project_schedule import ProjectSchedule, ScheduleInterval
 from app.db.models.presentation import PresentationTemplate, Presentation, PresentationVersion
+from app.db.models.task_item import TaskItem
+from app.db.models.agent_memory import AgentMemory
+from app.db.models.agent_skill import AgentSkill
+from app.db.models.user_contributor_link import UserContributorLink
+from app.db.models.project_membership import ProjectMembership
+from app.db.models.access_policy import AccessPolicy, ResourceGrant
+from app.db.models.access_audit_log import AccessAuditLog
 
 __all__ = [
     "User",
@@ -108,4 +115,12 @@ __all__ = [
     "PresentationTemplate",
     "Presentation",
     "PresentationVersion",
+    "TaskItem",
+    "AgentMemory",
+    "AgentSkill",
+    "UserContributorLink",
+    "ProjectMembership",
+    "AccessPolicy",
+    "ResourceGrant",
+    "AccessAuditLog",
 ]

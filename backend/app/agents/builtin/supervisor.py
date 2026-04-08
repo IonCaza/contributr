@@ -1,18 +1,18 @@
 """Seed data for the built-in Supervisor agent."""
 
 from app.agents.builtin import BuiltinAgentSpec
-from app.agents.prompts.defaults import SUPERVISOR_SYSTEM_PROMPT
+from app.agents.prompts.coordinator import COORDINATOR_SYSTEM_PROMPT
 
 SPEC = BuiltinAgentSpec(
     slug="supervisor",
     name="Contributr Supervisor",
     description=(
         "Coordinating agent that orchestrates all specialist agents. "
-        "Routes questions to the right domain expert(s), synthesizes "
-        "cross-domain responses, and handles complex queries spanning "
-        "code, delivery, security, and insights."
+        "Decomposes complex requests into tasks, delegates to domain "
+        "experts, synthesizes cross-domain responses, and verifies "
+        "results before reporting."
     ),
-    system_prompt=SUPERVISOR_SYSTEM_PROMPT,
+    system_prompt=COORDINATOR_SYSTEM_PROMPT,
     tool_slugs=[],
     agent_type="supervisor",
     member_slugs=[
@@ -24,5 +24,7 @@ SPEC = BuiltinAgentSpec(
         "contributor-coach",
         "sast-analyst",
         "code-reviewer",
+        "verification-agent",
     ],
+    max_iterations=50,
 )

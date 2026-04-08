@@ -22,7 +22,7 @@ from app.db.models.branch import commit_branches
 from app.db.models.repository import Platform
 from app.db.models.sync_job import SyncStatus
 from app.db.models.pull_request import PRState
-from app.auth.dependencies import get_current_user
+from app.auth.dependencies import get_current_user, get_accessible_project_ids
 from app.services.metrics import get_trends, get_bus_factor
 from app.workers.tasks import sync_repository
 
@@ -106,8 +106,19 @@ class SyncJobResponse(BaseModel):
     model_config = {"from_attributes": True}
 
 
+def _check_project_access(project_id: uuid.UUID, accessible: set[uuid.UUID] | None) -> None:
+    if accessible is not None and project_id not in accessible:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No access to this project")
+
+
 @router.get("/projects/{project_id}/repositories", response_model=list[RepoResponse])
-async def list_repositories(project_id: uuid.UUID, db: AsyncSession = Depends(get_db), _user: User = Depends(get_current_user)):
+async def list_repositories(
+    project_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    _user: User = Depends(get_current_user),
+    accessible: set[uuid.UUID] | None = Depends(get_accessible_project_ids),
+):
+    _check_project_access(project_id, accessible)
     result = await db.execute(
         select(Repository).where(Repository.project_id == project_id).order_by(Repository.name)
     )
@@ -115,7 +126,14 @@ async def list_repositories(project_id: uuid.UUID, db: AsyncSession = Depends(ge
 
 
 @router.post("/projects/{project_id}/repositories", response_model=RepoResponse, status_code=status.HTTP_201_CREATED)
-async def create_repository(project_id: uuid.UUID, body: RepoCreate, db: AsyncSession = Depends(get_db), _user: User = Depends(get_current_user)):
+async def create_repository(
+    project_id: uuid.UUID,
+    body: RepoCreate,
+    db: AsyncSession = Depends(get_db),
+    _user: User = Depends(get_current_user),
+    accessible: set[uuid.UUID] | None = Depends(get_accessible_project_ids),
+):
+    _check_project_access(project_id, accessible)
     data = body.model_dump()
     if not data.get("platform_owner") or not data.get("platform_repo"):
         owner, name = _parse_platform_fields(data.get("ssh_url"), data.get("clone_url"), body.platform)
@@ -141,21 +159,34 @@ class RepoUpdate(BaseModel):
     ssh_credential_id: uuid.UUID | None = None
 
 
-@router.get("/repositories/{repo_id}", response_model=RepoResponse)
-async def get_repository(repo_id: uuid.UUID, db: AsyncSession = Depends(get_db), _user: User = Depends(get_current_user)):
+async def _load_repo(db: AsyncSession, repo_id: uuid.UUID, accessible: set[uuid.UUID] | None) -> Repository:
     result = await db.execute(select(Repository).where(Repository.id == repo_id))
     repo = result.scalar_one_or_none()
     if repo is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Repository not found")
+    _check_project_access(repo.project_id, accessible)
     return repo
 
 
+@router.get("/repositories/{repo_id}", response_model=RepoResponse)
+async def get_repository(
+    repo_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    _user: User = Depends(get_current_user),
+    accessible: set[uuid.UUID] | None = Depends(get_accessible_project_ids),
+):
+    return await _load_repo(db, repo_id, accessible)
+
+
 @router.put("/repositories/{repo_id}", response_model=RepoResponse)
-async def update_repository(repo_id: uuid.UUID, body: RepoUpdate, db: AsyncSession = Depends(get_db), _user: User = Depends(get_current_user)):
-    result = await db.execute(select(Repository).where(Repository.id == repo_id))
-    repo = result.scalar_one_or_none()
-    if repo is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Repository not found")
+async def update_repository(
+    repo_id: uuid.UUID,
+    body: RepoUpdate,
+    db: AsyncSession = Depends(get_db),
+    _user: User = Depends(get_current_user),
+    accessible: set[uuid.UUID] | None = Depends(get_accessible_project_ids),
+):
+    repo = await _load_repo(db, repo_id, accessible)
     updates = body.model_dump(exclude_unset=True)
     for field, value in updates.items():
         setattr(repo, field, value)
@@ -171,11 +202,13 @@ async def update_repository(repo_id: uuid.UUID, body: RepoUpdate, db: AsyncSessi
 
 
 @router.delete("/repositories/{repo_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_repository(repo_id: uuid.UUID, db: AsyncSession = Depends(get_db), _user: User = Depends(get_current_user)):
-    result = await db.execute(select(Repository).where(Repository.id == repo_id))
-    repo = result.scalar_one_or_none()
-    if repo is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Repository not found")
+async def delete_repository(
+    repo_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    _user: User = Depends(get_current_user),
+    accessible: set[uuid.UUID] | None = Depends(get_accessible_project_ids),
+):
+    repo = await _load_repo(db, repo_id, accessible)
 
     running = await db.execute(
         select(SyncJob).where(SyncJob.repository_id == repo_id, SyncJob.status.in_([SyncStatus.QUEUED, SyncStatus.RUNNING]))
@@ -198,11 +231,9 @@ async def purge_repository_data(
     repo_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
     _user: User = Depends(get_current_user),
+    accessible: set[uuid.UUID] | None = Depends(get_accessible_project_ids),
 ):
-    result = await db.execute(select(Repository).where(Repository.id == repo_id))
-    repo = result.scalar_one_or_none()
-    if repo is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Repository not found")
+    repo = await _load_repo(db, repo_id, accessible)
 
     running = await db.execute(
         select(SyncJob).where(SyncJob.repository_id == repo_id, SyncJob.status.in_([SyncStatus.QUEUED, SyncStatus.RUNNING]))
@@ -230,11 +261,13 @@ async def purge_repository_data(
 
 
 @router.post("/repositories/{repo_id}/sync", response_model=SyncJobResponse, status_code=status.HTTP_202_ACCEPTED)
-async def trigger_sync(repo_id: uuid.UUID, db: AsyncSession = Depends(get_db), _user: User = Depends(get_current_user)):
-    result = await db.execute(select(Repository).where(Repository.id == repo_id))
-    repo = result.scalar_one_or_none()
-    if repo is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Repository not found")
+async def trigger_sync(
+    repo_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    _user: User = Depends(get_current_user),
+    accessible: set[uuid.UUID] | None = Depends(get_accessible_project_ids),
+):
+    repo = await _load_repo(db, repo_id, accessible)
 
     STALE_QUEUED = timedelta(minutes=10)
     STALE_RUNNING = timedelta(hours=2)

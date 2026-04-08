@@ -11,7 +11,7 @@ from sqlalchemy.orm import selectinload
 from app.db.base import get_db
 from app.db.models import Project, Repository, User, Commit, DailyContributorStats, PullRequest, Review
 from app.db.models.pull_request import PRState
-from app.auth.dependencies import get_current_user
+from app.auth.dependencies import get_current_user, get_accessible_project_ids
 from app.services.metrics import get_trends, get_bus_factor
 
 router = APIRouter(prefix="/projects", tags=["projects"])
@@ -75,8 +75,15 @@ class ProjectDetailResponse(ProjectResponse):
 
 
 @router.get("", response_model=list[ProjectResponse])
-async def list_projects(db: AsyncSession = Depends(get_db), _user: User = Depends(get_current_user)):
-    result = await db.execute(select(Project).order_by(Project.name))
+async def list_projects(
+    db: AsyncSession = Depends(get_db),
+    _user: User = Depends(get_current_user),
+    accessible: set[uuid.UUID] | None = Depends(get_accessible_project_ids),
+):
+    stmt = select(Project).order_by(Project.name)
+    if accessible is not None:
+        stmt = stmt.where(Project.id.in_(accessible))
+    result = await db.execute(stmt)
     return result.scalars().all()
 
 
@@ -87,6 +94,11 @@ async def create_project(body: ProjectCreate, db: AsyncSession = Depends(get_db)
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Project name already exists")
     project = Project(name=body.name, description=body.description, platform_credential_id=body.platform_credential_id)
     db.add(project)
+    await db.flush()
+
+    from app.db.models.project_membership import ProjectMembership
+    db.add(ProjectMembership(user_id=_user.id, project_id=project.id, role="owner"))
+
     await db.commit()
     await db.refresh(project)
     return project

@@ -16,6 +16,8 @@ import app.agents.tools.code_access  # noqa: F401 — registers tools
 import app.agents.tools.dependency_analytics  # noqa: F401 — registers tools
 import app.agents.tools.adr_tools  # noqa: F401 — registers tools
 import app.agents.tools.presentation  # noqa: F401 — registers tools
+import app.agents.tools.task_tools  # noqa: F401 — registers tools
+import app.agents.tools.skill_tool  # noqa: F401 — registers tools
 
 
 async def is_ai_enabled(db: AsyncSession) -> bool:

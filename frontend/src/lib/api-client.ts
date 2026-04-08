@@ -22,7 +22,11 @@ import type {
   ContributorInsightRun, ContributorInsightFinding, ContributorInsightsSummary,
   TeamInsightRun, TeamInsightFinding, TeamInsightsSummary,
   SastScanRun, SastFinding, SastSummary, SastRuleProfile, SastIgnoredRule, SastSettings,
-  DepScanRun, DepFinding, DepSummary, DepSettings,
+  DepScanRun, DepFinding, DepSummary, DepSettings, PaginatedDepFindings,
+  TaskItem,
+  AccessPolicy,
+  AccessPolicyCreate,
+  AccessPolicyUpdate,
 } from "./types";
 
 const API_BASE = "/api";
@@ -411,6 +415,8 @@ export const api = {
   unarchiveChatSession: (id: string) =>
     request<ChatSession>(`/chat/sessions/${id}/unarchive`, { method: "POST" }),
   deleteChatSession: (id: string) => request<void>(`/chat/sessions/${id}`, { method: "DELETE" }),
+  getSessionTasks: (sessionId: string) =>
+    request<TaskItem[]>(`/chat/sessions/${sessionId}/tasks`),
 
   // Teams
   listTeams: (projectId?: string) =>
@@ -740,14 +746,17 @@ export const api = {
   // Dependencies (SCA)
   triggerDepScan: (repoId: string) =>
     request<DepScanRun>(`/repositories/${repoId}/dependencies/scan`, { method: "POST", body: JSON.stringify({}) }),
-  listDepFindings: (repoId: string, params?: { severity?: string; ecosystem?: string; outdated?: boolean; vulnerable?: boolean; status?: string; file_path?: string }) =>
-    request<DepFinding[]>(`/repositories/${repoId}/dependencies/findings${buildQuery({
+  listDepFindings: (repoId: string, params?: { severity?: string; ecosystem?: string; outdated?: boolean; vulnerable?: boolean; status?: string; file_path?: string; search?: string; page?: number; page_size?: number }) =>
+    request<PaginatedDepFindings>(`/repositories/${repoId}/dependencies/findings${buildQuery({
       severity: params?.severity,
       ecosystem: params?.ecosystem,
-      outdated: params?.outdated != null ? String(params.outdated) : undefined,
-      vulnerable: params?.vulnerable != null ? String(params.vulnerable) : undefined,
+      outdated: params?.outdated?.toString(),
+      vulnerable: params?.vulnerable?.toString(),
       status: params?.status,
       file_path: params?.file_path,
+      search: params?.search,
+      page: params?.page?.toString(),
+      page_size: params?.page_size?.toString(),
     })}`),
   getDepSummary: (repoId: string) =>
     request<DepSummary>(`/repositories/${repoId}/dependencies/summary`),
@@ -756,14 +765,17 @@ export const api = {
   dismissDepFinding: (repoId: string, findingId: string) =>
     request<DepFinding>(`/repositories/${repoId}/dependencies/findings/${findingId}/dismiss`, { method: "PATCH" }),
 
-  listProjectDepFindings: (projectId: string, params?: { severity?: string; ecosystem?: string; outdated?: boolean; vulnerable?: boolean; status?: string; file_path?: string }) =>
-    request<DepFinding[]>(`/projects/${projectId}/dependencies/findings${buildQuery({
+  listProjectDepFindings: (projectId: string, params?: { severity?: string; ecosystem?: string; outdated?: boolean; vulnerable?: boolean; status?: string; file_path?: string; search?: string; page?: number; page_size?: number }) =>
+    request<PaginatedDepFindings>(`/projects/${projectId}/dependencies/findings${buildQuery({
       severity: params?.severity,
       ecosystem: params?.ecosystem,
-      outdated: params?.outdated != null ? String(params.outdated) : undefined,
-      vulnerable: params?.vulnerable != null ? String(params.vulnerable) : undefined,
+      outdated: params?.outdated?.toString(),
+      vulnerable: params?.vulnerable?.toString(),
       status: params?.status,
       file_path: params?.file_path,
+      search: params?.search,
+      page: params?.page?.toString(),
+      page_size: params?.page_size?.toString(),
     })}`),
   getProjectDepSummary: (projectId: string) =>
     request<DepSummary>(`/projects/${projectId}/dependencies/summary`),
@@ -897,6 +909,16 @@ export const api = {
     request<import("./types").PresentationTemplate>(`/presentations/templates/latest`),
   executePresentationQuery: (projectId: string, toolSlug: string, params: Record<string, unknown>) =>
     request<{ result: unknown }>(`/projects/${projectId}/presentations/data`, { method: "POST", body: JSON.stringify({ tool_slug: toolSlug, params }) }),
+
+  // Access policies (admin / RBAC)
+  listAccessPolicies: (params?: { scope_type?: string }) =>
+    request<AccessPolicy[]>(`/access-policies${buildQuery({ scope_type: params?.scope_type })}`),
+  createAccessPolicy: (data: AccessPolicyCreate) =>
+    request<AccessPolicy>("/access-policies", { method: "POST", body: JSON.stringify(data) }),
+  updateAccessPolicy: (id: string, data: AccessPolicyUpdate) =>
+    request<AccessPolicy>(`/access-policies/${id}`, { method: "PUT", body: JSON.stringify(data) }),
+  deleteAccessPolicy: (id: string) =>
+    request<void>(`/access-policies/${id}`, { method: "DELETE" }),
 
   getApiBase: () => API_BASE,
   getAuthToken: () => getToken(),

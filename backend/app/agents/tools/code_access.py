@@ -751,4 +751,4 @@ def _build_code_access_tools(db: AsyncSession) -> list:
     ]
 
 
-register_tool_category(CATEGORY, DEFINITIONS, _build_code_access_tools)
+register_tool_category(CATEGORY, DEFINITIONS, _build_code_access_tools, concurrency_safe=True)

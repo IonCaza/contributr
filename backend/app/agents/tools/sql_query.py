@@ -1,4 +1,4 @@
-"""Read-only SQL query tool with SELECT-only guardrail."""
+"""Read-only SQL query tool with SELECT-only guardrail and RLS session injection."""
 from __future__ import annotations
 
 import re
@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents.tools.base import ToolDefinition
 from app.agents.tools.registry import register_tool_category
+from app.agents.context.entitlements import current_entitlements
 
 logger = logging.getLogger(__name__)
 
@@ -59,6 +60,15 @@ def _validate_select_only(sql: str) -> str | None:
     return None
 
 
+async def _inject_rls_vars(db: AsyncSession) -> None:
+    """SET LOCAL session variables from the current EntitlementContext for RLS policies."""
+    ctx = current_entitlements.get()
+    if ctx is None:
+        return
+    for key, value in ctx.rls_vars.items():
+        await db.execute(text(f"SET LOCAL \"{key}\" = :val"), {"val": value})
+
+
 def _build_tools(db: AsyncSession) -> list:
 
     @tool
@@ -80,6 +90,7 @@ def _build_tools(db: AsyncSession) -> list:
         limited_sql = f"SELECT * FROM ({limited_sql}) AS _q LIMIT {_MAX_ROWS}"
 
         try:
+            await _inject_rls_vars(db)
             result = await db.execute(text(limited_sql))
             rows = result.fetchall()
             columns = list(result.keys())
@@ -110,6 +121,12 @@ def _build_tools(db: AsyncSession) -> list:
 
         return f"{header}\n{sep}\n{body}{footer}"
 
+    def _get_allowed_tables() -> frozenset[str] | None:
+        ctx = current_entitlements.get()
+        if ctx is None or ctx.is_platform_admin:
+            return None
+        return ctx.sql_allowed_tables
+
     @tool
     async def list_tables() -> str:
         """List all user-facing database tables with their descriptions.
@@ -133,11 +150,15 @@ def _build_tools(db: AsyncSession) -> list:
         if not rows:
             return "No tables found."
 
+        allowed = _get_allowed_tables()
         lines = []
         for row in rows:
+            tname = row[0]
+            if allowed is not None and tname not in allowed:
+                continue
             desc = row[1] or ""
-            lines.append(f"- {row[0]}: {desc}" if desc else f"- {row[0]}")
-        return "\n".join(lines)
+            lines.append(f"- {tname}: {desc}" if desc else f"- {tname}")
+        return "\n".join(lines) if lines else "No accessible tables found."
 
     @tool
     async def describe_table(table_name: str) -> str:
@@ -146,6 +167,10 @@ def _build_tools(db: AsyncSession) -> list:
         Args:
             table_name: The exact table name (e.g. 'commits', 'pull_requests').
         """
+        allowed = _get_allowed_tables()
+        if allowed is not None and table_name not in allowed:
+            return f"Access denied: table '{table_name}' is not in your allowed set."
+
         query = text(
             "SELECT c.column_name, c.data_type, c.is_nullable, "
             "  c.column_default, "

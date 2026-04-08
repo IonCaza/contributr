@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, useCallback } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Terminal, Circle, ChevronDown, ChevronUp } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -60,8 +60,10 @@ export function SyncLogViewer({ repoId, jobId, logUrl, compact = false, title = 
   const bottomRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const esRef = useRef<EventSource | null>(null);
+  const onDoneRef = useRef(onDone);
+  onDoneRef.current = onDone;
 
-  const connect = useCallback(() => {
+  useEffect(() => {
     const token = typeof window !== "undefined" ? localStorage.getItem("access_token") : null;
     const tokenSuffix = token ? `?token=${encodeURIComponent(token)}` : "";
     let url: string;
@@ -84,7 +86,7 @@ export function SyncLogViewer({ repoId, jobId, logUrl, compact = false, title = 
     es.addEventListener("done", () => {
       setLive(false);
       es.close();
-      onDone?.();
+      onDoneRef.current?.();
     });
 
     es.onerror = () => {
@@ -92,15 +94,10 @@ export function SyncLogViewer({ repoId, jobId, logUrl, compact = false, title = 
       es.close();
     };
 
-    return es;
-  }, [repoId, jobId, logUrl, onDone]);
-
-  useEffect(() => {
-    const es = connect();
     return () => {
       es.close();
     };
-  }, [connect]);
+  }, [repoId, jobId, logUrl]);
 
   useEffect(() => {
     const el = containerRef.current;

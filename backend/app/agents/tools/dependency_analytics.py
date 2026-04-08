@@ -275,4 +275,4 @@ async def _resolve_scope(
     return filters
 
 
-register_tool_category(CATEGORY, DEFINITIONS, _build_dependency_tools)
+register_tool_category(CATEGORY, DEFINITIONS, _build_dependency_tools, concurrency_safe=True)

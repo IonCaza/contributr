@@ -1,16 +1,17 @@
 "use client";
 
-import { use, useState, useCallback } from "react";
+import { use, useState, useCallback, useDeferredValue } from "react";
 import {
   Package, ShieldAlert, AlertTriangle, AlertCircle, ArrowUpCircle,
   CheckCircle2, Play, Loader2, ChevronDown, ChevronRight, Info,
-  Download, ExternalLink, EyeOff,
+  Download, ExternalLink, EyeOff, Search, ChevronLeft,
 } from "lucide-react";
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
@@ -333,23 +334,27 @@ export default function ProjectDependenciesPage({
   const [ecosystemFilter, setEcosystemFilter] = useState("");
   const [viewFilter, setViewFilter] = useState<"all" | "vulnerable" | "outdated">("all");
   const [scanningRepoId, setScanningRepoId] = useState<string | null>(null);
+  const [searchInput, setSearchInput] = useState("");
+  const deferredSearch = useDeferredValue(searchInput);
+  const [page, setPage] = useState(1);
+  const PAGE_SIZE = 50;
 
   const { data: repos = [], isLoading: reposLoading } = useProjectRepos(projectId);
   const { data: summary, isLoading: summaryLoading } = useProjectDepSummary(projectId);
   const { data: runs = [] } = useProjectDepRuns(projectId);
 
-  const filters: Record<string, unknown> = {};
-  if (severityFilter) filters.severity = severityFilter;
-  if (ecosystemFilter) filters.ecosystem = ecosystemFilter;
-  if (viewFilter === "vulnerable") filters.vulnerable = true;
-  if (viewFilter === "outdated") filters.outdated = true;
-
-  const { data: findings = [], isLoading: findingsLoading } = useProjectDepFindings(projectId, {
+  const { data: findingsPage, isLoading: findingsLoading, isPlaceholderData } = useProjectDepFindings(projectId, {
     severity: severityFilter || undefined,
     ecosystem: ecosystemFilter || undefined,
     vulnerable: viewFilter === "vulnerable" ? true : undefined,
     outdated: viewFilter === "outdated" ? true : undefined,
+    search: deferredSearch || undefined,
+    page,
+    page_size: PAGE_SIZE,
   });
+  const findings = findingsPage?.items ?? [];
+  const totalFindings = findingsPage?.total ?? 0;
+  const totalPages = Math.max(1, Math.ceil(totalFindings / PAGE_SIZE));
 
   const triggerScan = useTriggerProjectDepScan(projectId);
   const dismissFinding = useDismissProjectDepFinding(projectId);
@@ -463,7 +468,7 @@ export default function ProjectDependenciesPage({
               key={eco}
               variant="outline"
               className={`text-sm cursor-pointer ${ECOSYSTEM_COLORS[eco] || ""} ${ecosystemFilter === eco ? "ring-2 ring-primary" : ""}`}
-              onClick={() => setEcosystemFilter(ecosystemFilter === eco ? "" : eco)}
+              onClick={() => { setEcosystemFilter(ecosystemFilter === eco ? "" : eco); setPage(1); }}
             >
               {eco}: {summary!.by_ecosystem[eco]}
             </Badge>
@@ -471,13 +476,22 @@ export default function ProjectDependenciesPage({
         </div>
       )}
 
-      {/* Filter Bar */}
+      {/* Search + Filter Bar */}
       <div className={`flex flex-wrap items-center gap-2 ${ANIM_CARD}`} style={stagger(3)}>
+        <div className="relative">
+          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+          <Input
+            placeholder="Search packages…"
+            value={searchInput}
+            onChange={(e) => { setSearchInput(e.target.value); setPage(1); }}
+            className="h-8 w-56 pl-8 text-sm"
+          />
+        </div>
         <div className="inline-flex h-8 items-center rounded-md bg-muted p-0.5 text-muted-foreground">
           {VIEWS.map((v) => (
             <button
               key={v.value}
-              onClick={() => setViewFilter(v.value)}
+              onClick={() => { setViewFilter(v.value); setPage(1); }}
               className={`inline-flex items-center rounded-sm px-2.5 py-1 text-xs font-medium transition-all ${
                 viewFilter === v.value
                   ? "bg-background text-foreground shadow-sm"
@@ -492,7 +506,7 @@ export default function ProjectDependenciesPage({
           {SEVERITIES.map((s) => (
             <button
               key={s.value}
-              onClick={() => setSeverityFilter(s.value)}
+              onClick={() => { setSeverityFilter(s.value); setPage(1); }}
               className={`inline-flex items-center rounded-sm px-2.5 py-1 text-xs font-medium transition-all ${
                 severityFilter === s.value
                   ? "bg-background text-foreground shadow-sm"
@@ -504,7 +518,7 @@ export default function ProjectDependenciesPage({
           ))}
         </div>
         {ecosystemFilter && (
-          <Button variant="ghost" size="sm" onClick={() => setEcosystemFilter("")}>
+          <Button variant="ghost" size="sm" onClick={() => { setEcosystemFilter(""); setPage(1); }}>
             Clear {ecosystemFilter} filter
           </Button>
         )}
@@ -512,7 +526,17 @@ export default function ProjectDependenciesPage({
 
       {/* Findings List */}
       <div className={`space-y-2 ${ANIM_CARD}`} style={stagger(4)}>
-        {findingsLoading ? (
+        {!findingsLoading && totalFindings > 0 && (
+          <div className="flex items-center justify-between text-sm text-muted-foreground">
+            <span>
+              Showing {((page - 1) * PAGE_SIZE) + 1}–{Math.min(page * PAGE_SIZE, totalFindings)} of {totalFindings.toLocaleString()} packages
+            </span>
+            {totalPages > 1 && (
+              <span>Page {page} of {totalPages}</span>
+            )}
+          </div>
+        )}
+        {findingsLoading && !isPlaceholderData ? (
           Array.from({ length: 5 }).map((_, i) => (
             <Skeleton key={i} className="h-16 rounded-lg" />
           ))
@@ -521,19 +545,66 @@ export default function ProjectDependenciesPage({
             <CardContent className="py-12 text-center text-muted-foreground">
               <Package className="h-12 w-12 mx-auto mb-3 opacity-30" />
               <p className="text-lg font-medium">No dependency findings</p>
-              <p className="text-sm">Run a scan to analyze your project&apos;s dependencies.</p>
+              <p className="text-sm">
+                {deferredSearch ? "No packages match your search." : "Run a scan to analyze your project\u2019s dependencies."}
+              </p>
             </CardContent>
           </Card>
         ) : (
-          findings.map((f) => (
-            <FindingCard
-              key={f.id}
-              finding={f}
-              onDismiss={() =>
-                dismissFinding.mutate({ repoId: f.repository_id, findingId: f.id })
+          <div className={isPlaceholderData ? "opacity-60 transition-opacity" : ""}>
+            {findings.map((f) => (
+              <FindingCard
+                key={f.id}
+                finding={f}
+                onDismiss={() =>
+                  dismissFinding.mutate({ repoId: f.repository_id, findingId: f.id })
+                }
+              />
+            ))}
+          </div>
+        )}
+        {totalPages > 1 && (
+          <div className="flex items-center justify-center gap-1 pt-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setPage((p) => Math.max(1, p - 1))}
+              disabled={page <= 1}
+            >
+              <ChevronLeft className="h-4 w-4" />
+            </Button>
+            {Array.from({ length: Math.min(totalPages, 7) }, (_, i) => {
+              let pageNum: number;
+              if (totalPages <= 7) {
+                pageNum = i + 1;
+              } else if (page <= 4) {
+                pageNum = i + 1;
+              } else if (page >= totalPages - 3) {
+                pageNum = totalPages - 6 + i;
+              } else {
+                pageNum = page - 3 + i;
               }
-            />
-          ))
+              return (
+                <Button
+                  key={pageNum}
+                  variant={pageNum === page ? "default" : "outline"}
+                  size="sm"
+                  className="w-8 px-0"
+                  onClick={() => setPage(pageNum)}
+                >
+                  {pageNum}
+                </Button>
+              );
+            })}
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+              disabled={page >= totalPages}
+            >
+              <ChevronRight className="h-4 w-4" />
+            </Button>
+          </div>
         )}
       </div>
 
@@ -556,13 +627,14 @@ export default function ProjectDependenciesPage({
               </TableHeader>
               <TableBody>
                 {repos.map((repo) => {
-                  const repoFindings = findings.filter((f) => f.repository_id === repo.id);
-                  const vulnCount = repoFindings.filter((f) => f.is_vulnerable).length;
-                  const outdatedCount = repoFindings.filter((f) => f.is_outdated).length;
+                  const latestRun = runs.find((r) => r.repository_id === repo.id && r.status === "completed");
+                  const pkgCount = latestRun?.findings_count ?? 0;
+                  const vulnCount = latestRun?.vulnerable_count ?? 0;
+                  const outdatedCount = latestRun?.outdated_count ?? 0;
                   return (
                     <TableRow key={repo.id}>
                       <TableCell className="font-medium">{repo.name}</TableCell>
-                      <TableCell className="text-right">{repoFindings.length}</TableCell>
+                      <TableCell className="text-right">{pkgCount}</TableCell>
                       <TableCell className="text-right">
                         {vulnCount > 0 ? (
                           <span className="text-red-600 font-medium">{vulnCount}</span>

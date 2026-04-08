@@ -227,7 +227,7 @@ export function SidebarNav({ aiEnabled, chatOpen, onChatToggle }: SidebarNavProp
           ))}
         {user && (
           <>
-            <Separator className="!my-2" />
+            {aiEnabled && <Separator className="!my-2" />}
             <UserSection
               user={user}
               pathname={pathname}

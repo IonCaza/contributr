@@ -17,7 +17,7 @@ from app.db.models.dependency import (
     DepScanRun, DepScanStatus, DependencyFinding, DepFindingStatus,
     DepFindingSeverity,
 )
-from app.auth.dependencies import get_current_user
+from app.auth.dependencies import get_current_user, get_accessible_project_ids
 
 
 # ---------------------------------------------------------------------------
@@ -77,6 +77,13 @@ class DepSummary(BaseModel):
     by_file: dict[str, int]
 
 
+class PaginatedFindings(BaseModel):
+    items: list[DepFindingOut]
+    total: int
+    page: int
+    page_size: int
+
+
 class DepScanTrigger(BaseModel):
     pass
 
@@ -99,11 +106,13 @@ repo_router = APIRouter(
 )
 
 
-async def _get_repo(db: AsyncSession, repo_id: uuid.UUID) -> Repository:
+async def _get_repo(db: AsyncSession, repo_id: uuid.UUID, accessible: set[uuid.UUID] | None = None) -> Repository:
     result = await db.execute(select(Repository).where(Repository.id == repo_id))
     repo = result.scalar_one_or_none()
     if not repo:
         raise HTTPException(status_code=404, detail="Repository not found")
+    if accessible is not None and repo.project_id not in accessible:
+        raise HTTPException(status_code=403, detail="No access to this project")
     return repo
 
 
@@ -113,8 +122,9 @@ async def trigger_scan(
     body: DepScanTrigger | None = None,
     db: AsyncSession = Depends(get_db),
     _user: User = Depends(get_current_user),
+    accessible: set[uuid.UUID] | None = Depends(get_accessible_project_ids),
 ):
-    repo = await _get_repo(db, repo_id)
+    repo = await _get_repo(db, repo_id, accessible)
 
     stale_cutoff = datetime.now(timezone.utc) - timedelta(minutes=10)
     stale_q = select(DepScanRun).where(
@@ -142,7 +152,7 @@ async def trigger_scan(
     return scan_run
 
 
-@repo_router.get("/findings", response_model=list[DepFindingOut])
+@repo_router.get("/findings", response_model=PaginatedFindings)
 async def list_repo_findings(
     repo_id: uuid.UUID,
     severity: str | None = None,
@@ -151,12 +161,18 @@ async def list_repo_findings(
     vulnerable: bool | None = None,
     file_path: str | None = None,
     finding_status: str | None = Query(None, alias="status"),
+    search: str | None = None,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=200),
     db: AsyncSession = Depends(get_db),
     _user: User = Depends(get_current_user),
+    accessible: set[uuid.UUID] | None = Depends(get_accessible_project_ids),
 ):
-    await _get_repo(db, repo_id)
+    await _get_repo(db, repo_id, accessible)
     q = select(DependencyFinding).where(DependencyFinding.repository_id == repo_id)
 
+    if search:
+        q = q.where(DependencyFinding.package_name.ilike(f"%{search}%"))
     if severity:
         q = q.where(DependencyFinding.severity == DepFindingSeverity(severity))
     if ecosystem:
@@ -173,7 +189,15 @@ async def list_repo_findings(
         q = q.where(DependencyFinding.status == DepFindingStatus.ACTIVE)
 
     q = q.order_by(DependencyFinding.severity, DependencyFinding.is_vulnerable.desc(), DependencyFinding.package_name)
-    return (await db.execute(q)).scalars().all()
+
+    total = await db.scalar(select(func.count()).select_from(q.subquery()))
+    q = q.offset((page - 1) * page_size).limit(page_size)
+    return PaginatedFindings(
+        items=list((await db.execute(q)).scalars().all()),
+        total=total,
+        page=page,
+        page_size=page_size,
+    )
 
 
 @repo_router.get("/summary", response_model=DepSummary)
@@ -181,8 +205,9 @@ async def get_repo_summary(
     repo_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
     _user: User = Depends(get_current_user),
+    accessible: set[uuid.UUID] | None = Depends(get_accessible_project_ids),
 ):
-    await _get_repo(db, repo_id)
+    await _get_repo(db, repo_id, accessible)
     return await _build_summary(db, repository_id=repo_id)
 
 
@@ -192,8 +217,9 @@ async def list_repo_runs(
     limit: int = Query(20, le=100),
     db: AsyncSession = Depends(get_db),
     _user: User = Depends(get_current_user),
+    accessible: set[uuid.UUID] | None = Depends(get_accessible_project_ids),
 ):
-    await _get_repo(db, repo_id)
+    await _get_repo(db, repo_id, accessible)
     q = (
         select(DepScanRun)
         .where(DepScanRun.repository_id == repo_id)
@@ -314,15 +340,17 @@ project_router = APIRouter(
 )
 
 
-async def _get_project(db: AsyncSession, project_id: uuid.UUID) -> Project:
+async def _get_project(db: AsyncSession, project_id: uuid.UUID, accessible: set[uuid.UUID] | None = None) -> Project:
     result = await db.execute(select(Project).where(Project.id == project_id))
     project = result.scalar_one_or_none()
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
+    if accessible is not None and project.id not in accessible:
+        raise HTTPException(status_code=403, detail="No access to this project")
     return project
 
 
-@project_router.get("/findings", response_model=list[DepFindingOut])
+@project_router.get("/findings", response_model=PaginatedFindings)
 async def list_project_findings(
     project_id: uuid.UUID,
     severity: str | None = None,
@@ -331,12 +359,18 @@ async def list_project_findings(
     vulnerable: bool | None = None,
     file_path: str | None = None,
     finding_status: str | None = Query(None, alias="status"),
+    search: str | None = None,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=200),
     db: AsyncSession = Depends(get_db),
     _user: User = Depends(get_current_user),
+    accessible: set[uuid.UUID] | None = Depends(get_accessible_project_ids),
 ):
-    await _get_project(db, project_id)
+    await _get_project(db, project_id, accessible)
     q = select(DependencyFinding).where(DependencyFinding.project_id == project_id)
 
+    if search:
+        q = q.where(DependencyFinding.package_name.ilike(f"%{search}%"))
     if severity:
         q = q.where(DependencyFinding.severity == DepFindingSeverity(severity))
     if ecosystem:
@@ -353,7 +387,15 @@ async def list_project_findings(
         q = q.where(DependencyFinding.status == DepFindingStatus.ACTIVE)
 
     q = q.order_by(DependencyFinding.severity, DependencyFinding.is_vulnerable.desc(), DependencyFinding.package_name)
-    return (await db.execute(q)).scalars().all()
+
+    total = await db.scalar(select(func.count()).select_from(q.subquery()))
+    q = q.offset((page - 1) * page_size).limit(page_size)
+    return PaginatedFindings(
+        items=list((await db.execute(q)).scalars().all()),
+        total=total,
+        page=page,
+        page_size=page_size,
+    )
 
 
 @project_router.get("/summary", response_model=DepSummary)
@@ -361,8 +403,9 @@ async def get_project_summary(
     project_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
     _user: User = Depends(get_current_user),
+    accessible: set[uuid.UUID] | None = Depends(get_accessible_project_ids),
 ):
-    await _get_project(db, project_id)
+    await _get_project(db, project_id, accessible)
     return await _build_summary(db, project_id=project_id)
 
 
@@ -372,8 +415,9 @@ async def list_project_runs(
     limit: int = Query(20, le=100),
     db: AsyncSession = Depends(get_db),
     _user: User = Depends(get_current_user),
+    accessible: set[uuid.UUID] | None = Depends(get_accessible_project_ids),
 ):
-    await _get_project(db, project_id)
+    await _get_project(db, project_id, accessible)
     q = (
         select(DepScanRun)
         .where(DepScanRun.project_id == project_id)

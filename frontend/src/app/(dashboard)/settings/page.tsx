@@ -46,6 +46,7 @@ import {
 import { useFeedback, useUpdateFeedback, useDeleteFeedback } from "@/hooks/use-feedback";
 import type { FeedbackItem } from "@/lib/types";
 import { MfaSetupDialog } from "@/components/mfa-setup-dialog";
+import AccessPolicySettings from "@/components/access-policy-settings";
 
 function CreateKnowledgeGraphDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
   const [form, setForm] = useState({ name: "", description: "", generation_mode: "schema_and_entities" });
@@ -1541,7 +1542,7 @@ export default function SettingsPage() {
       max_iterations: parseInt(agentForm.max_iterations) || 10,
       summary_token_limit: agentForm.summary_token_limit ? parseInt(agentForm.summary_token_limit) : null,
       enabled: agentForm.enabled,
-      tool_slugs: agentForm.agent_type === "supervisor" ? [] : agentForm.tool_slugs,
+      tool_slugs: agentForm.tool_slugs,
       knowledge_graph_ids: agentForm.knowledge_graph_ids,
       member_agent_ids: agentForm.agent_type === "supervisor" ? agentForm.member_agent_ids : [],
     };
@@ -1618,6 +1619,7 @@ export default function SettingsPage() {
           <TabsTrigger value="sast" className="gap-2"><ShieldAlert className="h-4 w-4" /> SAST</TabsTrigger>
           <TabsTrigger value="feedback" className="gap-2"><MessageSquareWarning className="h-4 w-4" /> Feedback</TabsTrigger>
           <TabsTrigger value="backup" className="gap-2"><Database className="h-4 w-4" /> Backup</TabsTrigger>
+          {user?.is_admin && <TabsTrigger value="access-policies" className="gap-2"><Shield className="h-4 w-4" /> Access Policies</TabsTrigger>}
         </TabsList>
 
         <TabsContent value="ssh-keys" className="min-w-0 space-y-4">
@@ -2663,7 +2665,7 @@ export default function SettingsPage() {
                     />
                   </div>
 
-                  {agentForm.agent_type === "supervisor" ? (
+                  {agentForm.agent_type === "supervisor" && (
                     <div className="space-y-2">
                       <Label className="flex items-center gap-2"><Users className="h-3.5 w-3.5" /> Member Agents</Label>
                       <p className="text-xs text-muted-foreground">Select which agents this supervisor can delegate to. Only enabled standard agents are shown.</p>
@@ -2691,10 +2693,15 @@ export default function SettingsPage() {
                         ))}
                       </div>
                     </div>
-                  ) : (
-                    <div className="space-y-2">
-                      <Label className="flex items-center gap-2"><Wrench className="h-3.5 w-3.5" /> Assigned Tools</Label>
-                      <p className="text-xs text-muted-foreground">Select which tools this agent can use. If none are selected, the agent will have access to all tools.</p>
+                  )}
+
+                  <div className="space-y-2">
+                    <Label className="flex items-center gap-2"><Wrench className="h-3.5 w-3.5" /> {agentForm.agent_type === "supervisor" ? "Direct Tools" : "Assigned Tools"}</Label>
+                    <p className="text-xs text-muted-foreground">
+                      {agentForm.agent_type === "supervisor"
+                        ? "Tools this supervisor can invoke directly (in addition to delegating to member agents). If none are selected, the supervisor has access to all tools."
+                        : "Select which tools this agent can use. If none are selected, the agent will have access to all tools."}
+                    </p>
 
                       <div className="relative">
                         <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
@@ -2780,7 +2787,6 @@ export default function SettingsPage() {
                         )}
                       </div>
                     </div>
-                  )}
 
                   {/* Knowledge Graphs */}
                   {knowledgeGraphs.length > 0 && (
@@ -3256,6 +3262,12 @@ export default function SettingsPage() {
             </Card>
           )}
         </TabsContent>
+
+        {user?.is_admin && (
+          <TabsContent value="access-policies" className="min-w-0 space-y-4">
+            <AccessPolicySettings />
+          </TabsContent>
+        )}
 
         <TabsContent value="feedback" className="min-w-0 space-y-4">
           <Card>

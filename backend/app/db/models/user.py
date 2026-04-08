@@ -46,5 +46,10 @@ class User(Base):
     oidc_provider_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("oidc_providers.id", ondelete="SET NULL"), nullable=True)
     oidc_subject: Mapped[str | None] = mapped_column(String(255), nullable=True, comment="Subject claim from the OIDC ID token")
 
+    last_memory_consolidation: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True,
+        comment="Last time memory consolidation ran for this user",
+    )
+
     ssh_credentials = relationship("SSHCredential", back_populates="created_by_user", cascade="all, delete-orphan", passive_deletes=True)
     oidc_provider = relationship("OidcProvider")

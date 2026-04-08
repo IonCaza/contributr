@@ -17,7 +17,7 @@ from app.db.models.daily_delivery_stats import DailyDeliveryStats
 from app.db.models.branch import commit_branches
 from app.db.models.pull_request import PRState
 from app.db.models.project import Project
-from app.auth.dependencies import get_current_user
+from app.auth.dependencies import get_current_user, get_accessible_project_ids
 from app.services.metrics import get_trends
 
 router = APIRouter(prefix="/contributors", tags=["contributors"])
@@ -91,13 +91,20 @@ async def list_contributors(
     project_id: uuid.UUID | None = None,
     db: AsyncSession = Depends(get_db),
     _user: User = Depends(get_current_user),
+    accessible: set[uuid.UUID] | None = Depends(get_accessible_project_ids),
 ):
+    from app.db.models.project import project_contributors
     query = select(Contributor).options(selectinload(Contributor.projects)).order_by(Contributor.canonical_name)
     if project_id:
-        from app.db.models.project import project_contributors
+        if accessible is not None and project_id not in accessible:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No access to this project")
         query = query.join(project_contributors).where(project_contributors.c.project_id == project_id)
+    elif accessible is not None:
+        query = query.join(project_contributors).where(
+            project_contributors.c.project_id.in_(accessible)
+        ).distinct()
     result = await db.execute(query)
-    return result.scalars().all()
+    return result.scalars().unique().all()
 
 
 @router.get("/{contributor_id}", response_model=ContributorResponse)

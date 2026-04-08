@@ -172,6 +172,24 @@ async def _daily_stats_from_commits(
     return rows
 
 
+def _apply_project_scope(
+    query,
+    stats_repo_col,
+    project_id: uuid.UUID | None,
+    accessible_project_ids: set[uuid.UUID] | None,
+):
+    """Join through Repository to restrict by project_id or accessible set."""
+    if project_id:
+        query = query.join(Repository, Repository.id == stats_repo_col).where(
+            Repository.project_id == project_id
+        )
+    elif accessible_project_ids is not None:
+        query = query.join(Repository, Repository.id == stats_repo_col).where(
+            Repository.project_id.in_(accessible_project_ids)
+        )
+    return query
+
+
 async def get_daily_stats(
     db: AsyncSession,
     from_date: date,
@@ -180,6 +198,7 @@ async def get_daily_stats(
     repository_id: uuid.UUID | None = None,
     project_id: uuid.UUID | None = None,
     branch_names: list[str] | None = None,
+    accessible_project_ids: set[uuid.UUID] | None = None,
 ) -> list[dict]:
     if branch_names:
         return await _daily_stats_from_commits(
@@ -207,11 +226,7 @@ async def get_daily_stats(
         query = query.where(DailyContributorStats.contributor_id == contributor_id)
     if repository_id:
         query = query.where(DailyContributorStats.repository_id == repository_id)
-    if project_id:
-        from app.db.models import Repository
-        query = query.join(Repository, Repository.id == DailyContributorStats.repository_id).where(
-            Repository.project_id == project_id
-        )
+    query = _apply_project_scope(query, DailyContributorStats.repository_id, project_id, accessible_project_ids)
 
     query = query.order_by(DailyContributorStats.date)
     result = await db.execute(query)
@@ -225,6 +240,7 @@ async def get_weekly_stats(
     contributor_id: uuid.UUID | None = None,
     repository_id: uuid.UUID | None = None,
     project_id: uuid.UUID | None = None,
+    accessible_project_ids: set[uuid.UUID] | None = None,
 ) -> list[dict]:
     base = select(
         func.date_trunc("week", DailyContributorStats.date).label("week"),
@@ -246,11 +262,7 @@ async def get_weekly_stats(
         base = base.where(DailyContributorStats.contributor_id == contributor_id)
     if repository_id:
         base = base.where(DailyContributorStats.repository_id == repository_id)
-    if project_id:
-        from app.db.models import Repository
-        base = base.join(Repository, Repository.id == DailyContributorStats.repository_id).where(
-            Repository.project_id == project_id
-        )
+    base = _apply_project_scope(base, DailyContributorStats.repository_id, project_id, accessible_project_ids)
 
     base = base.group_by(text("week"), DailyContributorStats.contributor_id).order_by(text("week"))
     result = await db.execute(base)
@@ -264,6 +276,7 @@ async def get_monthly_stats(
     contributor_id: uuid.UUID | None = None,
     repository_id: uuid.UUID | None = None,
     project_id: uuid.UUID | None = None,
+    accessible_project_ids: set[uuid.UUID] | None = None,
 ) -> list[dict]:
     base = select(
         func.date_trunc("month", DailyContributorStats.date).label("month"),
@@ -285,11 +298,7 @@ async def get_monthly_stats(
         base = base.where(DailyContributorStats.contributor_id == contributor_id)
     if repository_id:
         base = base.where(DailyContributorStats.repository_id == repository_id)
-    if project_id:
-        from app.db.models import Repository
-        base = base.join(Repository, Repository.id == DailyContributorStats.repository_id).where(
-            Repository.project_id == project_id
-        )
+    base = _apply_project_scope(base, DailyContributorStats.repository_id, project_id, accessible_project_ids)
 
     base = base.group_by(text("month"), DailyContributorStats.contributor_id).order_by(text("month"))
     result = await db.execute(base)
@@ -302,6 +311,7 @@ async def get_trends(
     repository_id: uuid.UUID | None = None,
     project_id: uuid.UUID | None = None,
     branch_names: list[str] | None = None,
+    accessible_project_ids: set[uuid.UUID] | None = None,
 ) -> dict:
     """Compute 7-day and 30-day rolling averages and week-over-week deltas."""
     today = date.today()
@@ -341,11 +351,7 @@ async def get_trends(
                 q = q.where(DailyContributorStats.contributor_id == contributor_id)
             if repository_id:
                 q = q.where(DailyContributorStats.repository_id == repository_id)
-            if project_id:
-                from app.db.models import Repository
-                q = q.join(Repository, Repository.id == DailyContributorStats.repository_id).where(
-                    Repository.project_id == project_id
-                )
+            q = _apply_project_scope(q, DailyContributorStats.repository_id, project_id, accessible_project_ids)
         row = (await db.execute(q)).one()
         return row._asdict()
 

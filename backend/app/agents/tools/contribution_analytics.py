@@ -20,6 +20,7 @@ from app.db.models.review import ReviewState
 from app.services.metrics import get_trends, get_bus_factor, get_top_contributors
 from app.agents.tools.base import ToolDefinition
 from app.agents.tools.registry import register_tool_category
+from app.agents.tools.scoping import scoped_query
 
 logger = logging.getLogger(__name__)
 
@@ -101,10 +102,13 @@ async def _resolve_project(db: AsyncSession, name: str) -> Project | None:
 
 async def _resolve_contributor(db: AsyncSession, name_or_email: str) -> Contributor | None:
     result = await db.execute(
-        select(Contributor).where(
-            Contributor.canonical_name.ilike(f"%{name_or_email}%")
-            | Contributor.canonical_email.ilike(f"%{name_or_email}%")
-        ).order_by(Contributor.canonical_name).limit(1)
+        scoped_query(
+            select(Contributor).where(
+                Contributor.canonical_name.ilike(f"%{name_or_email}%")
+                | Contributor.canonical_email.ilike(f"%{name_or_email}%")
+            ).order_by(Contributor.canonical_name).limit(1),
+            contributor_col=Contributor.id,
+        )
     )
     return result.scalar_one_or_none()
 
@@ -117,6 +121,7 @@ async def _resolve_repository(
         project = await _resolve_project(db, project_name)
         if project:
             stmt = stmt.where(Repository.project_id == project.id)
+    stmt = scoped_query(stmt, project_col=Repository.project_id)
     result = await db.execute(stmt.order_by(Repository.name).limit(1))
     return result.scalar_one_or_none()
 
@@ -181,13 +186,14 @@ def _build_contribution_tools(db: AsyncSession) -> list:
                 .scalar_subquery()
                 .label("contributor_count")
             )
-            stmt = (
+            stmt = scoped_query(
                 select(Project.name, Project.description, repo_count, contrib_count)
                 .outerjoin(Repository, Repository.project_id == Project.id)
                 .where(Project.name.ilike(f"%{name}%"))
                 .group_by(Project.id)
                 .order_by(Project.name)
-                .limit(10)
+                .limit(10),
+                project_col=Repository.project_id,
             )
             result = await db.execute(stmt)
             rows = result.all()
@@ -218,7 +224,7 @@ def _build_contribution_tools(db: AsyncSession) -> list:
             name_or_email: Name or email (partial match, case-insensitive).
         """
         async def _impl():
-            stmt = (
+            stmt = scoped_query(
                 select(
                     Contributor.canonical_name,
                     Contributor.canonical_email,
@@ -229,7 +235,8 @@ def _build_contribution_tools(db: AsyncSession) -> list:
                     | Contributor.canonical_email.ilike(f"%{name_or_email}%")
                 )
                 .order_by(Contributor.canonical_name)
-                .limit(10)
+                .limit(10),
+                contributor_col=Contributor.id,
             )
             result = await db.execute(stmt)
             rows = result.all()
@@ -269,6 +276,7 @@ def _build_contribution_tools(db: AsyncSession) -> list:
             )
             if project_name:
                 stmt = stmt.where(Project.name.ilike(f"%{project_name}%"))
+            stmt = scoped_query(stmt, project_col=Repository.project_id)
             stmt = stmt.order_by(Repository.name).limit(10)
             result = await db.execute(stmt)
             rows = result.all()
@@ -308,14 +316,19 @@ def _build_contribution_tools(db: AsyncSession) -> list:
             fd, td = _parse_date(from_date), _parse_date(to_date)
 
             repo_count = await db.scalar(
-                select(func.count()).select_from(Repository)
-                .where(Repository.project_id == project.id)
+                scoped_query(
+                    select(func.count()).select_from(Repository)
+                    .where(Repository.project_id == project.id),
+                    project_col=Repository.project_id,
+                )
             )
 
-            commit_q = (
+            commit_q = scoped_query(
                 select(Commit)
                 .join(Repository)
-                .where(Repository.project_id == project.id)
+                .where(Repository.project_id == project.id),
+                project_col=Repository.project_id,
+                contributor_col=Commit.contributor_id,
             )
             if fd:
                 commit_q = commit_q.where(Commit.authored_at >= fd)
@@ -325,53 +338,89 @@ def _build_contribution_tools(db: AsyncSession) -> list:
 
             total_commits = await db.scalar(select(func.count()).select_from(sub))
             contributor_count = await db.scalar(
-                select(func.count(Commit.contributor_id.distinct()))
-                .where(Commit.id.in_(select(sub.c.id)))
+                scoped_query(
+                    select(func.count(Commit.contributor_id.distinct()))
+                    .join(Repository, Repository.id == Commit.repository_id)
+                    .where(Commit.id.in_(select(sub.c.id))),
+                    project_col=Repository.project_id,
+                    contributor_col=Commit.contributor_id,
+                )
             )
 
             agg = (await db.execute(
-                select(
-                    func.coalesce(func.sum(Commit.lines_added), 0).label("la"),
-                    func.coalesce(func.sum(Commit.lines_deleted), 0).label("ld"),
-                ).where(Commit.id.in_(select(sub.c.id)))
+                scoped_query(
+                    select(
+                        func.coalesce(func.sum(Commit.lines_added), 0).label("la"),
+                        func.coalesce(func.sum(Commit.lines_deleted), 0).label("ld"),
+                    )
+                    .join(Repository, Repository.id == Commit.repository_id)
+                    .where(Commit.id.in_(select(sub.c.id))),
+                    project_col=Repository.project_id,
+                    contributor_col=Commit.contributor_id,
+                )
             )).one()
             churn = round(agg.ld / agg.la, 2) if agg.la > 0 else 0
 
             repo_ids = (
-                select(Repository.id)
-                .where(Repository.project_id == project.id)
+                scoped_query(
+                    select(Repository.id)
+                    .where(Repository.project_id == project.id),
+                    project_col=Repository.project_id,
+                )
                 .subquery()
             )
             pr_cycle = await db.scalar(
-                select(
-                    func.avg(func.extract("epoch", PullRequest.merged_at - PullRequest.created_at) / 3600)
-                ).where(
-                    PullRequest.repository_id.in_(select(repo_ids.c.id)),
-                    PullRequest.state == PRState.MERGED,
-                    PullRequest.merged_at.isnot(None),
+                scoped_query(
+                    select(
+                        func.avg(func.extract("epoch", PullRequest.merged_at - PullRequest.created_at) / 3600)
+                    )
+                    .join(Repository, Repository.id == PullRequest.repository_id)
+                    .where(
+                        PullRequest.repository_id.in_(select(repo_ids.c.id)),
+                        PullRequest.state == PRState.MERGED,
+                        PullRequest.merged_at.isnot(None),
+                    ),
+                    project_col=Repository.project_id,
+                    contributor_col=PullRequest.contributor_id,
                 )
             )
 
             first_review = (
-                select(
-                    Review.pull_request_id,
-                    func.min(Review.submitted_at).label("fr"),
+                scoped_query(
+                    select(
+                        Review.pull_request_id,
+                        func.min(Review.submitted_at).label("fr"),
+                    )
+                    .join(PullRequest, PullRequest.id == Review.pull_request_id)
+                    .join(Repository, Repository.id == PullRequest.repository_id)
+                    .group_by(Review.pull_request_id),
+                    project_col=Repository.project_id,
+                    contributor_col=Review.reviewer_id,
                 )
-                .group_by(Review.pull_request_id)
                 .subquery()
             )
             review_ta = await db.scalar(
-                select(
-                    func.avg(func.extract("epoch", first_review.c.fr - PullRequest.created_at) / 3600)
+                scoped_query(
+                    select(
+                        func.avg(func.extract("epoch", first_review.c.fr - PullRequest.created_at) / 3600)
+                    )
+                    .join(first_review, first_review.c.pull_request_id == PullRequest.id)
+                    .join(Repository, Repository.id == PullRequest.repository_id)
+                    .where(PullRequest.repository_id.in_(select(repo_ids.c.id))),
+                    project_col=Repository.project_id,
+                    contributor_col=PullRequest.contributor_id,
                 )
-                .join(first_review, first_review.c.pull_request_id == PullRequest.id)
-                .where(PullRequest.repository_id.in_(select(repo_ids.c.id)))
             )
 
             contrib_counts = (await db.execute(
-                select(Commit.contributor_id, func.count().label("cnt"))
-                .where(Commit.id.in_(select(sub.c.id)))
-                .group_by(Commit.contributor_id)
+                scoped_query(
+                    select(Commit.contributor_id, func.count().label("cnt"))
+                    .join(Repository, Repository.id == Commit.repository_id)
+                    .where(Commit.id.in_(select(sub.c.id)))
+                    .group_by(Commit.contributor_id),
+                    project_col=Repository.project_id,
+                    contributor_col=Commit.contributor_id,
+                )
             )).all()
             gini = _compute_gini([r.cnt for r in contrib_counts])
 
@@ -468,7 +517,16 @@ def _build_contribution_tools(db: AsyncSession) -> list:
 
             fd, td = _parse_date(from_date), _parse_date(to_date)
 
-            commit_q = select(Commit).where(Commit.contributor_id == contributor.id)
+            commit_q = (
+                select(Commit)
+                .join(Repository, Repository.id == Commit.repository_id)
+                .where(Commit.contributor_id == contributor.id)
+            )
+            commit_q = scoped_query(
+                commit_q,
+                project_col=Repository.project_id,
+                contributor_col=Commit.contributor_id,
+            )
             if fd:
                 commit_q = commit_q.where(Commit.authored_at >= fd)
             if td:
@@ -476,7 +534,7 @@ def _build_contribution_tools(db: AsyncSession) -> list:
             if project_name:
                 project = await _resolve_project(db, project_name)
                 if project:
-                    commit_q = commit_q.join(Repository).where(
+                    commit_q = commit_q.where(
                         Repository.project_id == project.id
                     )
 
@@ -484,19 +542,29 @@ def _build_contribution_tools(db: AsyncSession) -> list:
             total_commits = await db.scalar(select(func.count()).select_from(sub))
 
             agg = (await db.execute(
-                select(
-                    func.coalesce(func.sum(Commit.lines_added), 0).label("la"),
-                    func.coalesce(func.sum(Commit.lines_deleted), 0).label("ld"),
-                    func.count(Commit.repository_id.distinct()).label("rc"),
-                ).where(Commit.id.in_(select(sub.c.id)))
+                scoped_query(
+                    select(
+                        func.coalesce(func.sum(Commit.lines_added), 0).label("la"),
+                        func.coalesce(func.sum(Commit.lines_deleted), 0).label("ld"),
+                        func.count(Commit.repository_id.distinct()).label("rc"),
+                    )
+                    .join(Repository, Repository.id == Commit.repository_id)
+                    .where(Commit.id.in_(select(sub.c.id))),
+                    project_col=Repository.project_id,
+                    contributor_col=Commit.contributor_id,
+                )
             )).one()
 
             day_col = func.date_trunc("day", Commit.authored_at).label("d")
-            streak_q = (
+            streak_q = scoped_query(
                 select(day_col)
+                .select_from(Commit)
+                .join(Repository, Repository.id == Commit.repository_id)
                 .where(Commit.contributor_id == contributor.id)
                 .distinct()
-                .order_by(day_col.desc())
+                .order_by(day_col.desc()),
+                project_col=Repository.project_id,
+                contributor_col=Commit.contributor_id,
             )
             active_days_result = await db.execute(streak_q)
             active_dates = [
@@ -514,12 +582,23 @@ def _build_contribution_tools(db: AsyncSession) -> list:
                         break
 
             prs = await db.scalar(
-                select(func.count()).select_from(PullRequest)
-                .where(PullRequest.contributor_id == contributor.id)
+                scoped_query(
+                    select(func.count()).select_from(PullRequest)
+                    .join(Repository, Repository.id == PullRequest.repository_id)
+                    .where(PullRequest.contributor_id == contributor.id),
+                    project_col=Repository.project_id,
+                    contributor_col=PullRequest.contributor_id,
+                )
             ) or 0
             reviews = await db.scalar(
-                select(func.count()).select_from(Review)
-                .where(Review.reviewer_id == contributor.id)
+                scoped_query(
+                    select(func.count()).select_from(Review)
+                    .join(PullRequest, PullRequest.id == Review.pull_request_id)
+                    .join(Repository, Repository.id == PullRequest.repository_id)
+                    .where(Review.reviewer_id == contributor.id),
+                    project_col=Repository.project_id,
+                    contributor_col=Review.reviewer_id,
+                )
             ) or 0
 
             avg_size = round((agg.la + agg.ld) / total_commits, 1) if total_commits else 0
@@ -573,7 +652,16 @@ def _build_contribution_tools(db: AsyncSession) -> list:
 
             fd, td = _parse_date(from_date), _parse_date(to_date)
 
-            base_q = select(Commit).where(Commit.repository_id == repo.id)
+            base_q = (
+                select(Commit)
+                .join(Repository, Repository.id == Commit.repository_id)
+                .where(Commit.repository_id == repo.id)
+            )
+            base_q = scoped_query(
+                base_q,
+                project_col=Repository.project_id,
+                contributor_col=Commit.contributor_id,
+            )
             if fd:
                 base_q = base_q.where(Commit.authored_at >= fd)
             if td:
@@ -582,15 +670,26 @@ def _build_contribution_tools(db: AsyncSession) -> list:
 
             total_commits = await db.scalar(select(func.count()).select_from(sub))
             contributor_count = await db.scalar(
-                select(func.count(Commit.contributor_id.distinct()))
-                .where(Commit.id.in_(select(sub.c.id)))
+                scoped_query(
+                    select(func.count(Commit.contributor_id.distinct()))
+                    .join(Repository, Repository.id == Commit.repository_id)
+                    .where(Commit.id.in_(select(sub.c.id))),
+                    project_col=Repository.project_id,
+                    contributor_col=Commit.contributor_id,
+                )
             )
 
             agg = (await db.execute(
-                select(
-                    func.coalesce(func.sum(Commit.lines_added), 0).label("la"),
-                    func.coalesce(func.sum(Commit.lines_deleted), 0).label("ld"),
-                ).where(Commit.id.in_(select(sub.c.id)))
+                scoped_query(
+                    select(
+                        func.coalesce(func.sum(Commit.lines_added), 0).label("la"),
+                        func.coalesce(func.sum(Commit.lines_deleted), 0).label("ld"),
+                    )
+                    .join(Repository, Repository.id == Commit.repository_id)
+                    .where(Commit.id.in_(select(sub.c.id))),
+                    project_col=Repository.project_id,
+                    contributor_col=Commit.contributor_id,
+                )
             )).one()
             churn = round(agg.ld / agg.la, 2) if agg.la > 0 else 0
 
@@ -598,19 +697,30 @@ def _build_contribution_tools(db: AsyncSession) -> list:
             trends = await get_trends(db, repository_id=repo.id)
 
             pr_cycle = await db.scalar(
-                select(
-                    func.avg(func.extract("epoch", PullRequest.merged_at - PullRequest.created_at) / 3600)
-                ).where(
-                    PullRequest.repository_id == repo.id,
-                    PullRequest.state == PRState.MERGED,
-                    PullRequest.merged_at.isnot(None),
+                scoped_query(
+                    select(
+                        func.avg(func.extract("epoch", PullRequest.merged_at - PullRequest.created_at) / 3600)
+                    )
+                    .join(Repository, Repository.id == PullRequest.repository_id)
+                    .where(
+                        PullRequest.repository_id == repo.id,
+                        PullRequest.state == PRState.MERGED,
+                        PullRequest.merged_at.isnot(None),
+                    ),
+                    project_col=Repository.project_id,
+                    contributor_col=PullRequest.contributor_id,
                 )
             )
 
             contrib_counts = (await db.execute(
-                select(Commit.contributor_id, func.count().label("cnt"))
-                .where(Commit.id.in_(select(sub.c.id)))
-                .group_by(Commit.contributor_id)
+                scoped_query(
+                    select(Commit.contributor_id, func.count().label("cnt"))
+                    .join(Repository, Repository.id == Commit.repository_id)
+                    .where(Commit.id.in_(select(sub.c.id)))
+                    .group_by(Commit.contributor_id),
+                    project_col=Repository.project_id,
+                    contributor_col=Commit.contributor_id,
+                )
             )).all()
             gini = _compute_gini([r.cnt for r in contrib_counts])
 
@@ -653,8 +763,11 @@ def _build_contribution_tools(db: AsyncSession) -> list:
                 if not project:
                     return f"No project found matching '{project_name}'."
                 repo_ids = (
-                    select(Repository.id)
-                    .where(Repository.project_id == project.id)
+                    scoped_query(
+                        select(Repository.id)
+                        .where(Repository.project_id == project.id),
+                        project_col=Repository.project_id,
+                    )
                     .subquery()
                 )
                 filters.append(PullRequest.repository_id.in_(select(repo_ids.c.id)))
@@ -673,11 +786,17 @@ def _build_contribution_tools(db: AsyncSession) -> list:
                 filters.append(PullRequest.state == valid[state_lower])
 
             first_review = (
-                select(
-                    Review.pull_request_id,
-                    func.min(Review.submitted_at).label("fr"),
+                scoped_query(
+                    select(
+                        Review.pull_request_id,
+                        func.min(Review.submitted_at).label("fr"),
+                    )
+                    .join(PullRequest, PullRequest.id == Review.pull_request_id)
+                    .join(Repository, Repository.id == PullRequest.repository_id)
+                    .group_by(Review.pull_request_id),
+                    project_col=Repository.project_id,
+                    contributor_col=Review.reviewer_id,
                 )
-                .group_by(Review.pull_request_id)
                 .subquery()
             )
             stmt = (
@@ -698,6 +817,11 @@ def _build_contribution_tools(db: AsyncSession) -> list:
             if filters:
                 stmt = stmt.where(and_(*filters))
 
+            stmt = scoped_query(
+                stmt,
+                project_col=Repository.project_id,
+                contributor_col=PullRequest.contributor_id,
+            )
             result = await db.execute(stmt)
             rows = result.all()
             if not rows:
@@ -812,18 +936,23 @@ def _build_contribution_tools(db: AsyncSession) -> list:
                 return f"No repository found matching '{repo_name}'."
 
             result = await db.execute(
-                select(
-                    CommitFile.file_path,
-                    func.count(CommitFile.commit_id.distinct()).label("commits"),
-                    func.count(Commit.contributor_id.distinct()).label("contributors"),
-                    func.sum(CommitFile.lines_added).label("la"),
-                    func.sum(CommitFile.lines_deleted).label("ld"),
+                scoped_query(
+                    select(
+                        CommitFile.file_path,
+                        func.count(CommitFile.commit_id.distinct()).label("commits"),
+                        func.count(Commit.contributor_id.distinct()).label("contributors"),
+                        func.sum(CommitFile.lines_added).label("la"),
+                        func.sum(CommitFile.lines_deleted).label("ld"),
+                    )
+                    .join(Commit, Commit.id == CommitFile.commit_id)
+                    .join(Repository, Repository.id == Commit.repository_id)
+                    .where(Commit.repository_id == repo.id)
+                    .group_by(CommitFile.file_path)
+                    .order_by(func.count(CommitFile.commit_id.distinct()).desc())
+                    .limit(min(limit, 50)),
+                    project_col=Repository.project_id,
+                    contributor_col=Commit.contributor_id,
                 )
-                .join(Commit, Commit.id == CommitFile.commit_id)
-                .where(Commit.repository_id == repo.id)
-                .group_by(CommitFile.file_path)
-                .order_by(func.count(CommitFile.commit_id.distinct()).desc())
-                .limit(min(limit, 50))
             )
             rows = result.all()
             if not rows:
@@ -864,7 +993,13 @@ def _build_contribution_tools(db: AsyncSession) -> list:
                 project = await _resolve_project(db, project_name)
                 if not project:
                     return f"No project found matching '{project_name}'."
-                repo_ids = select(Repository.id).where(Repository.project_id == project.id).subquery()
+                repo_ids = (
+                    scoped_query(
+                        select(Repository.id).where(Repository.project_id == project.id),
+                        project_col=Repository.project_id,
+                    )
+                    .subquery()
+                )
                 filters.append(PullRequest.repository_id.in_(select(repo_ids.c.id)))
                 context.append(f"Project: {project.name}")
             if repo_name:
@@ -882,41 +1017,83 @@ def _build_contribution_tools(db: AsyncSession) -> list:
             base_where = and_(*filters) if filters else True
 
             total_prs = await db.scalar(
-                select(func.count()).select_from(PullRequest).where(base_where)
+                scoped_query(
+                    select(func.count()).select_from(PullRequest)
+                    .join(Repository, Repository.id == PullRequest.repository_id)
+                    .where(base_where),
+                    project_col=Repository.project_id,
+                    contributor_col=PullRequest.contributor_id,
+                )
             )
             if not total_prs:
                 return "No pull requests found matching the criteria."
 
             cycle_times = sorted(
                 float(v) for v in (await db.execute(
-                    select(func.extract("epoch", PullRequest.merged_at - PullRequest.created_at) / 3600)
-                    .where(base_where, PullRequest.state == PRState.MERGED, PullRequest.merged_at.isnot(None))
+                    scoped_query(
+                        select(func.extract("epoch", PullRequest.merged_at - PullRequest.created_at) / 3600)
+                        .join(Repository, Repository.id == PullRequest.repository_id)
+                        .where(base_where, PullRequest.state == PRState.MERGED, PullRequest.merged_at.isnot(None)),
+                        project_col=Repository.project_id,
+                        contributor_col=PullRequest.contributor_id,
+                    )
                 )).scalars().all()
             )
 
             first_rev = (
-                select(Review.pull_request_id, func.min(Review.submitted_at).label("fr"))
-                .group_by(Review.pull_request_id).subquery()
+                scoped_query(
+                    select(Review.pull_request_id, func.min(Review.submitted_at).label("fr"))
+                    .join(PullRequest, PullRequest.id == Review.pull_request_id)
+                    .join(Repository, Repository.id == PullRequest.repository_id)
+                    .group_by(Review.pull_request_id),
+                    project_col=Repository.project_id,
+                    contributor_col=Review.reviewer_id,
+                ).subquery()
             )
             review_times = sorted(
                 float(v) for v in (await db.execute(
-                    select(func.extract("epoch", first_rev.c.fr - PullRequest.created_at) / 3600)
-                    .join(first_rev, first_rev.c.pull_request_id == PullRequest.id)
-                    .where(base_where)
+                    scoped_query(
+                        select(func.extract("epoch", first_rev.c.fr - PullRequest.created_at) / 3600)
+                        .join(first_rev, first_rev.c.pull_request_id == PullRequest.id)
+                        .join(Repository, Repository.id == PullRequest.repository_id)
+                        .where(base_where),
+                        project_col=Repository.project_id,
+                        contributor_col=PullRequest.contributor_id,
+                    )
                 )).scalars().all()
             )
 
             avgs = (await db.execute(
-                select(
-                    func.avg(PullRequest.iteration_count).label("avg_iter"),
-                    func.avg(PullRequest.comment_count).label("avg_comments"),
-                ).where(base_where)
+                scoped_query(
+                    select(
+                        func.avg(PullRequest.iteration_count).label("avg_iter"),
+                        func.avg(PullRequest.comment_count).label("avg_comments"),
+                    )
+                    .join(Repository, Repository.id == PullRequest.repository_id)
+                    .where(base_where),
+                    project_col=Repository.project_id,
+                    contributor_col=PullRequest.contributor_id,
+                )
             )).one()
 
+            pr_ids_approved = scoped_query(
+                select(PullRequest.id)
+                .join(Repository, Repository.id == PullRequest.repository_id)
+                .where(base_where),
+                project_col=Repository.project_id,
+                contributor_col=PullRequest.contributor_id,
+            )
             approved_prs = await db.scalar(
-                select(func.count(Review.pull_request_id.distinct())).where(
-                    Review.state == ReviewState.APPROVED,
-                    Review.pull_request_id.in_(select(PullRequest.id).where(base_where)),
+                scoped_query(
+                    select(func.count(Review.pull_request_id.distinct()))
+                    .join(PullRequest, PullRequest.id == Review.pull_request_id)
+                    .join(Repository, Repository.id == PullRequest.repository_id)
+                    .where(
+                        Review.state == ReviewState.APPROVED,
+                        Review.pull_request_id.in_(pr_ids_approved),
+                    ),
+                    project_col=Repository.project_id,
+                    contributor_col=Review.reviewer_id,
                 )
             ) or 0
 
@@ -959,7 +1136,13 @@ def _build_contribution_tools(db: AsyncSession) -> list:
                 project = await _resolve_project(db, project_name)
                 if not project:
                     return f"No project found matching '{project_name}'."
-                repo_ids = select(Repository.id).where(Repository.project_id == project.id).subquery()
+                repo_ids = (
+                    scoped_query(
+                        select(Repository.id).where(Repository.project_id == project.id),
+                        project_col=Repository.project_id,
+                    )
+                    .subquery()
+                )
                 filters.append(PullRequest.repository_id.in_(select(repo_ids.c.id)))
             if repo_name:
                 repo = await _resolve_repository(db, repo_name, project_name)
@@ -973,20 +1156,25 @@ def _build_contribution_tools(db: AsyncSession) -> list:
                 filters.append(Review.submitted_at <= td + timedelta(days=1))
 
             rows = (await db.execute(
-                select(
-                    Contributor.canonical_name,
-                    func.count(Review.id).label("reviews"),
-                    func.avg(func.extract("epoch", Review.submitted_at - PullRequest.created_at) / 3600).label("avg_ta"),
-                    func.avg(Review.comment_count).label("avg_comments"),
-                    func.sum(case((Review.state == ReviewState.APPROVED, 1), else_=0)).label("approvals"),
-                    func.sum(case((Review.state == ReviewState.CHANGES_REQUESTED, 1), else_=0)).label("changes_req"),
+                scoped_query(
+                    select(
+                        Contributor.canonical_name,
+                        func.count(Review.id).label("reviews"),
+                        func.avg(func.extract("epoch", Review.submitted_at - PullRequest.created_at) / 3600).label("avg_ta"),
+                        func.avg(Review.comment_count).label("avg_comments"),
+                        func.sum(case((Review.state == ReviewState.APPROVED, 1), else_=0)).label("approvals"),
+                        func.sum(case((Review.state == ReviewState.CHANGES_REQUESTED, 1), else_=0)).label("changes_req"),
+                    )
+                    .join(PullRequest, PullRequest.id == Review.pull_request_id)
+                    .join(Repository, Repository.id == PullRequest.repository_id)
+                    .join(Contributor, Contributor.id == Review.reviewer_id)
+                    .where(and_(*filters))
+                    .group_by(Contributor.id, Contributor.canonical_name)
+                    .order_by(func.count(Review.id).desc())
+                    .limit(min(limit, 25)),
+                    project_col=Repository.project_id,
+                    contributor_col=Review.reviewer_id,
                 )
-                .join(PullRequest, PullRequest.id == Review.pull_request_id)
-                .join(Contributor, Contributor.id == Review.reviewer_id)
-                .where(and_(*filters))
-                .group_by(Contributor.id, Contributor.canonical_name)
-                .order_by(func.count(Review.id).desc())
-                .limit(min(limit, 25))
             )).all()
             if not rows:
                 return "No review data found matching the criteria."
@@ -1017,7 +1205,13 @@ def _build_contribution_tools(db: AsyncSession) -> list:
                 project = await _resolve_project(db, project_name)
                 if not project:
                     return f"No project found matching '{project_name}'."
-                repo_ids = select(Repository.id).where(Repository.project_id == project.id).subquery()
+                repo_ids = (
+                    scoped_query(
+                        select(Repository.id).where(Repository.project_id == project.id),
+                        project_col=Repository.project_id,
+                    )
+                    .subquery()
+                )
                 filters.append(PullRequest.repository_id.in_(select(repo_ids.c.id)))
             if repo_name:
                 repo = await _resolve_repository(db, repo_name, project_name)
@@ -1028,19 +1222,24 @@ def _build_contribution_tools(db: AsyncSession) -> list:
             AuthorC = aliased(Contributor)
             ReviewerC = aliased(Contributor)
             rows = (await db.execute(
-                select(
-                    AuthorC.canonical_name.label("author"),
-                    ReviewerC.canonical_name.label("reviewer"),
-                    func.count(Review.id).label("review_count"),
-                    func.avg(func.extract("epoch", Review.submitted_at - PullRequest.created_at) / 3600).label("avg_ta"),
+                scoped_query(
+                    select(
+                        AuthorC.canonical_name.label("author"),
+                        ReviewerC.canonical_name.label("reviewer"),
+                        func.count(Review.id).label("review_count"),
+                        func.avg(func.extract("epoch", Review.submitted_at - PullRequest.created_at) / 3600).label("avg_ta"),
+                    )
+                    .join(PullRequest, PullRequest.id == Review.pull_request_id)
+                    .join(Repository, Repository.id == PullRequest.repository_id)
+                    .join(AuthorC, AuthorC.id == PullRequest.contributor_id)
+                    .join(ReviewerC, ReviewerC.id == Review.reviewer_id)
+                    .where(and_(*filters))
+                    .group_by(AuthorC.canonical_name, ReviewerC.canonical_name)
+                    .order_by(func.count(Review.id).desc())
+                    .limit(min(limit, 50)),
+                    project_col=Repository.project_id,
+                    contributor_col=PullRequest.contributor_id,
                 )
-                .join(PullRequest, PullRequest.id == Review.pull_request_id)
-                .join(AuthorC, AuthorC.id == PullRequest.contributor_id)
-                .join(ReviewerC, ReviewerC.id == Review.reviewer_id)
-                .where(and_(*filters))
-                .group_by(AuthorC.canonical_name, ReviewerC.canonical_name)
-                .order_by(func.count(Review.id).desc())
-                .limit(min(limit, 50))
             )).all()
             if not rows:
                 return "No review network data found."
@@ -1072,7 +1271,13 @@ def _build_contribution_tools(db: AsyncSession) -> list:
                 project = await _resolve_project(db, project_name)
                 if not project:
                     return f"No project found matching '{project_name}'."
-                repo_ids = select(Repository.id).where(Repository.project_id == project.id).subquery()
+                repo_ids = (
+                    scoped_query(
+                        select(Repository.id).where(Repository.project_id == project.id),
+                        project_col=Repository.project_id,
+                    )
+                    .subquery()
+                )
                 filters.append(PullRequest.repository_id.in_(select(repo_ids.c.id)))
             if repo_name:
                 repo = await _resolve_repository(db, repo_name, project_name)
@@ -1095,16 +1300,22 @@ def _build_contribution_tools(db: AsyncSession) -> list:
             ).label("bucket")
 
             rows = (await db.execute(
-                select(
-                    bucket,
-                    func.count().label("pr_count"),
-                    func.avg(case(
-                        (and_(PullRequest.state == PRState.MERGED, PullRequest.merged_at.isnot(None)),
-                         func.extract("epoch", PullRequest.merged_at - PullRequest.created_at) / 3600),
-                        else_=None,
-                    )).label("avg_cycle"),
-                    func.avg(PullRequest.comment_count).label("avg_comments"),
-                ).where(base_where).group_by(bucket).order_by(bucket)
+                scoped_query(
+                    select(
+                        bucket,
+                        func.count().label("pr_count"),
+                        func.avg(case(
+                            (and_(PullRequest.state == PRState.MERGED, PullRequest.merged_at.isnot(None)),
+                             func.extract("epoch", PullRequest.merged_at - PullRequest.created_at) / 3600),
+                            else_=None,
+                        )).label("avg_cycle"),
+                        func.avg(PullRequest.comment_count).label("avg_comments"),
+                    )
+                    .join(Repository, Repository.id == PullRequest.repository_id)
+                    .where(base_where).group_by(bucket).order_by(bucket),
+                    project_col=Repository.project_id,
+                    contributor_col=PullRequest.contributor_id,
+                )
             )).all()
             if not rows:
                 return "No pull request data found."
@@ -1136,38 +1347,67 @@ def _build_contribution_tools(db: AsyncSession) -> list:
             if project_name:
                 project = await _resolve_project(db, project_name)
                 if project:
-                    repo_ids = select(Repository.id).where(Repository.project_id == project.id).subquery()
+                    repo_ids = (
+                        scoped_query(
+                            select(Repository.id).where(Repository.project_id == project.id),
+                            project_col=Repository.project_id,
+                        )
+                        .subquery()
+                    )
                     pr_filters.append(PullRequest.repository_id.in_(select(repo_ids.c.id)))
                     rev_filters.append(Review.pull_request_id.in_(
-                        select(PullRequest.id).where(PullRequest.repository_id.in_(select(repo_ids.c.id)))
+                        scoped_query(
+                            select(PullRequest.id)
+                            .join(Repository, Repository.id == PullRequest.repository_id)
+                            .where(PullRequest.repository_id.in_(select(repo_ids.c.id))),
+                            project_col=Repository.project_id,
+                            contributor_col=PullRequest.contributor_id,
+                        )
                     ))
 
             state_counts = (await db.execute(
-                select(PullRequest.state, func.count().label("cnt"))
-                .where(and_(*pr_filters)).group_by(PullRequest.state)
+                scoped_query(
+                    select(PullRequest.state, func.count().label("cnt"))
+                    .join(Repository, Repository.id == PullRequest.repository_id)
+                    .where(and_(*pr_filters)).group_by(PullRequest.state),
+                    project_col=Repository.project_id,
+                    contributor_col=PullRequest.contributor_id,
+                )
             )).all()
             by_state = {r.state: r.cnt for r in state_counts}
 
             auth_agg = (await db.execute(
-                select(
-                    func.avg(PullRequest.lines_added + PullRequest.lines_deleted).label("avg_size"),
-                    func.avg(case(
-                        (and_(PullRequest.state == PRState.MERGED, PullRequest.merged_at.isnot(None)),
-                         func.extract("epoch", PullRequest.merged_at - PullRequest.created_at) / 3600),
-                        else_=None,
-                    )).label("avg_cycle"),
-                    func.avg(PullRequest.iteration_count).label("avg_iter"),
-                ).where(and_(*pr_filters))
+                scoped_query(
+                    select(
+                        func.avg(PullRequest.lines_added + PullRequest.lines_deleted).label("avg_size"),
+                        func.avg(case(
+                            (and_(PullRequest.state == PRState.MERGED, PullRequest.merged_at.isnot(None)),
+                             func.extract("epoch", PullRequest.merged_at - PullRequest.created_at) / 3600),
+                            else_=None,
+                        )).label("avg_cycle"),
+                        func.avg(PullRequest.iteration_count).label("avg_iter"),
+                    )
+                    .join(Repository, Repository.id == PullRequest.repository_id)
+                    .where(and_(*pr_filters)),
+                    project_col=Repository.project_id,
+                    contributor_col=PullRequest.contributor_id,
+                )
             )).one()
 
             rev_agg = (await db.execute(
-                select(
-                    func.count().label("total"),
-                    func.avg(func.extract("epoch", Review.submitted_at - PullRequest.created_at) / 3600).label("avg_ta"),
-                    func.avg(Review.comment_count).label("avg_comments"),
-                    func.sum(case((Review.state == ReviewState.APPROVED, 1), else_=0)).label("approvals"),
-                ).join(PullRequest, PullRequest.id == Review.pull_request_id)
-                .where(and_(*rev_filters))
+                scoped_query(
+                    select(
+                        func.count().label("total"),
+                        func.avg(func.extract("epoch", Review.submitted_at - PullRequest.created_at) / 3600).label("avg_ta"),
+                        func.avg(Review.comment_count).label("avg_comments"),
+                        func.sum(case((Review.state == ReviewState.APPROVED, 1), else_=0)).label("approvals"),
+                    )
+                    .join(PullRequest, PullRequest.id == Review.pull_request_id)
+                    .join(Repository, Repository.id == PullRequest.repository_id)
+                    .where(and_(*rev_filters)),
+                    project_col=Repository.project_id,
+                    contributor_col=Review.reviewer_id,
+                )
             )).one()
 
             return _kv_block({
@@ -1202,16 +1442,21 @@ def _build_contribution_tools(db: AsyncSession) -> list:
                 return f"No repository found matching '{repo_name}'."
 
             top_files = (await db.execute(
-                select(
-                    CommitFile.file_path,
-                    func.count(CommitFile.commit_id.distinct()).label("total_commits"),
-                    func.count(Commit.contributor_id.distinct()).label("total_contributors"),
+                scoped_query(
+                    select(
+                        CommitFile.file_path,
+                        func.count(CommitFile.commit_id.distinct()).label("total_commits"),
+                        func.count(Commit.contributor_id.distinct()).label("total_contributors"),
+                    )
+                    .join(Commit, Commit.id == CommitFile.commit_id)
+                    .join(Repository, Repository.id == Commit.repository_id)
+                    .where(Commit.repository_id == repo.id)
+                    .group_by(CommitFile.file_path)
+                    .order_by(func.count(CommitFile.commit_id.distinct()).desc())
+                    .limit(min(limit, 50)),
+                    project_col=Repository.project_id,
+                    contributor_col=Commit.contributor_id,
                 )
-                .join(Commit, Commit.id == CommitFile.commit_id)
-                .where(Commit.repository_id == repo.id)
-                .group_by(CommitFile.file_path)
-                .order_by(func.count(CommitFile.commit_id.distinct()).desc())
-                .limit(min(limit, 50))
             )).all()
             if not top_files:
                 return f"No file data found for repository '{repo.name}'."
@@ -1219,12 +1464,17 @@ def _build_contribution_tools(db: AsyncSession) -> list:
             rows = []
             for f in top_files:
                 owner = (await db.execute(
-                    select(Contributor.canonical_name, func.count().label("cnt"))
-                    .join(Commit, Commit.contributor_id == Contributor.id)
-                    .join(CommitFile, CommitFile.commit_id == Commit.id)
-                    .where(Commit.repository_id == repo.id, CommitFile.file_path == f.file_path)
-                    .group_by(Contributor.id, Contributor.canonical_name)
-                    .order_by(func.count().desc()).limit(1)
+                    scoped_query(
+                        select(Contributor.canonical_name, func.count().label("cnt"))
+                        .join(Commit, Commit.contributor_id == Contributor.id)
+                        .join(CommitFile, CommitFile.commit_id == Commit.id)
+                        .join(Repository, Repository.id == Commit.repository_id)
+                        .where(Commit.repository_id == repo.id, CommitFile.file_path == f.file_path)
+                        .group_by(Contributor.id, Contributor.canonical_name)
+                        .order_by(func.count().desc()).limit(1),
+                        project_col=Repository.project_id,
+                        contributor_col=Commit.contributor_id,
+                    )
                 )).first()
                 pct = round(owner.cnt / f.total_commits * 100, 1) if owner and f.total_commits else 0
                 rows.append((f.file_path, owner.canonical_name if owner else "—",
@@ -1256,15 +1506,20 @@ def _build_contribution_tools(db: AsyncSession) -> list:
                     filters.append(Commit.repository_id == repo.id)
 
             file_rows = (await db.execute(
-                select(
-                    CommitFile.file_path,
-                    func.count(CommitFile.commit_id.distinct()).label("commits"),
-                    func.sum(CommitFile.lines_added).label("la"),
-                    func.sum(CommitFile.lines_deleted).label("ld"),
+                scoped_query(
+                    select(
+                        CommitFile.file_path,
+                        func.count(CommitFile.commit_id.distinct()).label("commits"),
+                        func.sum(CommitFile.lines_added).label("la"),
+                        func.sum(CommitFile.lines_deleted).label("ld"),
+                    )
+                    .join(Commit, Commit.id == CommitFile.commit_id)
+                    .join(Repository, Repository.id == Commit.repository_id)
+                    .where(and_(*filters))
+                    .group_by(CommitFile.file_path),
+                    project_col=Repository.project_id,
+                    contributor_col=Commit.contributor_id,
                 )
-                .join(Commit, Commit.id == CommitFile.commit_id)
-                .where(and_(*filters))
-                .group_by(CommitFile.file_path)
             )).all()
             if not file_rows:
                 return f"No file data found for '{contributor.canonical_name}'."
@@ -1305,19 +1560,24 @@ def _build_contribution_tools(db: AsyncSession) -> list:
             if not repo:
                 return f"No repository found matching '{repo_name}'."
             rows = (await db.execute(
-                select(
-                    Contributor.canonical_name,
-                    func.count(CommitFile.commit_id.distinct()).label("commits"),
-                    func.sum(CommitFile.lines_added).label("la"),
-                    func.sum(CommitFile.lines_deleted).label("ld"),
-                    func.max(Commit.authored_at).label("last_touch"),
+                scoped_query(
+                    select(
+                        Contributor.canonical_name,
+                        func.count(CommitFile.commit_id.distinct()).label("commits"),
+                        func.sum(CommitFile.lines_added).label("la"),
+                        func.sum(CommitFile.lines_deleted).label("ld"),
+                        func.max(Commit.authored_at).label("last_touch"),
+                    )
+                    .join(Commit, Commit.id == CommitFile.commit_id)
+                    .join(Repository, Repository.id == Commit.repository_id)
+                    .join(Contributor, Contributor.id == Commit.contributor_id)
+                    .where(Commit.repository_id == repo.id, CommitFile.file_path.ilike(f"%{file_path}%"))
+                    .group_by(Contributor.id, Contributor.canonical_name)
+                    .order_by(func.count(CommitFile.commit_id.distinct()).desc())
+                    .limit(min(limit, 30)),
+                    project_col=Repository.project_id,
+                    contributor_col=Commit.contributor_id,
                 )
-                .join(Commit, Commit.id == CommitFile.commit_id)
-                .join(Contributor, Contributor.id == Commit.contributor_id)
-                .where(Commit.repository_id == repo.id, CommitFile.file_path.ilike(f"%{file_path}%"))
-                .group_by(Contributor.id, Contributor.canonical_name)
-                .order_by(func.count(CommitFile.commit_id.distinct()).desc())
-                .limit(min(limit, 30))
             )).all()
             if not rows:
                 return f"No contributors found for files matching '{file_path}' in '{repo.name}'."
@@ -1362,11 +1622,26 @@ def _build_contribution_tools(db: AsyncSession) -> list:
             if project_name:
                 project = await _resolve_project(db, project_name)
                 if project:
-                    repo_filter = select(Repository.id).where(Repository.project_id == project.id).subquery()
+                    repo_filter = (
+                        scoped_query(
+                            select(Repository.id).where(Repository.project_id == project.id),
+                            project_col=Repository.project_id,
+                        )
+                        .subquery()
+                    )
 
             rows = []
             for c in contributors:
-                commit_q = select(Commit).where(Commit.contributor_id == c.id)
+                commit_q = (
+                    select(Commit)
+                    .join(Repository, Repository.id == Commit.repository_id)
+                    .where(Commit.contributor_id == c.id)
+                )
+                commit_q = scoped_query(
+                    commit_q,
+                    project_col=Repository.project_id,
+                    contributor_col=Commit.contributor_id,
+                )
                 if fd:
                     commit_q = commit_q.where(Commit.authored_at >= fd)
                 if td:
@@ -1376,17 +1651,36 @@ def _build_contribution_tools(db: AsyncSession) -> list:
                 sub = commit_q.with_only_columns(Commit.id).subquery()
 
                 agg = (await db.execute(
-                    select(
-                        func.count().label("commits"),
-                        func.coalesce(func.sum(Commit.lines_added), 0).label("la"),
-                        func.coalesce(func.sum(Commit.lines_deleted), 0).label("ld"),
-                    ).where(Commit.id.in_(select(sub.c.id)))
+                    scoped_query(
+                        select(
+                            func.count().label("commits"),
+                            func.coalesce(func.sum(Commit.lines_added), 0).label("la"),
+                            func.coalesce(func.sum(Commit.lines_deleted), 0).label("ld"),
+                        )
+                        .join(Repository, Repository.id == Commit.repository_id)
+                        .where(Commit.id.in_(select(sub.c.id))),
+                        project_col=Repository.project_id,
+                        contributor_col=Commit.contributor_id,
+                    )
                 )).one()
                 prs = await db.scalar(
-                    select(func.count()).select_from(PullRequest).where(PullRequest.contributor_id == c.id)
+                    scoped_query(
+                        select(func.count()).select_from(PullRequest)
+                        .join(Repository, Repository.id == PullRequest.repository_id)
+                        .where(PullRequest.contributor_id == c.id),
+                        project_col=Repository.project_id,
+                        contributor_col=PullRequest.contributor_id,
+                    )
                 ) or 0
                 reviews = await db.scalar(
-                    select(func.count()).select_from(Review).where(Review.reviewer_id == c.id)
+                    scoped_query(
+                        select(func.count()).select_from(Review)
+                        .join(PullRequest, PullRequest.id == Review.pull_request_id)
+                        .join(Repository, Repository.id == PullRequest.repository_id)
+                        .where(Review.reviewer_id == c.id),
+                        project_col=Repository.project_id,
+                        contributor_col=Review.reviewer_id,
+                    )
                 ) or 0
                 impact = round(agg.commits + (agg.la + agg.ld) * 0.1 + prs * 5 + reviews * 3, 1)
                 rows.append((c.canonical_name, agg.commits, agg.la, agg.ld, prs, reviews, impact))
@@ -1424,7 +1718,10 @@ def _build_contribution_tools(db: AsyncSession) -> list:
                 project = await _resolve_project(db, project_name)
                 if project:
                     filters.append(Commit.repository_id.in_(
-                        select(Repository.id).where(Repository.project_id == project.id)
+                        scoped_query(
+                            select(Repository.id).where(Repository.project_id == project.id),
+                            project_col=Repository.project_id,
+                        )
                     ))
                     context.append(project.name)
             if repo_name:
@@ -1435,11 +1732,18 @@ def _build_contribution_tools(db: AsyncSession) -> list:
 
             base_where = and_(*filters) if filters else True
             rows = (await db.execute(
-                select(
-                    func.extract("dow", Commit.authored_at).label("dow"),
-                    func.extract("hour", Commit.authored_at).label("hour"),
-                    func.count().label("commits"),
-                ).where(base_where).group_by("dow", "hour").order_by("dow", "hour")
+                scoped_query(
+                    select(
+                        func.extract("dow", Commit.authored_at).label("dow"),
+                        func.extract("hour", Commit.authored_at).label("hour"),
+                        func.count().label("commits"),
+                    )
+                    .select_from(Commit)
+                    .join(Repository, Repository.id == Commit.repository_id)
+                    .where(base_where).group_by("dow", "hour").order_by("dow", "hour"),
+                    project_col=Repository.project_id,
+                    contributor_col=Commit.contributor_id,
+                )
             )).all()
             if not rows:
                 return "No commit data found."
@@ -1474,17 +1778,21 @@ def _build_contribution_tools(db: AsyncSession) -> list:
             if not contributor:
                 return f"No contributor found matching '{contributor_name}'."
             rows = (await db.execute(
-                select(
-                    Repository.name.label("repo"), Project.name.label("project"),
-                    func.count().label("commits"),
-                    func.coalesce(func.sum(Commit.lines_added), 0).label("la"),
-                    func.max(Commit.authored_at).label("last_active"),
+                scoped_query(
+                    select(
+                        Repository.name.label("repo"), Project.name.label("project"),
+                        func.count().label("commits"),
+                        func.coalesce(func.sum(Commit.lines_added), 0).label("la"),
+                        func.max(Commit.authored_at).label("last_active"),
+                    )
+                    .join(Repository, Repository.id == Commit.repository_id)
+                    .join(Project, Project.id == Repository.project_id)
+                    .where(Commit.contributor_id == contributor.id)
+                    .group_by(Repository.id, Repository.name, Project.name)
+                    .order_by(func.count().desc()),
+                    project_col=Repository.project_id,
+                    contributor_col=Commit.contributor_id,
                 )
-                .join(Repository, Repository.id == Commit.repository_id)
-                .join(Project, Project.id == Repository.project_id)
-                .where(Commit.contributor_id == contributor.id)
-                .group_by(Repository.id, Repository.name, Project.name)
-                .order_by(func.count().desc())
             )).all()
             if not rows:
                 return f"No commit data found for '{contributor.canonical_name}'."
@@ -1516,29 +1824,45 @@ def _build_contribution_tools(db: AsyncSession) -> list:
                 project = await _resolve_project(db, project_name)
                 if not project:
                     return f"No project found matching '{project_name}'."
-                repo_ids = select(Repository.id).where(Repository.project_id == project.id).subquery()
+                repo_ids = (
+                    scoped_query(
+                        select(Repository.id).where(Repository.project_id == project.id),
+                        project_col=Repository.project_id,
+                    )
+                    .subquery()
+                )
                 base_filters.append(Commit.repository_id.in_(select(repo_ids.c.id)))
 
             recent_active = (
-                select(Commit.contributor_id.distinct())
-                .where(Commit.authored_at >= cutoff, *base_filters)
+                scoped_query(
+                    select(Commit.contributor_id.distinct())
+                    .join(Repository, Repository.id == Commit.repository_id)
+                    .where(Commit.authored_at >= cutoff, *base_filters),
+                    project_col=Repository.project_id,
+                    contributor_col=Commit.contributor_id,
+                )
             ).subquery()
 
             rows = (await db.execute(
-                select(
-                    Contributor.canonical_name,
-                    func.max(Commit.authored_at).label("last_commit"),
-                    func.count().label("prev_commits"),
+                scoped_query(
+                    select(
+                        Contributor.canonical_name,
+                        func.max(Commit.authored_at).label("last_commit"),
+                        func.count().label("prev_commits"),
+                    )
+                    .join(Commit, Commit.contributor_id == Contributor.id)
+                    .join(Repository, Repository.id == Commit.repository_id)
+                    .where(
+                        Commit.authored_at < cutoff, Commit.authored_at >= prev_start,
+                        Contributor.id.notin_(select(recent_active.c.contributor_id)),
+                        *base_filters,
+                    )
+                    .group_by(Contributor.id, Contributor.canonical_name)
+                    .order_by(func.max(Commit.authored_at).desc())
+                    .limit(min(limit, 50)),
+                    project_col=Repository.project_id,
+                    contributor_col=Commit.contributor_id,
                 )
-                .join(Commit, Commit.contributor_id == Contributor.id)
-                .where(
-                    Commit.authored_at < cutoff, Commit.authored_at >= prev_start,
-                    Contributor.id.notin_(select(recent_active.c.contributor_id)),
-                    *base_filters,
-                )
-                .group_by(Contributor.id, Contributor.canonical_name)
-                .order_by(func.max(Commit.authored_at).desc())
-                .limit(min(limit, 50))
             )).all()
             if not rows:
                 return f"No inactive contributors found (inactive >{days_inactive} days)."
@@ -1564,17 +1888,22 @@ def _build_contribution_tools(db: AsyncSession) -> list:
                 return f"No repository found matching '{repo_name}'."
             since = date.today() - timedelta(days=days)
             rows = (await db.execute(
-                select(
-                    Branch.name, Branch.is_default,
-                    func.count(Commit.id.distinct()).label("commits"),
-                    func.count(Commit.contributor_id.distinct()).label("contributors"),
-                    func.max(Commit.authored_at).label("last_commit"),
+                scoped_query(
+                    select(
+                        Branch.name, Branch.is_default,
+                        func.count(Commit.id.distinct()).label("commits"),
+                        func.count(Commit.contributor_id.distinct()).label("contributors"),
+                        func.max(Commit.authored_at).label("last_commit"),
+                    )
+                    .join(commit_branches, commit_branches.c.branch_id == Branch.id)
+                    .join(Commit, Commit.id == commit_branches.c.commit_id)
+                    .join(Repository, Repository.id == Branch.repository_id)
+                    .where(Branch.repository_id == repo.id, Commit.authored_at >= since)
+                    .group_by(Branch.id, Branch.name, Branch.is_default)
+                    .order_by(func.count(Commit.id.distinct()).desc()),
+                    project_col=Repository.project_id,
+                    contributor_col=Commit.contributor_id,
                 )
-                .join(commit_branches, commit_branches.c.branch_id == Branch.id)
-                .join(Commit, Commit.id == commit_branches.c.commit_id)
-                .where(Branch.repository_id == repo.id, Commit.authored_at >= since)
-                .group_by(Branch.id, Branch.name, Branch.is_default)
-                .order_by(func.count(Commit.id.distinct()).desc())
             )).all()
             if not rows:
                 return f"No branch activity found in '{repo.name}' in the last {days} days."
@@ -1601,20 +1930,31 @@ def _build_contribution_tools(db: AsyncSession) -> list:
 
             async def _stats(branch_name: str):
                 br = (await db.execute(
-                    select(Branch).where(Branch.repository_id == repo.id, Branch.name == branch_name)
+                    scoped_query(
+                        select(Branch)
+                        .join(Repository, Repository.id == Branch.repository_id)
+                        .where(Branch.repository_id == repo.id, Branch.name == branch_name),
+                        project_col=Repository.project_id,
+                    )
                 )).scalar_one_or_none()
                 if not br:
                     return None
                 cids = select(commit_branches.c.commit_id).where(commit_branches.c.branch_id == br.id).subquery()
                 return (await db.execute(
-                    select(
-                        func.count().label("commits"),
-                        func.count(Commit.contributor_id.distinct()).label("contributors"),
-                        func.coalesce(func.sum(Commit.lines_added), 0).label("la"),
-                        func.coalesce(func.sum(Commit.lines_deleted), 0).label("ld"),
-                        func.min(Commit.authored_at).label("first"),
-                        func.max(Commit.authored_at).label("last"),
-                    ).where(Commit.id.in_(select(cids.c.commit_id)))
+                    scoped_query(
+                        select(
+                            func.count().label("commits"),
+                            func.count(Commit.contributor_id.distinct()).label("contributors"),
+                            func.coalesce(func.sum(Commit.lines_added), 0).label("la"),
+                            func.coalesce(func.sum(Commit.lines_deleted), 0).label("ld"),
+                            func.min(Commit.authored_at).label("first"),
+                            func.max(Commit.authored_at).label("last"),
+                        )
+                        .join(Repository, Repository.id == Commit.repository_id)
+                        .where(Commit.id.in_(select(cids.c.commit_id))),
+                        project_col=Repository.project_id,
+                        contributor_col=Commit.contributor_id,
+                    )
                 )).one()
 
             sa = await _stats(branch_a)
@@ -1659,7 +1999,10 @@ def _build_contribution_tools(db: AsyncSession) -> list:
                 if not project:
                     return f"No project found matching '{project_name}'."
                 repos = (await db.execute(
-                    select(Repository).where(Repository.project_id == project.id).order_by(Repository.name)
+                    scoped_query(
+                        select(Repository).where(Repository.project_id == project.id).order_by(Repository.name),
+                        project_col=Repository.project_id,
+                    )
                 )).scalars().all()
             else:
                 return "Please specify a project_name or repo_name."
@@ -1667,7 +2010,13 @@ def _build_contribution_tools(db: AsyncSession) -> list:
             rows = []
             for r in repos:
                 last_commit = await db.scalar(
-                    select(func.max(Commit.authored_at)).where(Commit.repository_id == r.id)
+                    scoped_query(
+                        select(func.max(Commit.authored_at))
+                        .join(Repository, Repository.id == Commit.repository_id)
+                        .where(Commit.repository_id == r.id),
+                        project_col=Repository.project_id,
+                        contributor_col=Commit.contributor_id,
+                    )
                 )
                 sync_row = (await db.execute(
                     select(SyncJob.status, SyncJob.finished_at)
@@ -1702,9 +2051,13 @@ def _build_contribution_tools(db: AsyncSession) -> list:
             if not project:
                 return f"No project found matching '{project_name}'."
 
-            repo_ids = select(Repository.id).where(Repository.project_id == project.id)
+            repo_ids = scoped_query(
+                select(Repository.id).where(Repository.project_id == project.id),
+                project_col=Repository.project_id,
+            )
             q = (
                 select(PullRequest)
+                .join(Repository, Repository.id == PullRequest.repository_id)
                 .where(PullRequest.repository_id.in_(repo_ids))
                 .options(
                     __import__("sqlalchemy.orm", fromlist=["selectinload"]).selectinload(PullRequest.repository),
@@ -1715,6 +2068,11 @@ def _build_contribution_tools(db: AsyncSession) -> list:
                 state_map = {"open": PRState.OPEN, "merged": PRState.MERGED, "closed": PRState.CLOSED}
                 if state in state_map:
                     q = q.where(PullRequest.state == state_map[state])
+            q = scoped_query(
+                q,
+                project_col=Repository.project_id,
+                contributor_col=PullRequest.contributor_id,
+            )
             q = q.order_by(PullRequest.created_at.desc()).limit(min(int(limit), 50))
 
             pr_result = await db.execute(q)
@@ -1773,4 +2131,4 @@ def _build_contribution_tools(db: AsyncSession) -> list:
 
 
 # Auto-register when this module is imported
-register_tool_category(CATEGORY, DEFINITIONS, _build_contribution_tools)
+register_tool_category(CATEGORY, DEFINITIONS, _build_contribution_tools, concurrency_safe=True)

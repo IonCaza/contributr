@@ -40,6 +40,9 @@ from app.api import (
     adrs as adrs_api,
     project_schedules as project_schedules_api,
     presentations as presentations_api,
+    project_members as project_members_api,
+    access_policies as access_policies_api,
+    audit as audit_api,
 )
 from app.api.repositories import _parse_platform_fields
 from app.agents.builtin import get_builtin_agents
@@ -104,7 +107,7 @@ async def _seed_builtin_agents():
                     name=spec.name,
                     description=spec.description,
                     system_prompt=spec.system_prompt,
-                    max_iterations=spec.max_iterations or 10,
+                    max_iterations=spec.max_iterations,
                     is_builtin=True,
                     enabled=True,
                 )
@@ -118,7 +121,7 @@ async def _seed_builtin_agents():
                 if agent.system_prompt != spec.system_prompt:
                     agent.system_prompt = spec.system_prompt
                     changed = True
-                if spec.max_iterations and agent.max_iterations != spec.max_iterations:
+                if agent.max_iterations != spec.max_iterations:
                     agent.max_iterations = spec.max_iterations
                     changed = True
                 existing_slugs = {a.tool_slug for a in agent.tool_assignments}
@@ -141,7 +144,7 @@ async def _seed_builtin_agents():
                     description=spec.description,
                     system_prompt=spec.system_prompt,
                     agent_type="supervisor",
-                    max_iterations=spec.max_iterations or 10,
+                    max_iterations=spec.max_iterations,
                     is_builtin=True,
                     enabled=True,
                 )
@@ -167,7 +170,7 @@ async def _seed_builtin_agents():
                 if agent.system_prompt != spec.system_prompt:
                     agent.system_prompt = spec.system_prompt
                     changed = True
-                if spec.max_iterations and agent.max_iterations != spec.max_iterations:
+                if agent.max_iterations != spec.max_iterations:
                     agent.max_iterations = spec.max_iterations
                     changed = True
                 existing_slugs = {a.tool_slug for a in agent.tool_assignments}
@@ -294,6 +297,13 @@ async def _seed_email_templates():
         await db.commit()
 
 
+async def _seed_builtin_skills():
+    """Seed builtin skills into the database."""
+    async with async_session() as db:
+        from app.agents.skills import seed_builtin_skills
+        await seed_builtin_skills(db)
+
+
 async def _init_memory():
     """Start the LangGraph memory pool with an optional embedding provider.
 
@@ -320,8 +330,33 @@ async def _init_memory():
 
             row = (await db.execute(provider_query)).scalar_one_or_none()
             if row:
-                embed_fn = build_embeddings_from_provider(row)
-                embed_dims = get_embedding_dims(row)
+                model_dims = get_embedding_dims(row)
+
+                existing_dims = None
+                try:
+                    from sqlalchemy import text
+                    dim_row = await db.execute(text(
+                        "SELECT atttypmod FROM pg_attribute "
+                        "WHERE attrelid = 'store_vectors'::regclass "
+                        "AND attname = 'embedding'"
+                    ))
+                    val = dim_row.scalar_one_or_none()
+                    if val and isinstance(val, int) and val > 0:
+                        existing_dims = val
+                except Exception:
+                    pass
+
+                if existing_dims and existing_dims != model_dims:
+                    logger.warning(
+                        "store_vectors has %d-dim vectors but %s produces %d "
+                        "— truncating embeddings to %d to match existing data",
+                        existing_dims, row.model, model_dims, existing_dims,
+                    )
+                    embed_dims = existing_dims
+                else:
+                    embed_dims = model_dims
+
+                embed_fn = build_embeddings_from_provider(row, dims=embed_dims)
                 logger.info("Embedding provider: %s (dims=%d)", row.model, embed_dims)
             else:
                 logger.info("No embedding provider configured — long-term memory store disabled")
@@ -338,7 +373,13 @@ async def lifespan(app: FastAPI):
     await _ensure_smtp_settings()
     await _seed_email_templates()
     await _seed_builtin_agents()
+    await _seed_builtin_skills()
     await _init_memory()
+
+    from app.agents.context.resolver import register_entitlement_resolver
+    from app.rbac.resolver import ContributrResolver
+    register_entitlement_resolver(ContributrResolver())
+
     yield
     await close_memory_pool()
     await engine.dispose()
@@ -356,6 +397,9 @@ app.add_middleware(
 
 app.include_router(auth.router, prefix="/api")
 app.include_router(projects.router, prefix="/api")
+app.include_router(project_members_api.router, prefix="/api")
+app.include_router(access_policies_api.router)
+app.include_router(audit_api.router)
 app.include_router(repositories.router, prefix="/api")
 app.include_router(contributors.router, prefix="/api")
 app.include_router(stats.router, prefix="/api")

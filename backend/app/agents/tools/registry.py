@@ -15,6 +15,7 @@ ToolFactory = Callable[[AsyncSession], list]
 _TOOL_FACTORIES: dict[str, ToolFactory] = {}
 _TOOL_DEFINITIONS: dict[str, ToolDefinition] = {}
 _SESSION_SAFE_CATEGORIES: set[str] = set()
+_CONCURRENCY_SAFE_CATEGORIES: set[str] = set()
 
 
 def register_tool_category(
@@ -23,12 +24,29 @@ def register_tool_category(
     factory: ToolFactory,
     *,
     session_safe: bool = False,
+    concurrency_safe: bool = False,
 ) -> None:
     _TOOL_FACTORIES[category] = factory
     for defn in definitions:
         _TOOL_DEFINITIONS[defn.slug] = defn
     if session_safe:
         _SESSION_SAFE_CATEGORIES.add(category)
+    if concurrency_safe:
+        _CONCURRENCY_SAFE_CATEGORIES.add(category)
+
+
+def is_tool_concurrency_safe(slug: str) -> bool:
+    """Check whether a tool can safely run concurrently with other tools.
+
+    Returns True if *either* the tool's definition is marked concurrency_safe
+    or its entire category is registered as concurrency-safe.
+    """
+    defn = _TOOL_DEFINITIONS.get(slug)
+    if not defn:
+        return False
+    if defn.concurrency_safe:
+        return True
+    return defn.category in _CONCURRENCY_SAFE_CATEGORIES
 
 
 def get_all_definitions() -> list[ToolDefinition]:
@@ -42,8 +60,10 @@ def get_definition(slug: str) -> ToolDefinition | None:
 def _wrap_tool_isolated(tool: BaseTool, factory: ToolFactory) -> BaseTool:
     """Wrap a tool so each invocation gets its own DB session.
 
-    Rebuilds the tool via its factory with a fresh session, then invokes it.
-    The original tool's metadata (name, description, args_schema) is preserved.
+    Calls ``_arun`` on the rebuilt tool instead of ``ainvoke`` so the inner
+    tool does not emit its own ``on_tool_start``/``on_tool_end`` callbacks
+    into the parent's ``astream_events`` stream (the outer StructuredTool
+    already handles those).
     """
     from app.db.base import async_session as session_factory
 
@@ -55,7 +75,7 @@ def _wrap_tool_isolated(tool: BaseTool, factory: ToolFactory) -> BaseTool:
             target = fresh_tools.get(tool_name)
             if target is None:
                 return f"Internal error: tool {tool_name} unavailable"
-            return await target.ainvoke(kwargs)
+            return await target.coroutine(**kwargs)
 
     return StructuredTool(
         name=tool.name,

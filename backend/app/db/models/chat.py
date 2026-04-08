@@ -34,6 +34,8 @@ class ChatSession(Base):
     )
     archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, default=None, comment="Timestamp when the conversation was archived (null = active)")
     context_summary: Mapped[str | None] = mapped_column(Text, nullable=True, comment="Rolling structured summary of earlier messages for token management")
+    session_notes: Mapped[str | None] = mapped_column(Text, nullable=True, comment="Structured session notes maintained across compaction events")
+    notes_token_cursor: Mapped[int] = mapped_column(default=0, comment="Message index up to which session notes have been extracted")
 
     user = relationship("User")
     agent = relationship("AgentConfig")

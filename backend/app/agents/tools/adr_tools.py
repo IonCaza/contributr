@@ -28,13 +28,13 @@ logger = logging.getLogger(__name__)
 CATEGORY = "adr_management"
 
 DEFINITIONS = [
-    ToolDefinition("list_adrs", "List ADRs", "List all Architecture Decision Records in a project", CATEGORY),
-    ToolDefinition("read_adr", "Read ADR", "Read the full content of a specific ADR", CATEGORY),
+    ToolDefinition("list_adrs", "List ADRs", "List all Architecture Decision Records in a project", CATEGORY, concurrency_safe=True),
+    ToolDefinition("read_adr", "Read ADR", "Read the full content of a specific ADR", CATEGORY, concurrency_safe=True),
     ToolDefinition("create_adr", "Create ADR", "Create a new Architecture Decision Record", CATEGORY),
     ToolDefinition("update_adr", "Update ADR", "Update an existing ADR's content or title", CATEGORY),
     ToolDefinition("generate_adr_from_text", "Generate ADR from Text", "Convert freeform text into a structured ADR using a template", CATEGORY),
-    ToolDefinition("suggest_adr", "Suggest ADR", "Analyze a topic and suggest whether an ADR is needed, with a draft outline", CATEGORY),
-    ToolDefinition("analyze_pr_for_adrs", "Analyze PR for ADRs", "Analyze a pull request's review comments and code changes to identify architectural decisions worth documenting as ADRs", CATEGORY),
+    ToolDefinition("suggest_adr", "Suggest ADR", "Analyze a topic and suggest whether an ADR is needed, with a draft outline", CATEGORY, concurrency_safe=True),
+    ToolDefinition("analyze_pr_for_adrs", "Analyze PR for ADRs", "Analyze a pull request's review comments and code changes to identify architectural decisions worth documenting as ADRs", CATEGORY, concurrency_safe=True),
 ]
 
 SNIPPET_RADIUS = 15

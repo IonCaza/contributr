@@ -10,7 +10,7 @@ from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.auth.dependencies import get_current_user
+from app.auth.dependencies import get_current_user, get_accessible_project_ids
 from app.db.base import get_db
 from app.db.models.user import User
 from app.db.models.team import Team, TeamMember
@@ -74,14 +74,24 @@ async def list_teams(
     project_id: uuid.UUID | None = None,
     db: AsyncSession = Depends(get_db),
     _user: User = Depends(get_current_user),
+    accessible: set[uuid.UUID] | None = Depends(get_accessible_project_ids),
 ):
     q = select(Team).options(selectinload(Team.members))
     if project_id:
+        if accessible is not None and project_id not in accessible:
+            raise HTTPException(403, "No access to this project")
         q = q.where(Team.project_id == project_id)
+    elif accessible is not None:
+        q = q.where(Team.project_id.in_(accessible))
     q = q.order_by(Team.name)
     result = await db.execute(q)
     teams = result.scalars().all()
     return [_team_out(t, len(t.members)) for t in teams]
+
+
+def _check_team_access(team: Team, accessible: set[uuid.UUID] | None) -> None:
+    if accessible is not None and team.project_id not in accessible:
+        raise HTTPException(403, "No access to this project")
 
 
 @router.get("/{team_id}")
@@ -89,6 +99,7 @@ async def get_team(
     team_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
     _user: User = Depends(get_current_user),
+    accessible: set[uuid.UUID] | None = Depends(get_accessible_project_ids),
 ):
     result = await db.execute(
         select(Team).options(selectinload(Team.members)).where(Team.id == team_id)
@@ -96,6 +107,7 @@ async def get_team(
     team = result.scalar_one_or_none()
     if not team:
         raise HTTPException(404, "Team not found")
+    _check_team_access(team, accessible)
     return _team_out(team, len(team.members))
 
 
@@ -104,7 +116,10 @@ async def create_team(
     body: TeamCreate,
     db: AsyncSession = Depends(get_db),
     _user: User = Depends(get_current_user),
+    accessible: set[uuid.UUID] | None = Depends(get_accessible_project_ids),
 ):
+    if accessible is not None and body.project_id not in accessible:
+        raise HTTPException(403, "No access to this project")
     team = Team(
         project_id=body.project_id,
         name=body.name,
