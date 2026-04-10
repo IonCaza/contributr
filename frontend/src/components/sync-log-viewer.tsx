@@ -5,6 +5,7 @@ import { Terminal, Circle, ChevronDown, ChevronUp } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { api } from "@/lib/api-client";
 
 interface LogEntry {
   ts: number;
@@ -44,6 +45,28 @@ function formatTime(ts: number): string {
   return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 }
 
+/**
+ * Parse raw SSE text into (event, data) pairs.
+ * Handles chunks that may split across boundaries.
+ */
+function parseSseChunk(raw: string): { events: Array<{ event: string; data: string }>; remainder: string } {
+  const events: Array<{ event: string; data: string }> = [];
+  const normalized = raw.replace(/\r\n/g, "\n");
+  const blocks = normalized.split("\n\n");
+  const remainder = blocks.pop() ?? "";
+  for (const block of blocks) {
+    if (!block.trim()) continue;
+    let event = "message";
+    let data = "";
+    for (const line of block.split("\n")) {
+      if (line.startsWith("event:")) event = line.slice(6).trim();
+      else if (line.startsWith("data:")) data = line.slice(5).trim();
+    }
+    if (data) events.push({ event, data });
+  }
+  return { events, remainder };
+}
+
 interface SyncLogViewerProps {
   repoId?: string;
   jobId?: string;
@@ -59,44 +82,65 @@ export function SyncLogViewer({ repoId, jobId, logUrl, compact = false, title = 
   const [expanded, setExpanded] = useState(!compact);
   const bottomRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
-  const esRef = useRef<EventSource | null>(null);
   const onDoneRef = useRef(onDone);
   onDoneRef.current = onDone;
 
   useEffect(() => {
     const token = typeof window !== "undefined" ? localStorage.getItem("access_token") : null;
     const tokenSuffix = token ? `?token=${encodeURIComponent(token)}` : "";
+    const sseBase = api.getSseBase();
     let url: string;
     if (logUrl) {
-      url = `${logUrl}${tokenSuffix}`;
+      url = `${logUrl.replace(/^\/api/, sseBase)}${tokenSuffix}`;
     } else {
-      url = `/api/repositories/${repoId}/sync-jobs/${jobId}/logs${tokenSuffix}`;
+      url = `${sseBase}/repositories/${repoId}/sync-jobs/${jobId}/logs${tokenSuffix}`;
     }
 
-    const es = new EventSource(url);
-    esRef.current = es;
+    const ctrl = new AbortController();
 
-    es.addEventListener("log", (ev) => {
+    (async () => {
       try {
-        const entry: LogEntry = JSON.parse(ev.data);
-        setEntries((prev) => [...prev, entry]);
-      } catch { /* ignore parse errors */ }
-    });
+        const resp = await fetch(url, {
+          headers: { Accept: "text/event-stream" },
+          signal: ctrl.signal,
+        });
+        if (!resp.ok || !resp.body) {
+          setLive(false);
+          return;
+        }
+        const reader = resp.body.getReader();
+        const decoder = new TextDecoder();
+        let buf = "";
 
-    es.addEventListener("done", () => {
-      setLive(false);
-      es.close();
-      onDoneRef.current?.();
-    });
+        for (;;) {
+          const { value, done: streamDone } = await reader.read();
+          if (streamDone) break;
+          buf += decoder.decode(value, { stream: true });
+          const { events, remainder } = parseSseChunk(buf);
+          buf = remainder;
+          for (const ev of events) {
+            if (ev.event === "done") {
+              setLive(false);
+              onDoneRef.current?.();
+              reader.cancel();
+              return;
+            }
+            if (ev.event === "log") {
+              try {
+                const entry: LogEntry = JSON.parse(ev.data);
+                setEntries((prev) => [...prev, entry]);
+              } catch { /* ignore parse errors */ }
+            }
+          }
+        }
+        setLive(false);
+      } catch (err: unknown) {
+        if (err instanceof DOMException && err.name === "AbortError") return;
+        setLive(false);
+      }
+    })();
 
-    es.onerror = () => {
-      setLive(false);
-      es.close();
-    };
-
-    return () => {
-      es.close();
-    };
+    return () => ctrl.abort();
   }, [repoId, jobId, logUrl]);
 
   useEffect(() => {

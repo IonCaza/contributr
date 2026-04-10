@@ -77,7 +77,6 @@ export default function RepoDetailPage() {
   const [drillDown, setDrillDown] = useState<{ title: string; metric: string } | null>(null);
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
   const [filesBranchOverride, setFilesBranchOverride] = useState<string | null>(null);
-  const [activeJobId, setActiveJobId] = useState<string | null>(null);
   const [commitPage, setCommitPage] = useState(1);
   const [commitSearch, setCommitSearch] = useState("");
   const debouncedSearch = useDebouncedValue(commitSearch);
@@ -110,6 +109,7 @@ export default function RepoDetailPage() {
 
   const { data: syncJobs = [] } = useSyncJobs(repoId);
   const syncing = syncJobs.some((j) => j.status === "queued" || j.status === "running");
+  const liveJobId = syncJobs.find((j) => j.status === "queued" || j.status === "running")?.id ?? null;
   const { data: branches = [] } = useRepoBranches(repoId);
   const { data: contributors = [] } = useRepoContributors(repoId, branchParam);
   const filesBranch = filesBranchOverride ?? repo?.default_branch ?? undefined;
@@ -132,7 +132,6 @@ export default function RepoDetailPage() {
       wasSyncing.current = true;
     } else if (wasSyncing.current) {
       wasSyncing.current = false;
-      setActiveJobId(null);
       qc.invalidateQueries({ queryKey: queryKeys.repos.detail(repoId) });
       qc.invalidateQueries({ queryKey: queryKeys.repos.stats(repoId) });
       qc.invalidateQueries({ queryKey: queryKeys.repos.branches(repoId) });
@@ -145,15 +144,14 @@ export default function RepoDetailPage() {
   async function handleSync() {
     if (syncing) return;
     try {
-      const job = await syncMutation.mutateAsync(repoId);
-      setActiveJobId(job.id);
+      await syncMutation.mutateAsync(repoId);
     } catch { /* mutation error handled by React Query */ }
   }
 
   async function handleCancel() {
-    if (!activeJobId) return;
-    await cancelMutation.mutateAsync(activeJobId);
-    setActiveJobId(null);
+    const jobId = liveJobId;
+    if (!jobId) return;
+    await cancelMutation.mutateAsync(jobId);
   }
 
   const chartData = useMemo(() => daily.map((d) => ({
@@ -277,8 +275,8 @@ export default function RepoDetailPage() {
         </div>
       </div>
 
-      {syncing && activeJobId && (
-        <SyncLogViewer repoId={repoId} jobId={activeJobId} onDone={() => { setActiveJobId(null); qc.invalidateQueries({ queryKey: queryKeys.repos.syncJobs(repoId) }); }} />
+      {syncing && liveJobId && (
+        <SyncLogViewer repoId={repoId} jobId={liveJobId} onDone={() => { qc.invalidateQueries({ queryKey: queryKeys.repos.syncJobs(repoId) }); }} />
       )}
 
       <div className="flex flex-wrap items-center gap-3 rounded-lg border border-border bg-muted/30 px-4 py-3">

@@ -1,8 +1,6 @@
-import json
 import uuid
 from datetime import datetime, timezone, timedelta
 
-import redis.asyncio as aioredis
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
@@ -13,6 +11,7 @@ from sse_starlette.sse import EventSourceResponse
 from app.config import settings
 from app.db.base import get_db
 from app.db.models import User, Project, Repository
+from app.services.sync_logger import stream_log_events
 from app.db.models.sast import (
     SastScanRun, SastScanStatus, SastFinding, SastFindingStatus,
     SastSeverity, SastRuleProfile, SastIgnoredRule,
@@ -266,38 +265,7 @@ async def stream_scan_logs(
     list_key = f"sync:logs:sast-{run_id}"
     channel_key = f"sync:logs:live:sast-{run_id}"
 
-    async def event_generator():
-        r = aioredis.from_url(settings.redis_url, decode_responses=True)
-        try:
-            existing = await r.lrange(list_key, 0, -1)
-            for entry in existing:
-                data = json.loads(entry)
-                if data.get("phase") == "__done__":
-                    yield {"event": "done", "data": entry}
-                    return
-                yield {"event": "log", "data": entry}
-
-            pubsub = r.pubsub()
-            await pubsub.subscribe(channel_key)
-            try:
-                while True:
-                    if await request.is_disconnected():
-                        break
-                    msg = await pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0)
-                    if msg is None:
-                        continue
-                    data = json.loads(msg["data"])
-                    if data.get("phase") == "__done__":
-                        yield {"event": "done", "data": msg["data"]}
-                        break
-                    yield {"event": "log", "data": msg["data"]}
-            finally:
-                await pubsub.unsubscribe(channel_key)
-                await pubsub.aclose()
-        finally:
-            await r.aclose()
-
-    return EventSourceResponse(event_generator())
+    return EventSourceResponse(stream_log_events(list_key, channel_key, request))
 
 
 @repo_router.patch("/findings/{finding_id}/dismiss", response_model=SastFindingOut)

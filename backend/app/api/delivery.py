@@ -1,7 +1,6 @@
 """Delivery analytics API — work items, iterations, velocity, throughput, sync."""
 from __future__ import annotations
 
-import json
 import uuid
 from datetime import date, datetime, timedelta, timezone
 
@@ -10,9 +9,7 @@ from sqlalchemy import select, func, case, String, asc, desc, nullslast, delete,
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from sse_starlette.sse import EventSourceResponse
-import redis.asyncio as aioredis
 
-from app.config import settings
 from app.auth.dependencies import get_current_user
 from app.db.base import get_db
 from app.db.models.user import User
@@ -21,6 +18,7 @@ from app.db.models.work_item_activity import WorkItemActivity
 from app.db.models.iteration import Iteration
 from app.db.models.delivery_sync_job import DeliverySyncJob
 from app.db.models.sync_job import SyncStatus
+from app.services.sync_logger import stream_log_events
 from app.db.models.work_item_commit import WorkItemCommit
 from app.db.models.commit import Commit
 from app.db.models.contributor import Contributor
@@ -1401,35 +1399,4 @@ async def stream_delivery_sync_logs(
     list_key = f"sync:logs:delivery-{project_id}"
     channel_key = f"sync:logs:live:delivery-{project_id}"
 
-    async def event_generator():
-        r = aioredis.from_url(settings.redis_url, decode_responses=True)
-        try:
-            existing = await r.lrange(list_key, 0, -1)
-            for entry in existing:
-                data = json.loads(entry)
-                if data.get("phase") == "__done__":
-                    yield {"event": "done", "data": entry}
-                    return
-                yield {"event": "log", "data": entry}
-
-            pubsub = r.pubsub()
-            await pubsub.subscribe(channel_key)
-            try:
-                while True:
-                    if await request.is_disconnected():
-                        break
-                    msg = await pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0)
-                    if msg is None:
-                        continue
-                    data = json.loads(msg["data"])
-                    if data.get("phase") == "__done__":
-                        yield {"event": "done", "data": msg["data"]}
-                        break
-                    yield {"event": "log", "data": msg["data"]}
-            finally:
-                await pubsub.unsubscribe(channel_key)
-                await pubsub.aclose()
-        finally:
-            await r.aclose()
-
-    return EventSourceResponse(event_generator())
+    return EventSourceResponse(stream_log_events(list_key, channel_key, request))
