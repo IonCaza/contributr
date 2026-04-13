@@ -1,6 +1,7 @@
 "use client";
 
-import { use, useCallback } from "react";
+import { use, useCallback, useState, useEffect } from "react";
+import { useRouter } from "next/navigation";
 import {
   GitBranch,
   LayoutDashboard,
@@ -10,6 +11,7 @@ import {
   Loader2,
   Clock,
   Check,
+  Trash2,
 } from "lucide-react";
 import {
   Card,
@@ -26,7 +28,11 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
-import { useProjectSchedule, useUpdateProjectSchedule } from "@/hooks/use-projects";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Button } from "@/components/ui/button";
+import { ConfirmDialog } from "@/components/confirm-dialog";
+import { useProject, useUpdateProject, useDeleteProject, useProjectSchedule, useUpdateProjectSchedule } from "@/hooks/use-projects";
 
 const INTERVAL_OPTIONS = [
   { value: "disabled", label: "Disabled" },
@@ -98,8 +104,37 @@ export default function ProjectSettingsPage({
   params: Promise<{ projectId: string }>;
 }) {
   const { projectId } = use(params);
+  const router = useRouter();
+  const { data: project, isLoading: projectLoading } = useProject(projectId);
+  const updateProject = useUpdateProject(projectId);
+  const deleteProject = useDeleteProject();
   const { data: schedule, isLoading } = useProjectSchedule(projectId);
   const updateSchedule = useUpdateProjectSchedule(projectId);
+
+  const [name, setName] = useState("");
+  const [description, setDescription] = useState("");
+  const [dirty, setDirty] = useState(false);
+  const [showDelete, setShowDelete] = useState(false);
+
+  useEffect(() => {
+    if (project) {
+      setName(project.name);
+      setDescription(project.description ?? "");
+      setDirty(false);
+    }
+  }, [project]);
+
+  function handleProjectChange(field: "name" | "description", value: string) {
+    if (field === "name") setName(value);
+    else setDescription(value);
+    setDirty(true);
+  }
+
+  function handleProjectSave() {
+    updateProject.mutate({ name: name.trim(), description: description.trim() }, {
+      onSuccess: () => setDirty(false),
+    });
+  }
 
   const handleChange = useCallback(
     (key: string, value: string) => {
@@ -108,7 +143,7 @@ export default function ProjectSettingsPage({
     [updateSchedule],
   );
 
-  if (isLoading) {
+  if (isLoading || projectLoading) {
     return (
       <div className="space-y-6">
         <div>
@@ -125,7 +160,59 @@ export default function ProjectSettingsPage({
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-10">
+      {/* General */}
+      <section className="space-y-4">
+        <div>
+          <h2 className="text-xl font-semibold tracking-tight">General</h2>
+          <p className="text-sm text-muted-foreground">
+            Project name and description.
+          </p>
+        </div>
+        <Card>
+          <CardContent className="pt-6 space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="project-name">Name</Label>
+              <Input
+                id="project-name"
+                value={name}
+                onChange={(e) => handleProjectChange("name", e.target.value)}
+                placeholder="Project name"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="project-description">Description</Label>
+              <Input
+                id="project-description"
+                value={description}
+                onChange={(e) => handleProjectChange("description", e.target.value)}
+                placeholder="Optional description"
+              />
+            </div>
+            <div className="flex items-center gap-3">
+              <Button
+                size="sm"
+                onClick={handleProjectSave}
+                disabled={!dirty || !name.trim() || updateProject.isPending}
+              >
+                {updateProject.isPending ? (
+                  <><Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />Saving...</>
+                ) : (
+                  "Save"
+                )}
+              </Button>
+              {!updateProject.isPending && updateProject.isSuccess && !dirty && (
+                <span className="flex items-center gap-1 text-xs text-muted-foreground">
+                  <Check className="h-3.5 w-3.5" /> Saved
+                </span>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+      </section>
+
+      {/* Scheduling */}
+      <section className="space-y-4">
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-xl font-semibold tracking-tight">Scheduling</h2>
@@ -195,6 +282,51 @@ export default function ProjectSettingsPage({
           );
         })}
       </div>
+      </section>
+
+      {/* Danger Zone */}
+      <section className="space-y-4">
+        <div>
+          <h2 className="text-xl font-semibold tracking-tight text-destructive">Danger Zone</h2>
+          <p className="text-sm text-muted-foreground">
+            Irreversible actions for this project.
+          </p>
+        </div>
+        <Card className="border-destructive/30">
+          <CardContent className="pt-6 flex items-center justify-between">
+            <div>
+              <p className="text-sm font-medium">Delete this project</p>
+              <p className="text-xs text-muted-foreground">
+                Permanently remove this project and all its repositories, commits, and associated data.
+              </p>
+            </div>
+            <Button
+              variant="destructive"
+              size="sm"
+              onClick={() => setShowDelete(true)}
+            >
+              <Trash2 className="mr-1.5 h-3.5 w-3.5" />
+              Delete Project
+            </Button>
+          </CardContent>
+        </Card>
+      </section>
+
+      <ConfirmDialog
+        open={showDelete}
+        onOpenChange={setShowDelete}
+        title="Delete Project"
+        description={<>This will permanently delete <span className="font-semibold">{project?.name}</span> and all its repositories, commits, and associated data. This action cannot be undone.</>}
+        confirmLabel="Delete Project"
+        expectedName={project?.name}
+        expectedNameLabel="Type the project name to confirm"
+        onConfirm={() => {
+          deleteProject.mutate(projectId, {
+            onSuccess: () => router.push("/projects"),
+          });
+          setShowDelete(false);
+        }}
+      />
     </div>
   );
 }

@@ -2,24 +2,20 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { FolderGit2, Plus, Trash2 } from "lucide-react";
+import { FolderGit2, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { ConfirmDialog } from "@/components/confirm-dialog";
-import { useProjects, useCreateProject, useDeleteProject } from "@/hooks/use-projects";
+import { useProjects, useCreateProject } from "@/hooks/use-projects";
 
 export default function ProjectsPage() {
   const { data: projects = [], isLoading } = useProjects();
   const createProject = useCreateProject();
-  const deleteProject = useDeleteProject();
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState({ name: "", description: "" });
   const [search, setSearch] = useState("");
-  const [deleteId, setDeleteId] = useState<string | null>(null);
-  const projectToDelete = projects.find((p) => p.id === deleteId);
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
@@ -88,54 +84,35 @@ export default function ProjectsPage() {
               </CardContent>
             </Card>
           )}
-          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+          <div className="flex flex-wrap gap-3">
             <Card
-              className="group flex cursor-pointer items-center justify-center border-dashed transition-all duration-200 hover:shadow-md hover:-translate-y-0.5 hover:border-primary/50"
+              className="group flex cursor-pointer items-center justify-center border-dashed transition-all duration-200 hover:shadow-sm hover:border-primary/50 w-52 h-52"
               onClick={() => setOpen(true)}
             >
-              <CardContent className="flex flex-col items-center gap-2 py-8">
+              <div className="flex flex-col items-center gap-2">
                 <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10 transition-colors group-hover:bg-primary/20">
                   <Plus className="h-5 w-5 text-primary" />
                 </div>
                 <span className="text-sm font-medium text-muted-foreground group-hover:text-foreground">New Project</span>
-              </CardContent>
+              </div>
             </Card>
             {filtered.map((p) => (
-              <Card key={p.id} className="group relative cursor-pointer transition-all duration-200 hover:shadow-md hover:-translate-y-0.5 hover:border-primary/30">
+              <Card key={p.id} className="group relative cursor-pointer transition-all duration-200 hover:shadow-sm hover:border-primary/30 w-52 h-52">
                 <Link href={`/projects/${p.id}/code`} className="absolute inset-0 z-10" />
-                <CardHeader className="flex flex-row items-center gap-3 space-y-0">
-                  <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10">
+                <div className="flex flex-col items-center justify-center gap-2 px-4 py-5 h-full text-center">
+                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary/10">
                     <FolderGit2 className="h-5 w-5 text-primary" />
                   </div>
-                  <div className="flex-1">
-                    <CardTitle className="text-base">{p.name}</CardTitle>
-                    {p.description && <p className="text-xs text-muted-foreground line-clamp-1">{p.description}</p>}
+                  <div className="w-full">
+                    <p className="text-sm font-semibold leading-snug truncate">{p.name}</p>
+                    {p.description && <p className="text-xs leading-snug text-muted-foreground line-clamp-3 mt-1">{p.description}</p>}
                   </div>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="relative z-20 opacity-0 group-hover:opacity-100"
-                    onClick={(e) => { e.preventDefault(); setDeleteId(p.id); }}
-                  >
-                    <Trash2 className="h-4 w-4 text-destructive" />
-                  </Button>
-                </CardHeader>
+                </div>
               </Card>
             ))}
           </div>
         </>
       )}
-
-      <ConfirmDialog
-        open={!!deleteId}
-        onOpenChange={(v) => !v && setDeleteId(null)}
-        title="Delete Project"
-        description={<>This will permanently delete <span className="font-semibold">{projectToDelete?.name}</span> and all its repositories, commits, and associated data. This action cannot be undone.</>}
-        confirmLabel="Delete Project"
-        expectedName={projectToDelete?.name}
-        expectedNameLabel="Type the project name to confirm"
-        onConfirm={() => { if (deleteId) { deleteProject.mutate(deleteId); setDeleteId(null); } }}
-      />
     </div>
   );
 }
