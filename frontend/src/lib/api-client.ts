@@ -921,6 +921,6 @@ export const api = {
     request<void>(`/access-policies/${id}`, { method: "DELETE" }),
 
   getApiBase: () => API_BASE,
-  getSseBase: () => process.env.NEXT_PUBLIC_API_URL || API_BASE,
+  getSseBase: () => API_BASE,
   getAuthToken: () => getToken(),
 };

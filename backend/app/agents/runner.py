@@ -222,8 +222,14 @@ async def run_agent_stream(
 
             if kind == "on_tool_start" and name.startswith(DELEGATION_PREFIX):
                 slug = name[len(DELEGATION_PREFIX):].replace("_", "-")
-                active_delegations[run_id] = {"slug": slug}
-                yield {"type": "agent_start", "run_id": run_id, "slug": slug}
+                tool_input = event.get("data", {}).get("input", {})
+                query_text = ""
+                if isinstance(tool_input, dict):
+                    query_text = tool_input.get("query", "")
+                elif isinstance(tool_input, str):
+                    query_text = tool_input
+                active_delegations[run_id] = {"slug": slug, "query": query_text}
+                yield {"type": "agent_start", "run_id": run_id, "slug": slug, "query": query_text}
 
             elif kind == "on_tool_start" and name in _PRES_TOOLS:
                 tool_input = event.get("data", {}).get("input", {})

@@ -457,6 +457,7 @@ export interface AgentActivityRecord {
   trigger_message_id: string;
   agent_slug: string;
   run_id: string;
+  delegation_query?: string;
   content: string;
   started_at: string;
   finished_at: string | null;

@@ -4,6 +4,8 @@ metadata:
   name: {{ include "contributr.fullname" . }}-backend
   labels:
     {{- include "contributr.componentLabels" (dict "root" . "component" "backend") | nindent 4 }}
+  annotations:
+    traefik.ingress.kubernetes.io/service.serverstransport: {{ .Release.Namespace }}-{{ include "contributr.fullname" . }}-backend-transport@kubernetescrd
 spec:
   type: ClusterIP
   ports:

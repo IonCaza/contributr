@@ -30,6 +30,27 @@ spec:
                 name: {{ include "contributr.fullname" . }}-backend
                 port:
                   number: 8000
+          - path: /docs
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "contributr.fullname" . }}-backend
+                port:
+                  number: 8000
+          - path: /redoc
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "contributr.fullname" . }}-backend
+                port:
+                  number: 8000
+          - path: /openapi.json
+            pathType: Exact
+            backend:
+              service:
+                name: {{ include "contributr.fullname" . }}-backend
+                port:
+                  number: 8000
           - path: /
             pathType: Prefix
             backend:

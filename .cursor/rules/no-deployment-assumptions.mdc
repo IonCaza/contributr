@@ -1,0 +1,19 @@
+---
+description: Never assume schema migrations or deployed artifacts haven't been applied — always verify before deleting or modifying
+alwaysApply: true
+---
+
+# No Assumptions About Deployment State
+
+**NEVER** assume that a migration, config change, or any artifact you created earlier in a session has not been deployed. The user may deploy at any point during the conversation.
+
+## Rules
+
+1. **Never delete a migration file.** Once created, treat it as potentially applied to production. If it needs reverting, create a new migration that undoes its effects.
+2. **Never modify the `upgrade()` of an already-created migration.** If the logic was wrong, add a corrective migration on top.
+3. **Before any destructive action on a deployed artifact** (migration, Helm template, Dockerfile, k8s manifest), **ask the user** whether it has been deployed.
+4. **Assume the worst case**: if you created it and time has passed (even minutes), assume it's live.
+
+## What went wrong
+
+A migration was created, the user deployed it, and then the file was deleted under the assumption it hadn't been applied. This broke alembic on the next deploy because the revision recorded in the database no longer existed on disk.

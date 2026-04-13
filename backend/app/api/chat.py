@@ -56,6 +56,7 @@ class AgentActivityOut(BaseModel):
     trigger_message_id: uuid.UUID
     agent_slug: str
     run_id: str
+    delegation_query: str = ""
     content: str
     started_at: datetime
     finished_at: datetime | None = None
@@ -106,6 +107,7 @@ async def _persist_response(
                         response_message_id=assistant_msg.id,
                         agent_slug=act["slug"],
                         run_id=act["run_id"],
+                        delegation_query=act.get("delegation_query", ""),
                         content=act["content"],
                         started_at=act["started_at"],
                         finished_at=act.get("finished_at"),
@@ -212,11 +214,12 @@ async def send_message(
                     activities[evt["run_id"]] = {
                         "slug": evt["slug"],
                         "run_id": evt["run_id"],
+                        "delegation_query": evt.get("query", ""),
                         "content": "",
                         "started_at": datetime.now(timezone.utc),
                         "finished_at": None,
                     }
-                    yield {"event": "agent_start", "data": json.dumps({"run_id": evt["run_id"], "slug": evt["slug"]})}
+                    yield {"event": "agent_start", "data": json.dumps({"run_id": evt["run_id"], "slug": evt["slug"], "query": evt.get("query", "")})}
                 elif etype == "agent_token":
                     act = activities.get(evt["run_id"])
                     if act:

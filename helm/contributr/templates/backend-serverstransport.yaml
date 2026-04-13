@@ -1,0 +1,12 @@
+{{- if .Values.ingress.enabled }}
+apiVersion: traefik.io/v1alpha1
+kind: ServersTransport
+metadata:
+  name: {{ include "contributr.fullname" . }}-backend-transport
+  labels:
+    {{- include "contributr.componentLabels" (dict "root" . "component" "backend") | nindent 4 }}
+spec:
+  forwardingTimeouts:
+    responseHeaderTimeout: 300s
+    idleConnTimeout: 300s
+{{- end }}

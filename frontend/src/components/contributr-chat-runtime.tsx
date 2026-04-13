@@ -33,6 +33,7 @@ import type { AgentActivityRecord } from "@/lib/types";
 
 export interface ChildAgent {
   slug: string;
+  query: string;
   content: string;
   done: boolean;
 }
@@ -40,7 +41,7 @@ export interface ChildAgent {
 export interface ActivityGroup {
   triggerMessageId: string;
   triggerContent: string;
-  agents: { runId: string; slug: string; content: string; done: boolean }[];
+  agents: { runId: string; slug: string; query: string; content: string; done: boolean }[];
 }
 
 interface ChildAgentContextValue {
@@ -256,6 +257,7 @@ function buildActivityGroups(
       agents: msg.agent_activities.map((a) => ({
         runId: a.run_id,
         slug: a.agent_slug,
+        query: a.delegation_query ?? "",
         content: a.content,
         done: true,
       })),
@@ -521,7 +523,7 @@ export function ContributrChatRuntime({ children, agentSlug, onPresentationUpdat
       setActivityVisible(true);
       setLiveAgentMap((prev) => {
         const next = new Map(prev);
-        next.set(data.run_id, { slug: data.slug, content: "", done: false });
+        next.set(data.run_id, { slug: data.slug, query: data.query || "", content: "", done: false });
         return next;
       });
     } else if (event === "agent_token") {

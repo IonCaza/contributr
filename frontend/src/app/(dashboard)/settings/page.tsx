@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect, useMemo } from "react";
-import { Key, Users, Plus, Trash2, Copy, Check, Download, Upload, Database, Loader2, CheckCircle2, AlertCircle, Bot, Eye, EyeOff, FileX2, ShieldCheck, ShieldAlert, Play, Pencil, Cpu, Wrench, Star, ListFilter, Search, RefreshCw, CalendarRange, MessageSquareWarning, Lock, Bell, Send, Smartphone, Mail, Globe, Shield, Zap, ExternalLink, ChevronRight, Brain, ChevronDown, Info } from "lucide-react";
+import { Key, Users, Plus, Trash2, Copy, Check, Download, Upload, Database, Loader2, CheckCircle2, AlertCircle, Bot, Eye, EyeOff, FileX2, ShieldCheck, ShieldAlert, Play, Pencil, Cpu, Star, ListFilter, Search, RefreshCw, CalendarRange, MessageSquareWarning, Lock, Bell, Send, Smartphone, Mail, Globe, Shield, Zap, ExternalLink, ChevronRight, Brain, ChevronDown, Info } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -47,6 +47,9 @@ import { useFeedback, useUpdateFeedback, useDeleteFeedback } from "@/hooks/use-f
 import type { FeedbackItem } from "@/lib/types";
 import { MfaSetupDialog } from "@/components/mfa-setup-dialog";
 import AccessPolicySettings from "@/components/access-policy-settings";
+import { LocalAgentEditModal } from "@/components/local-agent-edit-modal";
+import { A2AAgentEditModal } from "@/components/a2a-agent-edit-modal";
+import type { A2AAgentConfig } from "@/components/a2a-agent-edit-modal";
 
 function CreateKnowledgeGraphDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
   const [form, setForm] = useState({ name: "", description: "", generation_mode: "schema_and_entities" });
@@ -1281,8 +1284,6 @@ export default function SettingsPage() {
   const deleteAgent = useDeleteAgent();
 
   const { data: aiTools = [] } = useAiTools();
-  const [toolSearch, setToolSearch] = useState("");
-  const [collapsedCategories, setCollapsedCategories] = useState<Set<string>>(new Set());
 
   const CATEGORY_LABELS: Record<string, string> = {
     contribution_analytics: "Contribution Analytics",
@@ -1300,19 +1301,6 @@ export default function SettingsPage() {
     sql_query: "bg-violet-100 text-violet-800 dark:bg-violet-900 dark:text-violet-200",
   };
 
-  const groupedTools = useMemo(() => {
-    const q = toolSearch.toLowerCase().trim();
-    const filtered = q
-      ? aiTools.filter((t) => t.name.toLowerCase().includes(q) || t.description.toLowerCase().includes(q) || t.slug.toLowerCase().includes(q))
-      : aiTools;
-    const groups: Record<string, typeof filtered> = {};
-    for (const tool of filtered) {
-      const cat = tool.category || "other";
-      if (!groups[cat]) groups[cat] = [];
-      groups[cat].push(tool);
-    }
-    return Object.entries(groups).sort(([a], [b]) => a.localeCompare(b));
-  }, [aiTools, toolSearch]);
 
   const toolCategoryIndex = useMemo(() => {
     const idx: Record<string, string> = {};
@@ -1354,7 +1342,8 @@ export default function SettingsPage() {
   // Agent form
   const [agentOpen, setAgentOpen] = useState(false);
   const [editAgentSlug, setEditAgentSlug] = useState<string | null>(null);
-  const [agentForm, setAgentForm] = useState({ slug: "", name: "", description: "", agent_type: "standard" as "standard" | "supervisor", llm_provider_id: "", system_prompt: "", max_iterations: "10", summary_token_limit: "", enabled: true, tool_slugs: [] as string[], knowledge_graph_ids: [] as string[], member_agent_ids: [] as string[] });
+  const [a2aOpen, setA2aOpen] = useState(false);
+  const [editA2aAgent, setEditA2aAgent] = useState<A2AAgentConfig | null>(null);
 
   // Knowledge Graph state
   const [kgCreateOpen, setKgCreateOpen] = useState(false);
@@ -1508,61 +1497,12 @@ export default function SettingsPage() {
   function openAgentDialog(agent?: AgentConfig) {
     if (agent) {
       setEditAgentSlug(agent.slug);
-      setAgentForm({
-        slug: agent.slug,
-        name: agent.name,
-        description: agent.description || "",
-        agent_type: agent.agent_type || "standard",
-        llm_provider_id: agent.llm_provider_id || "",
-        system_prompt: agent.system_prompt,
-        max_iterations: String(agent.max_iterations),
-        summary_token_limit: agent.summary_token_limit ? String(agent.summary_token_limit) : "",
-        enabled: agent.enabled,
-        tool_slugs: [...agent.tool_slugs],
-        knowledge_graph_ids: [...(agent.knowledge_graph_ids || [])],
-        member_agent_ids: [...(agent.member_agent_ids || [])],
-      });
     } else {
       setEditAgentSlug(null);
-      setAgentForm({ slug: "", name: "", description: "", agent_type: "standard", llm_provider_id: "", system_prompt: "", max_iterations: "10", summary_token_limit: "", enabled: true, tool_slugs: [], knowledge_graph_ids: [], member_agent_ids: [] });
     }
-    setToolSearch("");
-    setCollapsedCategories(new Set());
     setAgentOpen(true);
   }
 
-  async function handleSaveAgent(e: React.FormEvent) {
-    e.preventDefault();
-    const data = {
-      name: agentForm.name,
-      description: agentForm.description || undefined,
-      agent_type: agentForm.agent_type,
-      llm_provider_id: agentForm.llm_provider_id || undefined,
-      system_prompt: agentForm.system_prompt,
-      max_iterations: parseInt(agentForm.max_iterations) || 10,
-      summary_token_limit: agentForm.summary_token_limit ? parseInt(agentForm.summary_token_limit) : null,
-      enabled: agentForm.enabled,
-      tool_slugs: agentForm.tool_slugs,
-      knowledge_graph_ids: agentForm.knowledge_graph_ids,
-      member_agent_ids: agentForm.agent_type === "supervisor" ? agentForm.member_agent_ids : [],
-    };
-
-    if (editAgentSlug) {
-      await updateAgent.mutateAsync({ slug: editAgentSlug, data });
-    } else {
-      await createAgent.mutateAsync({ slug: agentForm.slug, ...data });
-    }
-    setAgentOpen(false);
-  }
-
-  function toggleToolSlug(slug: string) {
-    setAgentForm((f) => ({
-      ...f,
-      tool_slugs: f.tool_slugs.includes(slug)
-        ? f.tool_slugs.filter((s) => s !== slug)
-        : [...f.tool_slugs, slug],
-    }));
-  }
 
   async function handleExport() {
     setExporting(true);
@@ -2499,9 +2439,14 @@ export default function SettingsPage() {
                   <CardTitle className="flex items-center gap-2 text-base"><Bot className="h-4 w-4" /> Agents</CardTitle>
                   <CardDescription>Define AI agents with custom prompts, tools, and LLM assignments.</CardDescription>
                 </div>
-                <Button size="sm" onClick={() => openAgentDialog()}>
-                  <Plus className="mr-2 h-4 w-4" /> Add Agent
-                </Button>
+                <div className="flex items-center gap-2">
+                  <Button size="sm" variant="outline" onClick={() => setA2aOpen(true)}>
+                    <Globe className="mr-2 h-4 w-4" /> Add A2A Agent
+                  </Button>
+                  <Button size="sm" onClick={() => openAgentDialog()}>
+                    <Plus className="mr-2 h-4 w-4" /> Add Agent
+                  </Button>
+                </div>
               </CardHeader>
               <CardContent>
                 <Table>
@@ -2589,246 +2534,21 @@ export default function SettingsPage() {
               </CardContent>
             </Card>
 
-            {/* Agent Dialog */}
-            <Dialog open={agentOpen} onOpenChange={setAgentOpen}>
-              <DialogContent className="sm:max-w-4xl max-h-[85vh] overflow-y-auto">
-                <DialogHeader>
-                  <DialogTitle>{editAgentSlug ? "Edit Agent" : "Create Agent"}</DialogTitle>
-                </DialogHeader>
-                <form onSubmit={handleSaveAgent} className="space-y-4">
-                  <div className="grid gap-4 sm:grid-cols-2">
-                    <div className="space-y-2">
-                      <Label>Name</Label>
-                      <Input value={agentForm.name} onChange={(e) => setAgentForm((f) => ({ ...f, name: e.target.value }))} placeholder="Contribution Analyst" required />
-                    </div>
-                    <div className="space-y-2">
-                      <Label>Slug</Label>
-                      <Input value={agentForm.slug} onChange={(e) => setAgentForm((f) => ({ ...f, slug: e.target.value }))} placeholder="contribution-analyst" disabled={!!editAgentSlug} required />
-                      <p className="text-xs text-muted-foreground">Unique identifier. Cannot be changed after creation.</p>
-                    </div>
-                  </div>
-                  <div className="grid gap-4 sm:grid-cols-2">
-                    <div className="space-y-2">
-                      <Label>Description</Label>
-                      <Input value={agentForm.description} onChange={(e) => setAgentForm((f) => ({ ...f, description: e.target.value }))} placeholder="What does this agent do?" />
-                    </div>
-                    <div className="space-y-2">
-                      <Label>Agent Type</Label>
-                      <Select value={agentForm.agent_type} onValueChange={(v) => setAgentForm((f) => ({ ...f, agent_type: v as "standard" | "supervisor" }))}>
-                        <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="standard">Standard Agent</SelectItem>
-                          <SelectItem value="supervisor">Supervisor Agent</SelectItem>
-                        </SelectContent>
-                      </Select>
-                      <p className="text-xs text-muted-foreground">
-                        {agentForm.agent_type === "supervisor"
-                          ? "Orchestrates other agents by delegating sub-tasks."
-                          : "A regular agent with direct tool access."}
-                      </p>
-                    </div>
-                  </div>
-                  <div className="grid gap-4 sm:grid-cols-3">
-                    <div className="min-w-0 space-y-2">
-                      <Label>LLM Provider <span className="text-destructive">*</span></Label>
-                      <Select value={agentForm.llm_provider_id} onValueChange={(v) => setAgentForm((f) => ({ ...f, llm_provider_id: v }))}>
-                        <SelectTrigger className={`w-full overflow-hidden [&>span:first-child]:truncate ${!agentForm.llm_provider_id ? "border-destructive/50" : ""}`}><SelectValue placeholder="Select a provider..." /></SelectTrigger>
-                        <SelectContent>
-                          {llmProviders.filter((p) => (p.model_type || "chat") === "chat").map((p) => (
-                            <SelectItem key={p.id} value={p.id}>
-                              {p.name} ({p.model})
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                      {!agentForm.llm_provider_id && <p className="text-xs text-destructive">An LLM provider is required.</p>}
-                    </div>
-                    <div className="space-y-2">
-                      <Label>Max Iterations</Label>
-                      <Input type="number" min="1" max="999" value={agentForm.max_iterations} onChange={(e) => setAgentForm((f) => ({ ...f, max_iterations: e.target.value }))} />
-                      <p className="text-xs text-muted-foreground">Max tool-calling loops.</p>
-                    </div>
-                    <div className="space-y-2">
-                      <Label>Summary Token Limit</Label>
-                      <Input type="number" min="100" value={agentForm.summary_token_limit} onChange={(e) => setAgentForm((f) => ({ ...f, summary_token_limit: e.target.value }))} placeholder="Auto" />
-                      <p className="text-xs text-muted-foreground">~4% of context window.</p>
-                    </div>
-                  </div>
-                  <div className="space-y-2">
-                    <Label>System Prompt</Label>
-                    <Textarea
-                      value={agentForm.system_prompt}
-                      onChange={(e) => setAgentForm((f) => ({ ...f, system_prompt: e.target.value }))}
-                      placeholder="You are an AI assistant that..."
-                      rows={10}
-                      className="font-mono text-sm"
-                    />
-                  </div>
+            {/* Local Agent Edit Modal */}
+            <LocalAgentEditModal
+              open={agentOpen}
+              onOpenChange={setAgentOpen}
+              agent={editAgentSlug ? agents.find((a) => a.slug === editAgentSlug) ?? null : null}
+              llmProviders={llmProviders}
+            />
 
-                  {agentForm.agent_type === "supervisor" && (
-                    <div className="space-y-2">
-                      <Label className="flex items-center gap-2"><Users className="h-3.5 w-3.5" /> Member Agents</Label>
-                      <p className="text-xs text-muted-foreground">Select which agents this supervisor can delegate to. Only enabled standard agents are shown.</p>
-                      <div className="grid gap-2 sm:grid-cols-2 mt-2">
-                        {agents.filter((a) => a.agent_type !== "supervisor" && a.slug !== agentForm.slug).map((a) => (
-                          <label key={a.id} className="flex items-start gap-2 rounded-md border p-2 cursor-pointer hover:bg-muted/50">
-                            <input
-                              type="checkbox"
-                              checked={agentForm.member_agent_ids.includes(a.id)}
-                              onChange={() => {
-                                setAgentForm((f) => ({
-                                  ...f,
-                                  member_agent_ids: f.member_agent_ids.includes(a.id)
-                                    ? f.member_agent_ids.filter((id) => id !== a.id)
-                                    : [...f.member_agent_ids, a.id],
-                                }));
-                              }}
-                              className="mt-0.5"
-                            />
-                            <div className="min-w-0">
-                              <p className="text-sm font-medium leading-tight">{a.name}</p>
-                              <p className="text-xs text-muted-foreground truncate">{a.description || a.slug} &middot; {a.tool_slugs.length} tools</p>
-                            </div>
-                          </label>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  <div className="space-y-2">
-                    <Label className="flex items-center gap-2"><Wrench className="h-3.5 w-3.5" /> {agentForm.agent_type === "supervisor" ? "Direct Tools" : "Assigned Tools"}</Label>
-                    <p className="text-xs text-muted-foreground">
-                      {agentForm.agent_type === "supervisor"
-                        ? "Tools this supervisor can invoke directly (in addition to delegating to member agents). If none are selected, the supervisor has access to all tools."
-                        : "Select which tools this agent can use. If none are selected, the agent will have access to all tools."}
-                    </p>
-
-                      <div className="relative">
-                        <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-                        <Input
-                          placeholder="Search tools by name or description…"
-                          value={toolSearch}
-                          onChange={(e) => setToolSearch(e.target.value)}
-                          className="pl-9 h-9"
-                        />
-                      </div>
-
-                      <div className="flex items-center justify-between text-xs text-muted-foreground">
-                        <span>{agentForm.tool_slugs.length} of {aiTools.length} tools selected</span>
-                        <div className="flex gap-2">
-                          <button type="button" className="hover:underline" onClick={() => setAgentForm((f) => ({ ...f, tool_slugs: aiTools.map((t) => t.slug) }))}>Select all</button>
-                          <span>&middot;</span>
-                          <button type="button" className="hover:underline" onClick={() => setAgentForm((f) => ({ ...f, tool_slugs: [] }))}>Clear</button>
-                        </div>
-                      </div>
-
-                      <div className="space-y-2 max-h-80 overflow-y-auto rounded-md border p-2">
-                        {groupedTools.map(([category, tools]) => {
-                          const isCollapsed = collapsedCategories.has(category);
-                          const selectedInGroup = tools.filter((t) => agentForm.tool_slugs.includes(t.slug)).length;
-                          const allSelected = selectedInGroup === tools.length;
-                          const categorySlugs = tools.map((t) => t.slug);
-                          return (
-                            <div key={category}>
-                              <div className="flex items-center gap-2 sticky top-0 bg-background z-10 py-1">
-                                <button
-                                  type="button"
-                                  className="flex items-center gap-1 text-sm font-medium hover:text-foreground transition-colors"
-                                  onClick={() => setCollapsedCategories((prev) => {
-                                    const next = new Set(prev);
-                                    isCollapsed ? next.delete(category) : next.add(category);
-                                    return next;
-                                  })}
-                                >
-                                  <ChevronRight className={`h-3.5 w-3.5 transition-transform ${isCollapsed ? "" : "rotate-90"}`} />
-                                  <Badge className={`text-[10px] font-medium ${CATEGORY_COLORS[category] || "bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-200"}`}>
-                                    {CATEGORY_LABELS[category] || category}
-                                  </Badge>
-                                </button>
-                                <span className="text-[10px] text-muted-foreground">{selectedInGroup}/{tools.length}</span>
-                                <button
-                                  type="button"
-                                  className="text-[10px] text-muted-foreground hover:underline ml-auto"
-                                  onClick={() => {
-                                    setAgentForm((f) => ({
-                                      ...f,
-                                      tool_slugs: allSelected
-                                        ? f.tool_slugs.filter((s) => !categorySlugs.includes(s))
-                                        : [...new Set([...f.tool_slugs, ...categorySlugs])],
-                                    }));
-                                  }}
-                                >
-                                  {allSelected ? "deselect all" : "select all"}
-                                </button>
-                              </div>
-                              {!isCollapsed && (
-                                <div className="grid gap-1.5 sm:grid-cols-2 pl-5 mt-1">
-                                  {tools.map((t) => (
-                                    <label key={t.slug} className="flex items-start gap-2 rounded-md border p-2 cursor-pointer hover:bg-muted/50">
-                                      <input
-                                        type="checkbox"
-                                        checked={agentForm.tool_slugs.includes(t.slug)}
-                                        onChange={() => toggleToolSlug(t.slug)}
-                                        className="mt-0.5"
-                                      />
-                                      <div className="min-w-0">
-                                        <p className="text-sm font-medium leading-tight">{t.name}</p>
-                                        <p className="text-xs text-muted-foreground truncate">{t.description}</p>
-                                      </div>
-                                    </label>
-                                  ))}
-                                </div>
-                              )}
-                            </div>
-                          );
-                        })}
-                        {groupedTools.length === 0 && (
-                          <p className="text-sm text-muted-foreground text-center py-4">No tools match &ldquo;{toolSearch}&rdquo;</p>
-                        )}
-                      </div>
-                    </div>
-
-                  {/* Knowledge Graphs */}
-                  {knowledgeGraphs.length > 0 && (
-                    <div className="space-y-2">
-                      <Label className="flex items-center gap-2"><Database className="h-3.5 w-3.5" /> Knowledge Graphs</Label>
-                      <p className="text-xs text-muted-foreground">Attach knowledge graphs to inject data model context into this agent&apos;s system prompt.</p>
-                      <div className="grid gap-2 sm:grid-cols-2 mt-2">
-                        {knowledgeGraphs.map((kg) => (
-                          <label key={kg.id} className="flex items-start gap-2 rounded-md border p-2 cursor-pointer hover:bg-muted/50">
-                            <input
-                              type="checkbox"
-                              checked={agentForm.knowledge_graph_ids.includes(kg.id)}
-                              onChange={() => {
-                                setAgentForm((f) => ({
-                                  ...f,
-                                  knowledge_graph_ids: f.knowledge_graph_ids.includes(kg.id)
-                                    ? f.knowledge_graph_ids.filter((id) => id !== kg.id)
-                                    : [...f.knowledge_graph_ids, kg.id],
-                                }));
-                              }}
-                              className="mt-0.5"
-                            />
-                            <div className="min-w-0">
-                              <p className="text-sm font-medium leading-tight">{kg.name}</p>
-                              <p className="text-xs text-muted-foreground truncate">{kg.generation_mode.replace(/_/g, " ")} &middot; {kg.node_count} entities</p>
-                            </div>
-                          </label>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  <div className="flex items-center gap-2">
-                    <Switch checked={agentForm.enabled} onCheckedChange={(checked) => setAgentForm((f) => ({ ...f, enabled: checked }))} />
-                    <Label>Enabled</Label>
-                  </div>
-                  <Button type="submit" className="w-full" disabled={!agentForm.llm_provider_id || createAgent.isPending || updateAgent.isPending}>
-                    {(createAgent.isPending || updateAgent.isPending) ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Saving...</> : "Save Agent"}
-                  </Button>
-                </form>
-              </DialogContent>
-            </Dialog>
+            {/* A2A Agent Edit Modal */}
+            <A2AAgentEditModal
+              open={a2aOpen}
+              onOpenChange={(v) => { setA2aOpen(v); if (!v) setEditA2aAgent(null); }}
+              agent={editA2aAgent}
+              onSave={async () => { /* TODO: wire to backend A2A CRUD once available */ }}
+            />
           </TabsContent>
         )}
         <TabsContent value="file-exclusions" className="min-w-0 space-y-4">

@@ -47,6 +47,10 @@ class AgentActivity(Base):
         String(255), nullable=False,
         comment="LangGraph run_id for event correlation",
     )
+    delegation_query: Mapped[str] = mapped_column(
+        Text, nullable=False, default="",
+        comment="The query the supervisor sent to the child agent",
+    )
     content: Mapped[str] = mapped_column(
         Text, nullable=False, default="",
         comment="Accumulated text output from the child agent",

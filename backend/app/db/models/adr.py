@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 import enum
 import re
 
-from sqlalchemy import String, Integer, Boolean, Text, DateTime, ForeignKey, Enum as SAEnum
+from sqlalchemy import String, Integer, Boolean, Text, DateTime, ForeignKey, Enum as SAEnum, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -70,9 +70,10 @@ class AdrTemplate(Base):
 
 class Adr(Base):
     __tablename__ = "adrs"
-    __table_args__ = {
-        "comment": "Individual Architecture Decision Record with status tracking, repo file path, and PR workflow state.",
-    }
+    __table_args__ = (
+        UniqueConstraint("project_id", "adr_number", name="uq_adrs_project_number"),
+        {"comment": "Individual Architecture Decision Record with status tracking, repo file path, and PR workflow state."},
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     project_id: Mapped[uuid.UUID] = mapped_column(

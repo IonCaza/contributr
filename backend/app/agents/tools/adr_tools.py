@@ -123,7 +123,7 @@ def _build_adr_tools(db: AsyncSession) -> list:
                 return f"No project found matching '{project_name}'."
 
             result = await s.execute(
-                select(Adr).where(Adr.project_id == project_id, Adr.adr_number == adr_number)
+                select(Adr).where(Adr.project_id == project_id, Adr.adr_number == adr_number).limit(1)
             )
             adr = result.scalar_one_or_none()
             if not adr:
@@ -193,7 +193,7 @@ def _build_adr_tools(db: AsyncSession) -> list:
                 return f"No project found matching '{project_name}'."
 
             result = await s.execute(
-                select(Adr).where(Adr.project_id == project_id, Adr.adr_number == adr_number)
+                select(Adr).where(Adr.project_id == project_id, Adr.adr_number == adr_number).limit(1)
             )
             adr = result.scalar_one_or_none()
             if not adr:

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import { PanelRightClose, Loader2, CheckCircle2, Bot, MessageSquare } from "lucide-react";
+import { PanelRightClose, Loader2, CheckCircle2, Bot, MessageSquare, ArrowRight } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Button } from "@/components/ui/button";
@@ -21,11 +21,13 @@ function slugToName(
 
 function AgentCard({
   slug,
+  query,
   content,
   done,
   agentList,
 }: {
   slug: string;
+  query: string;
   content: string;
   done: boolean;
   agentList: { slug: string; name: string }[];
@@ -55,6 +57,16 @@ function AgentCard({
         </span>
       </div>
       <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto">
+        {query && (
+          <div className="border-b bg-muted/40 px-2 py-1.5">
+            <div className="flex items-start gap-1.5">
+              <ArrowRight className="mt-0.5 h-2.5 w-2.5 shrink-0 text-muted-foreground" />
+              <p className="text-[11px] leading-snug text-muted-foreground">
+                {query.length > 300 ? query.slice(0, 300) + "..." : query}
+              </p>
+            </div>
+          </div>
+        )}
         <div className="p-2 text-xs leading-relaxed">
           {content ? (
             <div className="prose prose-xs dark:prose-invert max-w-none break-words [&_table]:text-[10px] [&_p]:my-1 [&_ul]:my-1 [&_ol]:my-1 [&_li]:my-0">
@@ -97,6 +109,7 @@ function ActivityGroupSection({
         <AgentCard
           key={agent.runId}
           slug={agent.slug}
+          query={agent.query}
           content={agent.content}
           done={agent.done}
           agentList={agentList}
@@ -128,6 +141,7 @@ export function AgentActivityPanel({ onCollapse }: AgentActivityPanelProps) {
         agents: Array.from(liveAgents.entries()).map(([runId, a]) => ({
           runId,
           slug: a.slug,
+          query: a.query,
           content: a.content,
           done: a.done,
         })),
