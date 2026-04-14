@@ -47,6 +47,7 @@ from app.db.models.user_contributor_link import UserContributorLink
 from app.db.models.project_membership import ProjectMembership
 from app.db.models.access_policy import AccessPolicy, ResourceGrant
 from app.db.models.access_audit_log import AccessAuditLog
+from app.db.models.console_entry import ConsoleEntry
 
 __all__ = [
     "User",
@@ -123,4 +124,5 @@ __all__ = [
     "AccessPolicy",
     "ResourceGrant",
     "AccessAuditLog",
+    "ConsoleEntry",
 ]

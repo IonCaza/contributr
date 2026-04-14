@@ -9,6 +9,7 @@ import type {
   DuplicateGroup, CommitDetail, FileTreeNode, FileDetail, HotspotFile, PRStatItem,
   ChatSession, ChatMessage, AiSettings, AiStatus, FileExclusionPattern,
   PlatformCredential, PlatformCredentialTestResult,
+  DiscoveredRepo,
   LlmProvider, AgentConfig, ToolDefinition,
   KnowledgeGraphListItem, KnowledgeGraph,
   Team, TeamMember, DeliveryStats, PaginatedWorkItems, WorkItemsTreeResponse, Iteration,
@@ -333,6 +334,10 @@ export const api = {
   deletePlatformCredential: (id: string) => request<void>(`/platform-credentials/${id}`, { method: "DELETE" }),
   testPlatformCredential: (id: string) =>
     request<PlatformCredentialTestResult>(`/platform-credentials/${id}/test`, { method: "POST" }),
+  discoverRepos: (credentialId: string, projectName: string) =>
+    request<DiscoveredRepo[]>(`/platform-credentials/${credentialId}/discover-repos`, {
+      method: "POST", body: JSON.stringify({ project_name: projectName }),
+    }),
 
   // Backup
   exportBackup: async (): Promise<Blob> => {

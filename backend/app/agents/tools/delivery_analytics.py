@@ -402,7 +402,7 @@ def _build_delivery_tools(db: AsyncSession) -> list:
 
     @tool
     async def get_active_sprints(project_name: Optional[str] = None) -> str:
-        """Currently active and next 3 upcoming sprints with progress stats."""
+        """Currently active and next upcoming sprints with progress stats. Upcoming sprints with zero items and zero points are excluded."""
         async def _impl():
             now = datetime.now(timezone.utc).date()
             stmt = select(Iteration)
@@ -410,7 +410,7 @@ def _build_delivery_tools(db: AsyncSession) -> list:
                 p = await _resolve_project(db, project_name)
                 if p:
                     stmt = stmt.where(Iteration.project_id == p.id)
-            stmt = stmt.where(Iteration.end_date >= now).order_by(Iteration.start_date).limit(10)
+            stmt = stmt.where(Iteration.end_date >= now).order_by(Iteration.start_date).limit(20)
             stmt = scoped_query(stmt, project_col=Iteration.project_id)
             result = await db.execute(stmt)
             iters = result.scalars().all()
@@ -419,14 +419,17 @@ def _build_delivery_tools(db: AsyncSession) -> list:
             wi = WorkItem.__table__
             rows = []
             for it in iters:
-                status = "upcoming"
-                if it.start_date and it.start_date <= now:
-                    status = "active"
+                is_upcoming = it.start_date and it.start_date > now
                 total = (await db.execute(scoped_query(select(func.count()).where(wi.c.iteration_id == it.id), project_col=WorkItem.project_id))).scalar() or 0
-                completed = (await db.execute(scoped_query(select(func.count()).where(wi.c.iteration_id == it.id, wi.c.resolved_at.isnot(None)), project_col=WorkItem.project_id))).scalar() or 0
                 sp = float((await db.execute(scoped_query(select(func.coalesce(func.sum(wi.c.story_points), 0)).where(wi.c.iteration_id == it.id), project_col=WorkItem.project_id))).scalar() or 0)
+                if is_upcoming and total == 0 and sp == 0:
+                    continue
+                completed = (await db.execute(scoped_query(select(func.count()).where(wi.c.iteration_id == it.id, wi.c.resolved_at.isnot(None)), project_col=WorkItem.project_id))).scalar() or 0
+                status = "upcoming" if is_upcoming else "active"
                 pct = round(completed / total * 100) if total else 0
                 rows.append((it.name, status, str(it.start_date), str(it.end_date), total, completed, f"{pct}%", round(sp, 1)))
+            if not rows:
+                return "No active or upcoming sprints with assigned work found."
             return _table(["Sprint", "Status", "Start", "End", "Items", "Done", "Progress", "Points"], rows)
         return await _safe(db, _impl())
 

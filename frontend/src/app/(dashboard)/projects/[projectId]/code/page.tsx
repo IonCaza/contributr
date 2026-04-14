@@ -7,7 +7,7 @@ import { GitBranch, Plus, RefreshCw, Loader2, XCircle, ArrowUpDown, Search, Chev
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogDescription } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { Input } from "@/components/ui/input";
@@ -30,7 +30,8 @@ import type { ContributorSummary } from "@/lib/types";
 import { CodeSubTabs } from "@/components/code-sub-tabs";
 import { useProject, useProjectStats } from "@/hooks/use-projects";
 import { useSSHKeys } from "@/hooks/use-settings";
-import { useCreateRepo, useDeleteRepo, usePurgeRepo, useSyncRepo } from "@/hooks/use-repos";
+import { AddRepositoryDialog } from "@/components/add-repository-dialog";
+import { useDeleteRepo, usePurgeRepo, useSyncRepo } from "@/hooks/use-repos";
 import { useDailyStats } from "@/hooks/use-daily-stats";
 import { useIterations } from "@/hooks/use-delivery";
 
@@ -92,7 +93,6 @@ export default function ProjectCodePage({
   }), [projectId, dateRange]);
   const { data: dailyStats = [] } = useDailyStats(dailyParams);
 
-  const createRepo = useCreateRepo(projectId);
   const deleteRepo = useDeleteRepo(projectId);
   const purgeRepo = usePurgeRepo(projectId);
   const syncRepo = useSyncRepo();
@@ -105,7 +105,6 @@ export default function ProjectCodePage({
   const [repoSort, setRepoSort] = useState<{ key: "name" | "platform" | "last_synced"; dir: "asc" | "desc" }>({ key: "name", dir: "asc" });
   const [showInactive, setShowInactive] = useState(false);
   const [drillDown, setDrillDown] = useState<{ title: string; metric: string } | null>(null);
-  const [repoForm, setRepoForm] = useState({ name: "", ssh_url: "", platform: "github", platform_owner: "", platform_repo: "", ssh_credential_id: "" });
   const [editRepo, setEditRepo] = useState<{ id: string; name: string; ssh_url: string; platform: string; platform_owner: string; platform_repo: string; default_branch: string; ssh_credential_id: string } | null>(null);
   const [deleteRepoId, setDeleteRepoId] = useState<string | null>(null);
   const [purgeRepoId, setPurgeRepoId] = useState<string | null>(null);
@@ -169,13 +168,6 @@ export default function ProjectCodePage({
       next.delete(repoId);
       return next;
     });
-  }
-
-  async function handleAddRepo(e: React.FormEvent) {
-    e.preventDefault();
-    await createRepo.mutateAsync({ ...repoForm, ssh_credential_id: repoForm.ssh_credential_id || null });
-    setOpen(false);
-    setRepoForm({ name: "", ssh_url: "", platform: "github", platform_owner: "", platform_repo: "", ssh_credential_id: "" });
   }
 
   async function handleEditRepo(e: React.FormEvent) {
@@ -386,61 +378,8 @@ export default function ProjectCodePage({
               </Button>
             </>
           )}
-          <Dialog open={open} onOpenChange={setOpen}>
-            <DialogTrigger asChild>
-              <Button size="sm"><Plus className="mr-2 h-4 w-4" /> Add Repository</Button>
-            </DialogTrigger>
-            <DialogContent className="max-w-lg">
-              <DialogHeader><DialogTitle>Add Repository</DialogTitle></DialogHeader>
-              <form onSubmit={handleAddRepo} className="space-y-4">
-                <div className="space-y-2">
-                  <Label>Name</Label>
-                  <Input value={repoForm.name} onChange={(e) => setRepoForm((f) => ({ ...f, name: e.target.value }))} required />
-                </div>
-                <div className="space-y-2">
-                  <Label>SSH URL</Label>
-                  <Input value={repoForm.ssh_url} onChange={(e) => setRepoForm((f) => ({ ...f, ssh_url: e.target.value }))} placeholder="git@github.com:org/repo.git" />
-                </div>
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label>Platform</Label>
-                    <Select value={repoForm.platform} onValueChange={(v) => setRepoForm((f) => ({ ...f, platform: v }))}>
-                      <SelectTrigger><SelectValue /></SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="github">GitHub</SelectItem>
-                        <SelectItem value="gitlab">GitLab</SelectItem>
-                        <SelectItem value="azure">Azure DevOps</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="space-y-2">
-                    <Label>SSH Key</Label>
-                    <Select value={repoForm.ssh_credential_id} onValueChange={(v) => setRepoForm((f) => ({ ...f, ssh_credential_id: v }))}>
-                      <SelectTrigger><SelectValue placeholder="Select key" /></SelectTrigger>
-                      <SelectContent>
-                        {sshKeys.map((k) => (
-                          <SelectItem key={k.id} value={k.id}>{k.name}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                </div>
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label>Owner / Org</Label>
-                    <Input value={repoForm.platform_owner} onChange={(e) => setRepoForm((f) => ({ ...f, platform_owner: e.target.value }))} />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Repo Name</Label>
-                    <Input value={repoForm.platform_repo} onChange={(e) => setRepoForm((f) => ({ ...f, platform_repo: e.target.value }))} />
-                  </div>
-                </div>
-                <Button type="submit" className="w-full" disabled={createRepo.isPending}>
-                  {createRepo.isPending ? "Adding..." : "Add Repository"}
-                </Button>
-              </form>
-            </DialogContent>
-          </Dialog>
+          <Button size="sm" onClick={() => setOpen(true)}><Plus className="mr-2 h-4 w-4" /> Add Repository</Button>
+          <AddRepositoryDialog open={open} onOpenChange={setOpen} projectId={projectId} />
         </div>
       </div>
 

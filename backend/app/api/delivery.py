@@ -976,6 +976,7 @@ async def list_iterations(
     db: AsyncSession = Depends(get_db),
     _user: User = Depends(get_current_user),
 ):
+    now = date.today()
     result = await db.execute(
         select(Iteration)
         .where(Iteration.project_id == project_id)
@@ -985,6 +986,9 @@ async def list_iterations(
     out = []
     for it in iters:
         stats = await get_iteration_detail(db, it.id)
+        is_upcoming = it.start_date and it.start_date > now
+        if is_upcoming and stats["total_items"] == 0 and stats["total_points"] == 0:
+            continue
         out.append({
             "id": str(it.id),
             "name": it.name,

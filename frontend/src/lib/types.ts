@@ -469,6 +469,19 @@ export interface ChatMessage {
   content: string;
   created_at: string;
   agent_activities?: AgentActivityRecord[];
+  console_entries?: ConsoleEntryRecord[];
+}
+
+export interface ConsoleEntryRecord {
+  id: string;
+  entry_type: "tool_call" | "thinking";
+  sequence: number;
+  tool_name: string | null;
+  tool_args: Record<string, unknown> | null;
+  tool_result: string | null;
+  thinking_content: string | null;
+  started_at: string;
+  finished_at: string | null;
 }
 
 export interface CommitFileItem {
@@ -545,6 +558,14 @@ export interface PlatformCredential {
 export interface PlatformCredentialTestResult {
   success: boolean;
   message: string;
+}
+
+export interface DiscoveredRepo {
+  name: string;
+  remote_url: string | null;
+  ssh_url: string | null;
+  default_branch: string | null;
+  web_url: string | null;
 }
 
 // ── Delivery / Teams ────────────────────────────────────────────────

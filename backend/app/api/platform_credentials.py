@@ -117,3 +117,74 @@ async def test_credential(credential_id: uuid.UUID, db: AsyncSession = Depends(g
         return CredentialTestResult(success=False, message=str(e)[:500])
 
     return CredentialTestResult(success=False, message="Unknown platform")
+
+
+# ---------------------------------------------------------------------------
+# Repository discovery
+# ---------------------------------------------------------------------------
+
+class DiscoverReposRequest(BaseModel):
+    project_name: str
+
+
+class DiscoveredRepo(BaseModel):
+    name: str
+    remote_url: str | None = None
+    ssh_url: str | None = None
+    default_branch: str | None = None
+    web_url: str | None = None
+
+
+@router.post("/{credential_id}/discover-repos", response_model=list[DiscoveredRepo])
+async def discover_repos(
+    credential_id: uuid.UUID,
+    body: DiscoverReposRequest,
+    db: AsyncSession = Depends(get_db),
+    _user: User = Depends(get_current_user),
+):
+    """List repositories in an Azure DevOps project using a stored PAT."""
+    result = await db.execute(
+        select(PlatformCredential).where(PlatformCredential.id == credential_id)
+    )
+    cred = result.scalar_one_or_none()
+    if cred is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Credential not found")
+
+    if cred.platform != Platform.AZURE:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Repository discovery is only supported for Azure DevOps credentials",
+        )
+
+    if not cred.base_url:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Credential is missing a base URL (Azure DevOps org URL)",
+        )
+
+    token = decrypt_token(cred.token_encrypted)
+
+    try:
+        from azure.devops.connection import Connection
+        from msrest.authentication import BasicAuthentication
+
+        conn = Connection(base_url=cred.base_url, creds=BasicAuthentication("", token))
+        git_client = conn.clients.get_git_client()
+        repos = git_client.get_repositories(body.project_name)
+    except Exception as e:
+        logger.warning("Repo discovery failed for credential %s: %s", cred.name, e)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Failed to discover repositories: {str(e)[:500]}",
+        )
+
+    return [
+        DiscoveredRepo(
+            name=r.name,
+            remote_url=r.remote_url,
+            ssh_url=r.ssh_url,
+            default_branch=r.default_branch,
+            web_url=getattr(r, "web_url", None),
+        )
+        for r in repos
+    ]
