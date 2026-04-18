@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import String, Integer, Text, DateTime, ForeignKey, UniqueConstraint
+from sqlalchemy import String, Integer, Text, DateTime, ForeignKey
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -9,14 +9,14 @@ from app.db.base import Base
 
 
 class WorkItemActivity(Base):
-    """Individual revision/update on a work item, imported from the source platform's audit trail."""
+    """Individual revision/update on a work item, imported from the source platform's audit trail.
+
+    Uniqueness is enforced at the DB layer by the functional index
+    ``uq_work_item_activity_revision_field`` on
+    ``(work_item_id, revision_number, COALESCE(field_name, ''))`` so a single
+    revision can contribute multiple rows — one per changed field.
+    """
     __tablename__ = "work_item_activities"
-    __table_args__ = (
-        UniqueConstraint(
-            "work_item_id", "revision_number",
-            name="uq_work_item_activity_revision",
-        ),
-    )
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4,

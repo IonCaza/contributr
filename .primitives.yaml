@@ -2,13 +2,17 @@ primitives_repo: ~/git/primitives
 
 installed:
   agentic-ai-engine:
-    version: "1.8.1"
-    applied_at: "2026-04-02"
+    version: "1.15.0"
+    applied_at: "2026-04-14"
     file_mapping:
+      # Schema
       schema/models.py: backend/app/db/models/ # spread across multiple model files
       schema/task_item.py: backend/app/db/models/task_item.py
       schema/agent_memory.py: backend/app/db/models/agent_memory.py
       schema/agent_skill.py: backend/app/db/models/agent_skill.py
+      schema/access_policy.py: backend/app/db/models/access_policy.py
+      schema/console_entry.py: backend/app/db/models/console_entry.py
+      # Backend - Core agent files
       backend/agents/base.py: backend/app/agents/base.py
       backend/agents/coordinator.py: backend/app/agents/coordinator.py
       backend/agents/runner.py: backend/app/agents/runner.py
@@ -16,15 +20,21 @@ installed:
       backend/agents/registry.py: backend/app/agents/registry.py
       backend/agents/settings_cache.py: backend/app/agents/settings_cache.py
       backend/agents/skills.py: backend/app/agents/skills.py
+      backend/agents/__init__.py: backend/app/agents/__init__.py
+      # Backend - Builtin agents
       backend/agents/builtin/__init__.py: backend/app/agents/builtin/__init__.py
       backend/agents/builtin/supervisor.py: backend/app/agents/builtin/supervisor.py
       backend/agents/builtin/text_to_sql.py: backend/app/agents/builtin/text_to_sql.py
       backend/agents/builtin/verification_agent.py: backend/app/agents/builtin/verification_agent.py
-      backend/agents/__init__.py: backend/app/agents/__init__.py
+      # Backend - Context (incl. RBAC entitlements)
       backend/agents/context/__init__.py: backend/app/agents/context/__init__.py
       backend/agents/context/manager.py: backend/app/agents/context/manager.py
       backend/agents/context/summarizer.py: backend/app/agents/context/summarizer.py
+      backend/agents/context/entitlements.py: backend/app/agents/context/entitlements.py
+      backend/agents/context/resolver.py: backend/app/agents/context/resolver.py
+      # Backend - Prompts
       backend/agents/prompts/coordinator.py: backend/app/agents/prompts/coordinator.py
+      # Backend - Memory
       backend/agents/memory/pool.py: backend/app/agents/memory/pool.py
       backend/agents/memory/modifier.py: backend/app/agents/memory/modifier.py
       backend/agents/memory/extraction.py: backend/app/agents/memory/extraction.py
@@ -34,7 +44,9 @@ installed:
       backend/agents/memory/recall.py: backend/app/agents/memory/recall.py
       backend/agents/memory/session_notes.py: backend/app/agents/memory/session_notes.py
       backend/agents/memory/consolidation.py: backend/app/agents/memory/consolidation.py
+      # Backend - LLM
       backend/agents/llm/manager.py: backend/app/agents/llm/manager.py
+      # Backend - Tools
       backend/agents/tools/registry.py: backend/app/agents/tools/registry.py
       backend/agents/tools/base.py: backend/app/agents/tools/base.py
       backend/agents/tools/parallel_node.py: backend/app/agents/tools/parallel_node.py
@@ -42,18 +54,30 @@ installed:
       backend/agents/tools/feedback_gap.py: backend/app/agents/tools/feedback_gap.py
       backend/agents/tools/task_tools.py: backend/app/agents/tools/task_tools.py
       backend/agents/tools/skill_tool.py: backend/app/agents/tools/skill_tool.py
+      backend/agents/tools/scoping.py: backend/app/agents/tools/scoping.py
+      backend/agents/tools/screen_context.py: backend/app/agents/tools/screen_context.py
+      # Backend - Knowledge
       backend/agents/knowledge/generator.py: backend/app/agents/knowledge/generator.py
+      # Backend - API
       backend/api/chat.py: backend/app/api/chat.py
+      backend/requirements.txt: backend/requirements.txt
+      # Frontend - Chat runtime & panels
       frontend/components/chat-runtime.tsx: frontend/src/components/contributr-chat-runtime.tsx
       frontend/components/chat-panel.tsx: frontend/src/components/chat-panel.tsx
       frontend/components/agent-activity-panel.tsx: frontend/src/components/agent-activity-panel.tsx
       frontend/components/task-board-panel.tsx: frontend/src/components/task-board-panel.tsx
+      frontend/components/console-panel.tsx: frontend/src/components/console-panel.tsx
+      # Frontend - assistant-ui
       frontend/components/assistant-ui/thread.tsx: frontend/src/components/assistant-ui/thread.tsx
       frontend/components/assistant-ui/markdown-text.tsx: frontend/src/components/assistant-ui/markdown-text.tsx
       frontend/components/assistant-ui/tool-fallback.tsx: frontend/src/components/assistant-ui/tool-fallback.tsx
       frontend/components/assistant-ui/thread-list.tsx: frontend/src/components/assistant-ui/thread-list.tsx
       frontend/components/assistant-ui/tooltip-icon-button.tsx: frontend/src/components/assistant-ui/tooltip-icon-button.tsx
       frontend/components/assistant-ui/attachment.tsx: frontend/src/components/assistant-ui/attachment.tsx
+      # Frontend - UI context (Track 12)
+      frontend/stores/ui-context-store.ts: frontend/src/stores/ui-context-store.ts
+      frontend/hooks/use-register-ui-context.ts: frontend/src/hooks/use-register-ui-context.ts
+      frontend/hooks/use-route-sync.ts: frontend/src/hooks/use-route-sync.ts
     customizations:
       - "builtin/__init__.py has 12 domain agents vs primitive's 3 examples"
       - "Domain-specific agents in backend/app/agents/builtin/ (contribution-analyst, delivery-analyst, etc.)"
@@ -64,15 +88,26 @@ installed:
       - "verification-agent seeded via get_builtin_agents() with generic VERIFICATION_PROMPT"
       - "ChatRuntime exported as ContributrChatRuntime; import paths use contributr-chat-runtime"
       - "Presentation-related SSE events and tools"
-      - "TaskBoardPanel/AgentActivityPanel import from contributr-chat-runtime"
+      - "TaskBoardPanel/AgentActivityPanel/ConsolePanel import from contributr-chat-runtime"
       - "Default agent slug 'contribution-analyst'; display name 'Contributr AI'"
       - "localStorage key 'contributr:defaultAgent' (primitive uses 'ai-engine:defaultAgent')"
       - "modifier.py COMPACTABLE_TOOLS includes 9 delivery-analytics tool slugs"
       - "skills.py has extra presentation-specific builtin skills (dashboard-layout-patterns, chart-type-selector)"
       - "skills.py data-exploration-workflow targeted to presentation-designer only (primitive targets all agents)"
       - "runner.py uses lazy import for load_active_skills (primitive uses top-level)"
+      - "runner.py has RBAC entitlement resolution, tool_call_start/end events, delegation query extraction"
+      - "chat.py has ConsoleEntry persistence, delegation_query field, log_access audit"
+      - "chat-runtime.tsx has ChildAgent.query field, sessionId retry loop, session event handler"
+      - "supervisor.py child runner loads session notes + recalled memories for child agents"
+      - "supervisor.py delegation tool description has IMPORTANT context clause"
       - "memory/tools.py uses lazy import for cast/SAString (primitive uses top-level)"
       - "extraction.py docstring references LangMem migration history (primitive describes current behavior)"
+      - "requirements.txt has pinned upper bounds and additional domain deps (semgrep, fpdf2, etc.)"
+      - "RBAC: contributr has full EntitlementResolver wired via app/rbac/ in addition to primitive context module"
+      - "screen_context.py APP_ROUTES contains contributr-specific routes (projects/[projectId]/code/*, contributors/[contributorId], teams/[teamId], etc.) -- primitive ships with empty placeholder"
+      - "17+ dashboard pages call useRegisterUIContext with contributr-specific data (delivery metrics, PR analytics, dependency health, SAST findings, etc.)"
+      - "ChatRequest default agent_slug='contribution-analyst' (primitive uses 'supervisor')"
+      - "Supervisor builtin.name='Contributr Supervisor' and tool_slugs includes domain tools (primitive uses generic 'Supervisor' + core tool set)"
 
   authentication:
     version: "1.0.0"

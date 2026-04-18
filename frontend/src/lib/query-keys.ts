@@ -72,6 +72,18 @@ export const queryKeys = {
     workItemActivities: (projectId: string, workItemId: string, params?: Record<string, unknown>) => ["delivery", projectId, "workItem", workItemId, "activities", params] as const,
     contributorActivities: (projectId: string, contributorId: string, params?: Record<string, unknown>) => ["delivery", projectId, "contributorActivities", contributorId, params] as const,
     contributorActivityMetrics: (projectId: string, contributorId: string, params?: Record<string, unknown>) => ["delivery", projectId, "contributorActivityMetrics", contributorId, params] as const,
+    carryoverSummary: (projectId: string, params?: Record<string, unknown>) => ["delivery", projectId, "carryover", "summary", params] as const,
+    carryoverBySprint: (projectId: string, params?: Record<string, unknown>) => ["delivery", projectId, "carryover", "bySprint", params] as const,
+    carryoverItems: (projectId: string, params?: Record<string, unknown>) => ["delivery", projectId, "carryover", "items", params] as const,
+    workItemIterationHistory: (projectId: string, workItemId: string) => ["delivery", projectId, "workItem", workItemId, "iteration-history"] as const,
+    teamCapacity: (projectId: string, teamId: string, params?: Record<string, unknown>) => ["delivery", projectId, "team", teamId, "capacity", params] as const,
+    featureRollup: (projectId: string, params?: Record<string, unknown>) => ["delivery", projectId, "backlog", "featureRollup", params] as const,
+    sizingTrend: (projectId: string, params?: Record<string, unknown>) => ["delivery", projectId, "backlog", "sizingTrend", params] as const,
+    trustedScorecard: (projectId: string, params?: Record<string, unknown>) => ["delivery", projectId, "backlog", "trustedScorecard", params] as const,
+    longRunning: (projectId: string, params?: Record<string, unknown>) => ["delivery", projectId, "longRunning", params] as const,
+    settings: (projectId: string) => ["delivery", projectId, "settings"] as const,
+    settingsStates: (projectId: string) => ["delivery", projectId, "settings", "states"] as const,
+    settingsCustomFields: (projectId: string) => ["delivery", projectId, "settings", "customFields"] as const,
   },
   insights: {
     findings: (projectId: string, filters?: Record<string, unknown>) => ["insights", projectId, "findings", filters] as const,
@@ -141,6 +153,14 @@ export const queryKeys = {
     list: (projectId: string, filters?: Record<string, unknown>) => ["pullRequests", projectId, "list", filters] as const,
     detail: (projectId: string, prId: string) => ["pullRequests", projectId, prId] as const,
     analytics: (projectId: string, filters?: Record<string, unknown>) => ["pullRequests", projectId, "analytics", filters] as const,
+  },
+  codeReviews: {
+    list: (projectId: string, filters?: Record<string, unknown>) =>
+      ["codeReviews", projectId, "list", filters] as const,
+    detail: (projectId: string, runId: string) =>
+      ["codeReviews", projectId, runId] as const,
+    summary: (projectId: string) =>
+      ["codeReviews", projectId, "summary"] as const,
   },
   adrs: {
     config: (projectId: string) => ["adrs", projectId, "config"] as const,

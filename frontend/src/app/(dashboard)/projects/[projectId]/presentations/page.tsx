@@ -25,6 +25,7 @@ import { ConfirmDialog } from "@/components/confirm-dialog";
 import { usePresentations, useDeletePresentation } from "@/hooks/use-presentations";
 import { cn } from "@/lib/utils";
 import type { PresentationListItem } from "@/lib/types";
+import { useRegisterUIContext } from "@/hooks/use-register-ui-context";
 
 function statusColor(s: string) {
   switch (s) {
@@ -47,6 +48,17 @@ export default function PresentationsPage({
   const { data: presentations, isLoading } = usePresentations(projectId);
   const deleteMutation = useDeletePresentation(projectId);
   const [deleteTarget, setDeleteTarget] = useState<PresentationListItem | null>(null);
+
+  useRegisterUIContext("presentations", {
+    project_id: projectId,
+    total_presentations: presentations?.length ?? 0,
+    presentations: (presentations ?? []).slice(0, 20).map((p) => ({
+      id: p.id,
+      title: p.title,
+      status: p.status,
+      created_at: p.created_at,
+    })),
+  });
 
   return (
     <div className="space-y-6">

@@ -291,3 +291,109 @@ export function useContributorDeliverySummary(projectId: string, filters?: Deliv
     enabled: !!projectId && enabled,
   });
 }
+
+export function useCarryoverSummary(projectId: string, params?: { team_id?: string; from_date?: string; to_date?: string }) {
+  return useQuery({
+    queryKey: queryKeys.delivery.carryoverSummary(projectId, params),
+    queryFn: () => api.getCarryoverSummary(projectId, params),
+    enabled: !!projectId,
+  });
+}
+
+export function useCarryoverBySprint(projectId: string, params?: { team_id?: string; limit?: number }) {
+  return useQuery({
+    queryKey: queryKeys.delivery.carryoverBySprint(projectId, params as Record<string, unknown> | undefined),
+    queryFn: () => api.getCarryoverBySprint(projectId, params),
+    enabled: !!projectId,
+  });
+}
+
+export function useCarryoverItems(projectId: string, params?: { team_id?: string; min_moves?: number; from_date?: string; to_date?: string; limit?: number; offset?: number }) {
+  return useQuery({
+    queryKey: queryKeys.delivery.carryoverItems(projectId, params as Record<string, unknown> | undefined),
+    queryFn: () => api.getCarryoverItems(projectId, params),
+    enabled: !!projectId,
+  });
+}
+
+export function useWorkItemIterationHistory(projectId: string, workItemId: string, enabled = true) {
+  return useQuery({
+    queryKey: queryKeys.delivery.workItemIterationHistory(projectId, workItemId),
+    queryFn: () => api.getWorkItemIterationHistory(projectId, workItemId),
+    enabled: !!projectId && !!workItemId && enabled,
+  });
+}
+
+export function useTeamCapacityVsLoad(projectId: string, teamId: string, params?: { iteration_id?: string }) {
+  return useQuery({
+    queryKey: queryKeys.delivery.teamCapacity(projectId, teamId, params as Record<string, unknown> | undefined),
+    queryFn: () => api.getTeamCapacityVsLoad(projectId, teamId, params),
+    enabled: !!projectId && !!teamId,
+  });
+}
+
+export function useBacklogFeatureRollup(projectId: string, params?: { team_id?: string; include_completed_features?: boolean; limit?: number }) {
+  return useQuery({
+    queryKey: queryKeys.delivery.featureRollup(projectId, params as Record<string, unknown> | undefined),
+    queryFn: () => api.getBacklogFeatureRollup(projectId, params),
+    enabled: !!projectId,
+  });
+}
+
+export function useBacklogSizingTrend(projectId: string, params?: { team_id?: string; weeks?: number; include_unsized?: boolean; story_only?: boolean; basis?: "created_at" | "activated_at" }) {
+  return useQuery({
+    queryKey: queryKeys.delivery.sizingTrend(projectId, params as Record<string, unknown> | undefined),
+    queryFn: () => api.getBacklogSizingTrend(projectId, params),
+    enabled: !!projectId,
+  });
+}
+
+export function useBacklogTrustedScorecard(projectId: string, params?: { team_id?: string }) {
+  return useQuery({
+    queryKey: queryKeys.delivery.trustedScorecard(projectId, params as Record<string, unknown> | undefined),
+    queryFn: () => api.getBacklogTrustedScorecard(projectId, params),
+    enabled: !!projectId,
+  });
+}
+
+export function useLongRunningStories(projectId: string, params?: { team_id?: string; min_days_active?: number; include_bugs?: boolean; limit?: number }) {
+  return useQuery({
+    queryKey: queryKeys.delivery.longRunning(projectId, params as Record<string, unknown> | undefined),
+    queryFn: () => api.getLongRunningStories(projectId, params),
+    enabled: !!projectId,
+  });
+}
+
+export function useDeliverySettings(projectId: string, enabled = true) {
+  return useQuery({
+    queryKey: queryKeys.delivery.settings(projectId),
+    queryFn: () => api.getDeliverySettings(projectId),
+    enabled: !!projectId && enabled,
+  });
+}
+
+export function useUpdateDeliverySettings(projectId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: Parameters<typeof api.updateDeliverySettings>[1]) => api.updateDeliverySettings(projectId, body),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: queryKeys.delivery.settings(projectId) });
+    },
+  });
+}
+
+export function useDeliverySettingsAvailableStates(projectId: string, enabled = true) {
+  return useQuery({
+    queryKey: queryKeys.delivery.settingsStates(projectId),
+    queryFn: () => api.getDeliverySettingsAvailableStates(projectId),
+    enabled: !!projectId && enabled,
+  });
+}
+
+export function useDeliverySettingsAvailableCustomFields(projectId: string, enabled = true) {
+  return useQuery({
+    queryKey: queryKeys.delivery.settingsCustomFields(projectId),
+    queryFn: () => api.getDeliverySettingsAvailableCustomFields(projectId),
+    enabled: !!projectId && enabled,
+  });
+}

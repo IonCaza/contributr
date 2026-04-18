@@ -16,6 +16,7 @@ import { useTeams, useCreateTeam, useDeleteTeam } from "@/hooks/use-teams";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api-client";
 import { queryKeys } from "@/lib/query-keys";
+import { useRegisterUIContext } from "@/hooks/use-register-ui-context";
 
 export default function TeamsPage() {
   const [projectFilter, setProjectFilter] = useState<string>("");
@@ -49,6 +50,17 @@ export default function TeamsPage() {
   }
 
   const projectMap = Object.fromEntries(projects.map((p) => [p.id, p.name]));
+
+  useRegisterUIContext("teams", {
+    total_teams: teams.length,
+    teams: teams.slice(0, 50).map((t) => ({
+      id: t.id,
+      name: t.name,
+      project: projectMap[t.project_id] || null,
+      member_count: t.member_count,
+      source: t.platform || "manual",
+    })),
+  });
 
   return (
     <div className="space-y-6">

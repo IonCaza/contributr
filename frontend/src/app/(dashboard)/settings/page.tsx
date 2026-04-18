@@ -48,6 +48,7 @@ import type { FeedbackItem } from "@/lib/types";
 import { MfaSetupDialog } from "@/components/mfa-setup-dialog";
 import AccessPolicySettings from "@/components/access-policy-settings";
 import { LocalAgentEditModal } from "@/components/local-agent-edit-modal";
+import { TOOL_CATEGORY_LABELS, TOOL_CATEGORY_COLORS } from "@/lib/tool-categories";
 import { A2AAgentEditModal } from "@/components/a2a-agent-edit-modal";
 import type { A2AAgentConfig } from "@/components/a2a-agent-edit-modal";
 
@@ -1285,23 +1286,6 @@ export default function SettingsPage() {
 
   const { data: aiTools = [] } = useAiTools();
 
-  const CATEGORY_LABELS: Record<string, string> = {
-    contribution_analytics: "Contribution Analytics",
-    delivery_analytics: "Delivery Analytics",
-    code_access: "Code Access",
-    sast_analytics: "SAST Analytics",
-    sql_query: "SQL Query",
-  };
-
-  const CATEGORY_COLORS: Record<string, string> = {
-    contribution_analytics: "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200",
-    delivery_analytics: "bg-emerald-100 text-emerald-800 dark:bg-emerald-900 dark:text-emerald-200",
-    code_access: "bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-200",
-    sast_analytics: "bg-rose-100 text-rose-800 dark:bg-rose-900 dark:text-rose-200",
-    sql_query: "bg-violet-100 text-violet-800 dark:bg-violet-900 dark:text-violet-200",
-  };
-
-
   const toolCategoryIndex = useMemo(() => {
     const idx: Record<string, string> = {};
     for (const t of aiTools) idx[t.slug] = t.category;
@@ -2494,8 +2478,8 @@ export default function SettingsPage() {
                                   return entries.length > 0 ? (
                                     <div className="flex flex-wrap gap-1">
                                       {entries.map(([cat, count]) => (
-                                        <Badge key={cat} className={`text-[10px] ${CATEGORY_COLORS[cat] || ""}`}>
-                                          {(CATEGORY_LABELS[cat] || cat).replace(/ Analytics| Access/, "")} {count}
+                                        <Badge key={cat} className={`text-[10px] font-medium ${TOOL_CATEGORY_COLORS[cat] || "bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-200"}`}>
+                                          {TOOL_CATEGORY_LABELS[cat] || cat} {count}
                                         </Badge>
                                       ))}
                                     </div>

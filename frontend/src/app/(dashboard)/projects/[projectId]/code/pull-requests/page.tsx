@@ -1,14 +1,20 @@
 "use client";
 
-import { use, useState, useMemo } from "react";
+import { use, useState, useMemo, useId } from "react";
 import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
 import {
+  ResponsiveContainer, AreaChart, Area, BarChart as ReBarChart, Bar,
+  CartesianGrid, XAxis, YAxis, Tooltip as ReTooltip, Cell,
+} from "recharts";
+import {
   GitPullRequest, MessageSquare, Clock, ArrowUpDown, Search,
   ChevronLeft, ChevronRight, BarChart3,
+  GitMerge, XCircle, TrendingUp, Users,
+  CheckCircle2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -23,6 +29,7 @@ import { api } from "@/lib/api-client";
 import { queryKeys } from "@/lib/query-keys";
 import { cn } from "@/lib/utils";
 import { useProject } from "@/hooks/use-projects";
+import { useRegisterUIContext } from "@/hooks/use-register-ui-context";
 import type { PRListItem, PRAnalytics } from "@/lib/types";
 import { CodeSubTabs } from "@/components/code-sub-tabs";
 
@@ -47,6 +54,256 @@ function formatCycleTime(hours: number | null) {
   if (hours < 1) return `${Math.round(hours * 60)}m`;
   if (hours < 24) return `${Math.round(hours)}h`;
   return `${Math.round(hours / 24)}d`;
+}
+
+const SIZE_COLORS = [
+  { bar: "#34d399" },
+  { bar: "#38bdf8" },
+  { bar: "#fbbf24" },
+  { bar: "#fb923c" },
+  { bar: "#fb7185" },
+];
+
+const RECHARTS_TOOLTIP_STYLE = {
+  backgroundColor: "var(--popover)",
+  border: "1px solid var(--border)",
+  borderRadius: "8px",
+  color: "var(--popover-foreground)",
+  boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
+  fontSize: 12,
+};
+
+function AnalyticsPanel({ analytics, projectId }: { analytics: PRAnalytics; projectId: string }) {
+  const gradientId = useId();
+
+  return (
+    <div className="space-y-6">
+      {/* ── Summary strip ─────────────────────────────────────── */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <Card className={ANIM_CARD} style={stagger(0)}>
+          <CardContent className="pt-5 pb-4">
+            <div className="flex items-center gap-3">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary/15">
+                <GitPullRequest className="h-5 w-5 text-primary" />
+              </div>
+              <div>
+                <p className="text-2xl font-bold tabular-nums">{analytics.total_prs}</p>
+                <p className="text-xs text-muted-foreground">Total PRs</p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className={ANIM_CARD} style={stagger(1)}>
+          <CardContent className="pt-5 pb-4">
+            <div className="flex items-center gap-3">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-purple-500/15">
+                <GitMerge className="h-5 w-5 text-purple-600 dark:text-purple-400" />
+              </div>
+              <div>
+                <p className="text-2xl font-bold tabular-nums">{analytics.merged_prs}</p>
+                <p className="text-xs text-muted-foreground">Merged</p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className={ANIM_CARD} style={stagger(2)}>
+          <CardContent className="pt-5 pb-4">
+            <div className="flex items-center gap-3">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-red-500/15">
+                <XCircle className="h-5 w-5 text-red-600 dark:text-red-400" />
+              </div>
+              <div>
+                <p className="text-2xl font-bold tabular-nums">{analytics.closed_prs}</p>
+                <p className="text-xs text-muted-foreground">Closed</p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className={ANIM_CARD} style={stagger(3)}>
+          <CardContent className="pt-5 pb-4">
+            <div className="flex items-center gap-3">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-green-500/15">
+                <TrendingUp className="h-5 w-5 text-green-600 dark:text-green-400" />
+              </div>
+              <div>
+                <p className="text-2xl font-bold tabular-nums">{analytics.open_prs}</p>
+                <p className="text-xs text-muted-foreground">Open</p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* ── Size Distribution ─────────────────────────────────── */}
+      <Card className={ANIM_CARD} style={stagger(4)}>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-base">PR Size Distribution</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="h-56">
+            <ResponsiveContainer width="100%" height="100%">
+              <ReBarChart
+                data={analytics.size_distribution.map((b, i) => ({
+                  label: b.label,
+                  count: b.count,
+                  fill: SIZE_COLORS[i % SIZE_COLORS.length].bar,
+                  avg: b.avg_cycle_time_hours,
+                }))}
+                margin={{ top: 5, right: 10, left: 0, bottom: 5 }}
+              >
+                <CartesianGrid strokeDasharray="3 3" className="stroke-border/50" vertical={false} />
+                <XAxis dataKey="label" tick={{ fontSize: 12 }} tickLine={false} axisLine={false} />
+                <YAxis allowDecimals={false} tick={{ fontSize: 12 }} tickLine={false} axisLine={false} width={30} />
+                <ReTooltip
+                  contentStyle={RECHARTS_TOOLTIP_STYLE}
+                  formatter={(value, _name, props) => {
+                    const lines: [string, string][] = [[`${value}`, "PRs"]];
+                    const avg = (props.payload as { avg: number | null })?.avg;
+                    if (avg !== null && avg !== undefined) {
+                      lines.push([formatCycleTime(avg), "avg cycle time"]);
+                    }
+                    return lines;
+                  }}
+                  labelFormatter={(label) => `Size: ${label}`}
+                />
+                <Bar dataKey="count" radius={[4, 4, 0, 0]} maxBarSize={48}>
+                  {analytics.size_distribution.map((b, i) => (
+                    <Cell key={b.label} fill={SIZE_COLORS[i % SIZE_COLORS.length].bar} />
+                  ))}
+                </Bar>
+              </ReBarChart>
+            </ResponsiveContainer>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* ── Cycle Time Trend ─────────────────────────────────── */}
+      {analytics.cycle_time_trend.length > 0 && (
+        <Card className={ANIM_CARD} style={stagger(5)}>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base">Cycle Time Trend</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="h-64">
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart
+                  data={analytics.cycle_time_trend.map((t) => ({
+                    ...t,
+                    hours: t.avg_cycle_time_hours ?? 0,
+                    label: t.period,
+                  }))}
+                  margin={{ top: 5, right: 10, left: 0, bottom: 5 }}
+                >
+                  <defs>
+                    <linearGradient id={`ct-grad-${gradientId}`} x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="var(--chart-1)" stopOpacity={0.4} />
+                      <stop offset="100%" stopColor="var(--chart-1)" stopOpacity={0.05} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" strokeOpacity={0.5} vertical={false} />
+                  <XAxis
+                    dataKey="label"
+                    tickLine={false}
+                    axisLine={false}
+                    tick={{ fontSize: 11, fill: "var(--muted-foreground)" }}
+                    tickFormatter={(v: string) => v.slice(-3)}
+                    interval={Math.max(0, Math.ceil(analytics.cycle_time_trend.length / 8) - 1)}
+                  />
+                  <YAxis
+                    tickLine={false}
+                    axisLine={false}
+                    tick={{ fontSize: 11, fill: "var(--muted-foreground)" }}
+                    tickFormatter={(v: number) => formatCycleTime(v)}
+                    width={40}
+                  />
+                  <ReTooltip
+                    contentStyle={RECHARTS_TOOLTIP_STYLE}
+                    itemStyle={{ color: "var(--popover-foreground)" }}
+                    labelStyle={{ color: "var(--muted-foreground)", fontWeight: 600, marginBottom: 4 }}
+                    formatter={(value) => [formatCycleTime(value as number), "Avg Cycle Time"]}
+                    labelFormatter={(label) => label}
+                  />
+                  <Area
+                    type="monotone"
+                    dataKey="hours"
+                    stroke="var(--chart-1)"
+                    strokeWidth={2.5}
+                    fill={`url(#ct-grad-${gradientId})`}
+                    dot={false}
+                    activeDot={{ r: 5, strokeWidth: 2, fill: "var(--background)" }}
+                  />
+                </AreaChart>
+              </ResponsiveContainer>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* ── Top Reviewers ─────────────────────────────────────── */}
+      {analytics.top_reviewers.length > 0 && (
+        <Card className={ANIM_CARD} style={stagger(6)}>
+          <CardHeader className="pb-2">
+            <div className="flex items-center gap-2">
+              <Users className="h-4 w-4 text-muted-foreground" />
+              <CardTitle className="text-base">Top Reviewers</CardTitle>
+            </div>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-2.5">
+              {(() => {
+                const maxReviews = Math.max(...analytics.top_reviewers.map((r) => r.review_count));
+                return analytics.top_reviewers.map((r, i) => {
+                  const approvalRate = r.review_count > 0
+                    ? Math.round((r.approval_count / r.review_count) * 100)
+                    : 0;
+                  const barPct = maxReviews > 0 ? (r.review_count / maxReviews) * 100 : 0;
+                  return (
+                    <div key={i} className="group flex items-center gap-3 rounded-lg p-2 -mx-2 transition-colors hover:bg-muted/50">
+                      <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-bold text-primary ring-2 ring-primary/20">
+                        {r.reviewer_name.charAt(0).toUpperCase()}
+                      </div>
+                      <div className="min-w-0 flex-1 space-y-1">
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="flex items-center gap-2 min-w-0">
+                            {r.reviewer_id ? (
+                              <Link href={`/contributors/${r.reviewer_id}`} className="text-sm font-semibold truncate hover:underline">
+                                {r.reviewer_name}
+                              </Link>
+                            ) : (
+                              <span className="text-sm font-semibold truncate">{r.reviewer_name}</span>
+                            )}
+                            <Badge variant="secondary" className="text-[10px] shrink-0 bg-green-500/15 text-green-700 dark:text-green-400">
+                              <CheckCircle2 className="h-3 w-3 mr-0.5" />{approvalRate}%
+                            </Badge>
+                          </div>
+                          <span className="shrink-0 text-xs text-muted-foreground flex items-center gap-1">
+                            <Clock className="h-3 w-3" /> {formatCycleTime(r.avg_turnaround_hours)}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <div className="h-2 flex-1 rounded-full bg-muted">
+                            <div
+                              className="h-full rounded-full bg-primary/60 transition-all duration-500"
+                              style={{ width: `${barPct}%` }}
+                            />
+                          </div>
+                          <span className="text-xs font-medium tabular-nums w-8 text-right">{r.review_count}</span>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                });
+              })()}
+              <p className="text-[11px] text-muted-foreground pt-1">Bar length = number of reviews</p>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+    </div>
+  );
 }
 
 export default function PullRequestsPage({
@@ -94,6 +351,12 @@ export default function PullRequestsPage({
     queryKey: queryKeys.pullRequests.analytics(projectId, analyticsFilters),
     queryFn: () => api.getPRAnalytics(projectId, analyticsFilters),
     enabled: !!projectId,
+  });
+
+  useRegisterUIContext("pullRequests", {
+    prList,
+    analytics,
+    filters: listFilters,
   });
 
   function toggleSort(key: string) {
@@ -306,109 +569,7 @@ export default function PullRequestsPage({
           {analyticsLoading || !analytics ? (
             <StatRowSkeleton />
           ) : (
-            <>
-              {/* Size Distribution */}
-              <div>
-                <h3 className="text-sm font-semibold mb-3">PR Size Distribution</h3>
-                <div className="grid grid-cols-5 gap-3">
-                  {analytics.size_distribution.map((b) => (
-                    <Card key={b.label} className="p-4 text-center">
-                      <div className="text-2xl font-bold">{b.count}</div>
-                      <div className="text-xs text-muted-foreground">{b.label}</div>
-                      {b.avg_cycle_time_hours !== null && (
-                        <div className="text-[10px] text-muted-foreground mt-1">
-                          avg {formatCycleTime(b.avg_cycle_time_hours)}
-                        </div>
-                      )}
-                    </Card>
-                  ))}
-                </div>
-              </div>
-
-              {/* Cycle Time Trend */}
-              {analytics.cycle_time_trend.length > 0 && (
-                <div>
-                  <h3 className="text-sm font-semibold mb-3">Cycle Time Trend (weekly)</h3>
-                  <Card className="p-4">
-                    <div className="flex items-end gap-1 h-32">
-                      {analytics.cycle_time_trend.map((t, i) => {
-                        const maxH = Math.max(...analytics.cycle_time_trend.map((x) => x.avg_cycle_time_hours || 0));
-                        const pct = maxH > 0 ? ((t.avg_cycle_time_hours || 0) / maxH) * 100 : 0;
-                        return (
-                          <div key={i} className="flex-1 flex flex-col items-center gap-1">
-                            <div
-                              className="w-full bg-primary/20 rounded-t"
-                              style={{ height: `${Math.max(pct, 2)}%` }}
-                              title={`${t.period}: ${formatCycleTime(t.avg_cycle_time_hours)} (${t.pr_count} PRs)`}
-                            />
-                            {i % Math.ceil(analytics.cycle_time_trend.length / 8) === 0 && (
-                              <span className="text-[8px] text-muted-foreground truncate w-full text-center">
-                                {t.period.slice(-3)}
-                              </span>
-                            )}
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </Card>
-                </div>
-              )}
-
-              {/* Top Reviewers */}
-              {analytics.top_reviewers.length > 0 && (
-                <div>
-                  <h3 className="text-sm font-semibold mb-3">Top Reviewers</h3>
-                  <Card>
-                    <Table>
-                      <TableHeader>
-                        <TableRow>
-                          <TableHead>Reviewer</TableHead>
-                          <TableHead>Reviews</TableHead>
-                          <TableHead>Approvals</TableHead>
-                          <TableHead>Avg Turnaround</TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {analytics.top_reviewers.map((r, i) => (
-                          <TableRow key={i}>
-                            <TableCell className="font-medium">
-                              {r.reviewer_id ? (
-                                <Link href={`/contributors/${r.reviewer_id}`} className="hover:underline">{r.reviewer_name}</Link>
-                              ) : (
-                                r.reviewer_name
-                              )}
-                            </TableCell>
-                            <TableCell>{r.review_count}</TableCell>
-                            <TableCell>{r.approval_count}</TableCell>
-                            <TableCell>{formatCycleTime(r.avg_turnaround_hours)}</TableCell>
-                          </TableRow>
-                        ))}
-                      </TableBody>
-                    </Table>
-                  </Card>
-                </div>
-              )}
-
-              {/* Summary */}
-              <div className="grid grid-cols-4 gap-4">
-                <Card className="p-4 text-center">
-                  <div className="text-2xl font-bold">{analytics.total_prs}</div>
-                  <div className="text-xs text-muted-foreground">Total PRs</div>
-                </Card>
-                <Card className="p-4 text-center">
-                  <div className="text-2xl font-bold">{analytics.merged_prs}</div>
-                  <div className="text-xs text-muted-foreground">Merged</div>
-                </Card>
-                <Card className="p-4 text-center">
-                  <div className="text-2xl font-bold">{analytics.closed_prs}</div>
-                  <div className="text-xs text-muted-foreground">Closed</div>
-                </Card>
-                <Card className="p-4 text-center">
-                  <div className="text-2xl font-bold">{analytics.open_prs}</div>
-                  <div className="text-xs text-muted-foreground">Open</div>
-                </Card>
-              </div>
-            </>
+            <AnalyticsPanel analytics={analytics} projectId={projectId} />
           )}
         </TabsContent>
       </Tabs>

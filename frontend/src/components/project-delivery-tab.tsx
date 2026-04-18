@@ -58,9 +58,15 @@ import {
   useItemDetails,
   useContributorDeliverySummary,
 } from "@/hooks/use-delivery";
-import { DeliveryDetailSheet } from "@/components/delivery-detail-sheet";
+import { DeliveryDetailSheet, type DrillDownFilter } from "@/components/delivery-detail-sheet";
 import { WorkItemsTreeView } from "@/components/work-items-tree-view";
+import { TrustedBacklogCard } from "@/components/delivery/trusted-backlog-card";
+import { FeatureRollupCard } from "@/components/delivery/feature-rollup-card";
+import { SizingTrendCard } from "@/components/delivery/sizing-trend-card";
+import { LongRunningStoriesCard } from "@/components/delivery/long-running-stories-card";
+import { CarryoverTab } from "@/components/delivery/carryover-tab";
 import type { DeliveryFilters } from "@/lib/types";
+import { useRegisterUIContext } from "@/hooks/use-register-ui-context";
 
 const TYPE_COLORS: Record<string, string> = {
   epic: "bg-purple-500/10 text-purple-700 dark:text-purple-400",
@@ -206,9 +212,18 @@ export function ProjectDeliveryTab({ projectId }: { projectId: string }) {
   const syncing = syncJobs.some((j) => j.status === "queued" || j.status === "running");
 
   // ── Drill-down state ───────────────────────────────────────────
-  const [drillDown, setDrillDown] = useState<{ title: string; metric: string } | null>(null);
+  const [drillDown, setDrillDown] = useState<{ title: string; metric: string; filter?: DrillDownFilter } | null>(null);
   const { data: itemDetailRows, isLoading: itemDetailsLoading } = useItemDetails(projectId, deliveryFilters, !!drillDown);
   const { data: contribSummary, isLoading: contribSummaryLoading } = useContributorDeliverySummary(projectId, deliveryFilters, !!drillDown);
+
+  useRegisterUIContext("delivery", {
+    stats,
+    flow,
+    backlog,
+    quality,
+    iterations: iterations?.slice(0, 5),
+    filters: deliveryFilters,
+  });
 
   // ── Refresh delivery data when sync finishes ───────────────────
   const wasSyncing = useRef(false);
@@ -353,6 +368,7 @@ export function ProjectDeliveryTab({ projectId }: { projectId: string }) {
             <TabsTrigger value="velocity">Velocity &amp; Throughput</TabsTrigger>
             <TabsTrigger value="flow">Flow</TabsTrigger>
             <TabsTrigger value="backlog">Backlog Health</TabsTrigger>
+            <TabsTrigger value="carryover">Carry-over</TabsTrigger>
             <TabsTrigger value="quality">Quality</TabsTrigger>
             {showIntegration && <TabsTrigger value="integration">Integration</TabsTrigger>}
           </TabsList>
@@ -442,6 +458,11 @@ export function ProjectDeliveryTab({ projectId }: { projectId: string }) {
                 />
               </div>
 
+              <div className="grid gap-4 md:grid-cols-2">
+                <TrustedBacklogCard projectId={projectId} teamId={deliveryFilters.team_id} />
+                <LongRunningStoriesCard projectId={projectId} teamId={deliveryFilters.team_id} limit={10} />
+              </div>
+
               {/* Mini charts */}
               <div className="grid gap-4 md:grid-cols-2">
                 {stats.velocity_trend?.length > 0 && (
@@ -485,7 +506,14 @@ export function ProjectDeliveryTab({ projectId }: { projectId: string }) {
               </div>
 
               {stats.velocity_trend?.length > 0 ? (
-                <VelocityBarChart data={stats.velocity_trend} />
+                <VelocityBarChart
+                  data={stats.velocity_trend}
+                  onIterationClick={(pt) => setDrillDown({
+                    title: `Sprint: ${pt.iteration}`,
+                    metric: "completed",
+                    filter: { iterationName: pt.iteration },
+                  })}
+                />
               ) : (
                 <EmptyState message="No velocity data available." />
               )}
@@ -531,13 +559,27 @@ export function ProjectDeliveryTab({ projectId }: { projectId: string }) {
               </div>
 
               {flow.cycle_time_distribution?.length > 0 ? (
-                <CycleTimeHistogram data={flow.cycle_time_distribution} />
+                <CycleTimeHistogram
+                  data={flow.cycle_time_distribution}
+                  onBucketClick={(b) => setDrillDown({
+                    title: `Cycle Time: ${b.range}`,
+                    metric: "cycle_time",
+                    filter: { bucketRange: b.range },
+                  })}
+                />
               ) : (
                 <EmptyState message="No cycle time data yet." />
               )}
 
               {flow.wip_by_state?.length > 0 ? (
-                <WIPChart data={flow.wip_by_state} />
+                <WIPChart
+                  data={flow.wip_by_state}
+                  onStateClick={(state) => setDrillDown({
+                    title: `WIP in ${state}`,
+                    metric: "open_items",
+                    filter: { state },
+                  })}
+                />
               ) : (
                 <EmptyState message="No WIP data yet." />
               )}
@@ -557,6 +599,11 @@ export function ProjectDeliveryTab({ projectId }: { projectId: string }) {
 
         {/* ── Backlog Health Tab ────────────────────────────────────── */}
         <TabsContent value="backlog" className="space-y-4">
+          <TrustedBacklogCard projectId={projectId} teamId={deliveryFilters.team_id} />
+          <FeatureRollupCard projectId={projectId} teamId={deliveryFilters.team_id} />
+          <SizingTrendCard projectId={projectId} teamId={deliveryFilters.team_id} />
+          <LongRunningStoriesCard projectId={projectId} teamId={deliveryFilters.team_id} />
+
           {backlogLoading && (
             <>
               <StatRowSkeleton count={2} />
@@ -588,10 +635,24 @@ export function ProjectDeliveryTab({ projectId }: { projectId: string }) {
           {stats && (
             <div className="grid gap-4 md:grid-cols-2">
               {stats.backlog_by_type?.length > 0 && (
-                <BacklogTypeChart data={stats.backlog_by_type} />
+                <BacklogTypeChart
+                  data={stats.backlog_by_type}
+                  onTypeClick={(type) => setDrillDown({
+                    title: `Backlog: ${type}`,
+                    metric: "work_items",
+                    filter: { workItemType: type },
+                  })}
+                />
               )}
               {stats.backlog_by_state?.length > 0 && (
-                <BacklogStateChart data={stats.backlog_by_state} />
+                <BacklogStateChart
+                  data={stats.backlog_by_state}
+                  onStateClick={(state) => setDrillDown({
+                    title: `Backlog: ${state}`,
+                    metric: "work_items",
+                    filter: { state },
+                  })}
+                />
               )}
             </div>
           )}
@@ -599,10 +660,33 @@ export function ProjectDeliveryTab({ projectId }: { projectId: string }) {
             <BacklogFunnelChart data={stats.backlog_by_type} />
           )}
           {backlog?.stale_items && backlog.stale_items.length > 0 && (
-            <StaleBacklogChart data={backlog.stale_items} title="Stale Backlog Items" />
+            <StaleBacklogChart
+              data={backlog.stale_items}
+              title="Stale Backlog Items"
+              onBucketClick={(entry) => {
+                if ("type" in entry) {
+                  setDrillDown({
+                    title: `Stale ${entry.type}`,
+                    metric: "stale_items",
+                    filter: { workItemType: entry.type },
+                  });
+                }
+              }}
+            />
           )}
           {backlog?.age_distribution && backlog.age_distribution.length > 0 && (
-            <StaleBacklogChart data={backlog.age_distribution} title="Backlog Age Distribution" />
+            <StaleBacklogChart
+              data={backlog.age_distribution}
+              title="Backlog Age Distribution"
+              onBucketClick={(entry) => {
+                if ("range" in entry) {
+                  setDrillDown({
+                    title: `Aged ${entry.range}`,
+                    metric: "stale_items",
+                  });
+                }
+              }}
+            />
           )}
           {backlog?.growth && backlog.growth.length > 0 && (
             <ThroughputChart
@@ -613,6 +697,16 @@ export function ProjectDeliveryTab({ projectId }: { projectId: string }) {
           {!backlogLoading && !stats?.backlog_by_type?.length && !backlog && (
             <EmptyState message="No backlog health data available." />
           )}
+        </TabsContent>
+
+        {/* ── Carry-over Tab ────────────────────────────────────────── */}
+        <TabsContent value="carryover" className="space-y-4">
+          <CarryoverTab
+            projectId={projectId}
+            teamId={deliveryFilters.team_id}
+            fromDate={deliveryFilters.from_date}
+            toDate={deliveryFilters.to_date}
+          />
         </TabsContent>
 
         {/* ── Quality Tab ──────────────────────────────────────────── */}
@@ -1141,7 +1235,7 @@ export function ProjectDeliveryTab({ projectId }: { projectId: string }) {
                     {j.error_message || "-"}
                   </TableCell>
                   <TableCell className="align-top">
-                    <ViewLogsButton logUrl={api.getDeliverySyncLogUrl(projectId)} />
+                    <ViewLogsButton logUrl={api.getDeliverySyncLogUrl(projectId, j.id)} />
                   </TableCell>
                 </TableRow>
               ))}
@@ -1162,6 +1256,7 @@ export function ProjectDeliveryTab({ projectId }: { projectId: string }) {
         onOpenChange={(v) => { if (!v) setDrillDown(null); }}
         title={drillDown?.title ?? ""}
         metric={drillDown?.metric ?? "work_items"}
+        filter={drillDown?.filter ?? null}
         projectId={projectId}
         stats={stats}
         flow={flow}

@@ -48,6 +48,7 @@ import { useDailyStats } from "@/hooks/use-daily-stats";
 import { useIterations } from "@/hooks/use-delivery";
 import { api } from "@/lib/api-client";
 import type { ContributorSummary, SastFinding, SastSummary as SastSummaryType, DepFinding, DepSummary as DepSummaryType } from "@/lib/types";
+import { useRegisterUIContext } from "@/hooks/use-register-ui-context";
 
 const STATUS_ICON: Record<string, React.ReactNode> = {
   completed: <CheckCircle2 className="h-4 w-4 text-emerald-500" />,
@@ -198,6 +199,22 @@ export default function RepoDetailPage() {
     }
     return map;
   }, [daily]);
+
+  useRegisterUIContext("repo-detail", repo ? {
+    repo_id: repoId,
+    name: repo.name,
+    platform: repo.platform,
+    default_branch: repo.default_branch,
+    stats: stats ? {
+      total_commits: stats.total_commits,
+      contributor_count: stats.contributor_count,
+      bus_factor: stats.bus_factor,
+      churn_ratio: stats.churn_ratio,
+      pr_cycle_time_hours: stats.pr_cycle_time_hours,
+      pr_review_turnaround_hours: stats.pr_review_turnaround_hours,
+    } : null,
+    contributor_count: contributors.length,
+  } : null);
 
   if (!repo) return (
     <div className="space-y-6">

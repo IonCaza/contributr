@@ -93,6 +93,31 @@ class SyncLogger:
             except Exception:
                 pass
 
+    def snapshot(self) -> list[dict]:
+        """Return all log entries from Redis for this job, excluding the
+        ``__done__`` sentinel.
+
+        Used by callers that want to persist the final log to durable storage
+        once a sync finishes. Returns an empty list if Redis is unreachable.
+        """
+        if not self._redis:
+            return []
+        try:
+            raw = self._redis.lrange(self.list_key, 0, -1)
+        except Exception:
+            logger.debug("Failed to snapshot sync log from Redis", exc_info=True)
+            return []
+        entries: list[dict] = []
+        for item in raw:
+            try:
+                parsed = json.loads(item)
+            except Exception:
+                continue
+            if parsed.get("phase") == "__done__":
+                continue
+            entries.append(parsed)
+        return entries
+
 
 async def stream_log_events(
     list_key: str,

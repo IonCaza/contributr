@@ -24,6 +24,7 @@ import { queryKeys } from "@/lib/query-keys";
 import { cn } from "@/lib/utils";
 import { useRouter } from "next/navigation";
 import type { Adr } from "@/lib/types";
+import { useRegisterUIContext } from "@/hooks/use-register-ui-context";
 
 function statusColor(s: string) {
   switch (s) {
@@ -158,6 +159,14 @@ export default function AdrEditorPage({ params }: { params: Promise<{ projectId:
     }
     setStatus(newStatus);
   }
+
+  useRegisterUIContext("adr-detail", adr ? {
+    adr_id: adrId,
+    number: adr.adr_number,
+    title: adr.title,
+    status: adr.status,
+    location: adr.location,
+  } : null);
 
   if (isLoading || !adr) {
     return (

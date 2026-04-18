@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { Fragment, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { GitCommitHorizontal, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, GitMerge, ExternalLink, FileCode2, Loader2 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -74,8 +74,8 @@ export function CommitList({ commits, total, page, perPage, loading, onPageChang
             </TableHeader>
             <TableBody>
               {commits.map((c) => (
-                <>
-                  <TableRow key={c.id} className="cursor-pointer hover:bg-muted/50" onClick={() => toggleExpand(c.id)}>
+                <Fragment key={c.id}>
+                  <TableRow className="cursor-pointer hover:bg-muted/50" onClick={() => toggleExpand(c.id)}>
                     <TableCell className="w-8 px-2">
                       {expandedId === c.id ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />}
                     </TableCell>
@@ -160,7 +160,7 @@ export function CommitList({ commits, total, page, perPage, loading, onPageChang
                       </TableCell>
                     </TableRow>
                   )}
-                </>
+                </Fragment>
               ))}
             </TableBody>
           </Table>

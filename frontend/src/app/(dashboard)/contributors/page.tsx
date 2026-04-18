@@ -13,6 +13,7 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
 } from "@/components/ui/dialog";
 import { useContributors, useDuplicateContributors, useMergeContributors } from "@/hooks/use-contributors";
+import { useRegisterUIContext } from "@/hooks/use-register-ui-context";
 import type { DuplicateGroup } from "@/lib/types";
 
 export default function ContributorsPage() {
@@ -27,6 +28,17 @@ export default function ContributorsPage() {
 
   const contribMap = new Map(contributors.map((c) => [c.id, c]));
   const dupContributorIds = new Set(duplicates.flatMap((g) => g.contributor_ids));
+
+  useRegisterUIContext("contributors", {
+    totalContributors: contributors.length,
+    duplicateGroups: duplicates.length,
+    contributors: contributors.slice(0, 50).map((c) => ({
+      id: c.id,
+      name: c.canonical_name,
+      email: c.canonical_email,
+      projectCount: c.projects.length,
+    })),
+  });
 
   const toggleSelect = useCallback((id: string) => {
     setSelected((prev) => {

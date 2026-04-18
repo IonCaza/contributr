@@ -23,6 +23,16 @@ function isSSE(res: globalThis.Response): boolean {
   return (res.headers.get("Content-Type") ?? "").includes("text/event-stream");
 }
 
+function isAbort(err: unknown): boolean {
+  if (!err || typeof err !== "object") return false;
+  const name = (err as { name?: string }).name;
+  if (name === "AbortError" || name === "ResponseAborted") return true;
+  const code = (err as { code?: string }).code;
+  if (code === "UND_ERR_ABORTED" || code === "ERR_STREAM_PREMATURE_CLOSE") return true;
+  const cause = (err as { cause?: unknown }).cause;
+  return cause !== undefined && cause !== err && isAbort(cause);
+}
+
 async function proxy(
   req: NextRequest,
   params: Promise<{ path: string[] }>,
@@ -38,12 +48,24 @@ async function proxy(
   const { path } = await params;
   const url = backendUrl(path, req.nextUrl.searchParams);
 
-  const backendRes = await fetch(url, {
-    method,
-    headers: forwardHeaders(req),
-    body: method !== "GET" && method !== "HEAD" ? await req.text() : undefined,
-    signal: req.signal,
-  });
+  let backendRes: globalThis.Response;
+  try {
+    backendRes = await fetch(url, {
+      method,
+      headers: forwardHeaders(req),
+      body: method !== "GET" && method !== "HEAD" ? await req.text() : undefined,
+      signal: req.signal,
+    });
+  } catch (err) {
+    // SSE streams (sync logs, chat) routinely abort when the client unmounts
+    // the log viewer, navigates away, or reconnects. Next.js surfaces that as
+    // "ResponseAborted", which is noisy but not an actual failure — swallow it
+    // and return an empty 499-ish response so the dev console stays quiet.
+    if (isAbort(err)) {
+      return new Response(null, { status: 499 });
+    }
+    throw err;
+  }
 
   if (isSSE(backendRes) && backendRes.body) {
     return new Response(backendRes.body, {

@@ -22,6 +22,7 @@ from app.api import (
     file_exclusions, platform_credentials,
     llm_providers, agents, ai_tools, knowledge_graphs,
     teams as teams_api, delivery as delivery_api,
+    delivery_settings as delivery_settings_api,
     team_analytics as team_analytics_api,
     custom_fields as custom_fields_api,
     insights as insights_api,
@@ -43,6 +44,8 @@ from app.api import (
     project_members as project_members_api,
     access_policies as access_policies_api,
     audit as audit_api,
+    webhooks as webhooks_api,
+    code_reviews as code_reviews_api,
 )
 from app.api.repositories import _parse_platform_fields
 from app.agents.builtin import get_builtin_agents
@@ -416,6 +419,7 @@ app.include_router(file_exclusions.router, prefix="/api")
 app.include_router(platform_credentials.router, prefix="/api")
 app.include_router(teams_api.router)
 app.include_router(delivery_api.router)
+app.include_router(delivery_settings_api.router)
 app.include_router(team_analytics_api.router)
 app.include_router(custom_fields_api.router)
 app.include_router(insights_api.router)
@@ -440,6 +444,8 @@ app.include_router(pull_requests_api.router, prefix="/api")
 app.include_router(adrs_api.router, prefix="/api")
 app.include_router(project_schedules_api.router)
 app.include_router(presentations_api.router, prefix="/api")
+app.include_router(webhooks_api.router)
+app.include_router(code_reviews_api.router)
 
 
 @app.get("/api/health")

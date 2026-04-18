@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 import re
+import time
 from datetime import datetime, date as date_type, timezone
 from typing import TYPE_CHECKING
 
@@ -627,6 +628,8 @@ ACTION_FIELD_MAP: dict[str, str] = {
     "System.Tags": "field_changed",
 }
 
+TRACKED_FIELDS: frozenset[str] = frozenset(ACTION_FIELD_MAP.keys())
+
 _MAX_VALUE_LEN = 2048
 
 
@@ -637,6 +640,17 @@ def _truncate(val) -> str | None:
     return s[:_MAX_VALUE_LEN] if len(s) > _MAX_VALUE_LEN else s
 
 
+def _normalize_change(change) -> tuple[str | None, str | None]:
+    """Extract (old, new) from an ADO field-change dict or attribute object."""
+    old_val = change.get("oldValue") if isinstance(change, dict) else getattr(change, "old_value", None)
+    new_val = change.get("newValue") if isinstance(change, dict) else getattr(change, "new_value", None)
+    if isinstance(old_val, dict):
+        old_val = old_val.get("displayName") or old_val.get("uniqueName") or str(old_val)
+    if isinstance(new_val, dict):
+        new_val = new_val.get("displayName") or new_val.get("uniqueName") or str(new_val)
+    return _truncate(old_val), _truncate(new_val)
+
+
 async def fetch_ado_work_item_activities(
     db: AsyncSession,
     project: Project,
@@ -645,7 +659,12 @@ async def fetch_ado_work_item_activities(
     ado_project_name: str,
     sync_log: "SyncLogger | None" = None,
 ) -> int:
-    """Fetch the revision/update history for every work item and persist as WorkItemActivity rows."""
+    """Fetch the revision/update history for every work item and persist as WorkItemActivity rows.
+
+    Emits one activity row per *tracked* field that changed in each revision.
+    See :data:`TRACKED_FIELDS` for the whitelist. The unique key is
+    ``(work_item_id, revision_number, field_name)``.
+    """
     connection = _get_connection(org_url, token)
     wit_client = connection.clients.get_work_item_tracking_client()
 
@@ -660,36 +679,69 @@ async def fetch_ado_work_item_activities(
             sync_log.info("activities", "No work items to fetch activities for")
         return 0
 
-    existing_revs: dict[int, set[int]] = {}
+    total_items = len(wi_rows)
+    if sync_log:
+        sync_log.info(
+            "activities",
+            f"Fetching activity history for {total_items} work items "
+            f"(batches of {BATCH_SIZE})...",
+        )
+
+    existing_keys: dict[int, set[tuple[int, str | None]]] = {}
     for wi_uuid, ado_id in wi_rows:
         rev_result = await db.execute(
-            select(WorkItemActivity.revision_number).where(
-                WorkItemActivity.work_item_id == wi_uuid,
-            )
+            select(
+                WorkItemActivity.revision_number,
+                WorkItemActivity.field_name,
+            ).where(WorkItemActivity.work_item_id == wi_uuid)
         )
-        existing_revs[ado_id] = set(rev_result.scalars().all())
+        existing_keys[ado_id] = {(row[0], row[1]) for row in rev_result.all()}
 
-    uuid_map = {ado_id: wi_uuid for wi_uuid, ado_id in wi_rows}
     total_created = 0
+    processed = 0
+    failed = 0
+    started_at = time.monotonic()
 
-    for batch_start in range(0, len(wi_rows), BATCH_SIZE):
+    for batch_start in range(0, total_items, BATCH_SIZE):
         batch = wi_rows[batch_start:batch_start + BATCH_SIZE]
+        batch_created_start = total_created
         for wi_uuid, ado_id in batch:
             try:
                 updates = wit_client.get_updates(ado_id)
             except Exception as e:
                 logger.warning("Failed to fetch updates for work item %d: %s", ado_id, e)
+                failed += 1
+                processed += 1
                 continue
 
-            known_revs = existing_revs.get(ado_id, set())
+            known_keys = existing_keys.get(ado_id, set())
 
             for update in updates or []:
                 rev = getattr(update, "rev", None) or getattr(update, "id", None)
-                if rev is None or rev in known_revs:
+                if rev is None:
                     continue
 
                 revised_by = getattr(update, "revised_by", None)
-                revised_date = _parse_datetime(getattr(update, "revised_date", None))
+                fields_changed = getattr(update, "fields", None) or {}
+
+                # ADO sets ``revised_date`` to the 9999-01-01 sentinel on the
+                # latest revision of every work item (meaning "no successor
+                # yet"). Persisting that sentinel would poison every query
+                # that does ``MAX(activity_at)`` or lookback-window filters,
+                # so we prefer ``System.ChangedDate`` (the real timestamp of
+                # the revision) and only fall back to ``revised_date`` when
+                # it is a real date.
+                changed_date: datetime | None = None
+                changed_field = fields_changed.get("System.ChangedDate")
+                if changed_field is not None:
+                    _, new_v = _normalize_change(changed_field)
+                    changed_date = _parse_datetime(new_v)
+
+                raw_revised = _parse_datetime(getattr(update, "revised_date", None))
+                if raw_revised is not None and raw_revised.year >= 9999:
+                    raw_revised = None
+
+                revised_date = changed_date or raw_revised
                 if not revised_date:
                     continue
 
@@ -698,77 +750,90 @@ async def fetch_ado_work_item_activities(
                     name, email = _identity_email(revised_by)
                     with db.no_autoflush:
                         contributor = await resolve_contributor(db, name, email, platform="azure")
-
-                fields_changed = getattr(update, "fields", None) or {}
+                contributor_id = contributor.id if contributor else None
 
                 if rev == 1:
-                    db.add(WorkItemActivity(
-                        work_item_id=wi_uuid,
-                        contributor_id=contributor.id if contributor else None,
-                        action="created",
-                        field_name=None,
-                        old_value=None,
-                        new_value=None,
-                        revision_number=rev,
-                        activity_at=revised_date,
-                    ))
-                    known_revs.add(rev)
-                    total_created += 1
+                    if (rev, None) not in known_keys:
+                        db.add(WorkItemActivity(
+                            work_item_id=wi_uuid,
+                            contributor_id=contributor_id,
+                            action="created",
+                            field_name=None,
+                            old_value=None,
+                            new_value=None,
+                            revision_number=rev,
+                            activity_at=revised_date,
+                        ))
+                        known_keys.add((rev, None))
+                        total_created += 1
                     continue
 
-                if not fields_changed:
-                    db.add(WorkItemActivity(
-                        work_item_id=wi_uuid,
-                        contributor_id=contributor.id if contributor else None,
-                        action="field_changed",
-                        field_name=None,
-                        old_value=None,
-                        new_value=None,
-                        revision_number=rev,
-                        activity_at=revised_date,
-                    ))
-                    known_revs.add(rev)
-                    total_created += 1
+                tracked_in_rev = [
+                    (f, fields_changed[f]) for f in fields_changed
+                    if f in TRACKED_FIELDS
+                ]
+
+                if not tracked_in_rev:
+                    if (rev, None) not in known_keys:
+                        db.add(WorkItemActivity(
+                            work_item_id=wi_uuid,
+                            contributor_id=contributor_id,
+                            action="field_changed",
+                            field_name=None,
+                            old_value=None,
+                            new_value=None,
+                            revision_number=rev,
+                            activity_at=revised_date,
+                        ))
+                        known_keys.add((rev, None))
+                        total_created += 1
                     continue
 
-                best_action = "field_changed"
-                best_field = None
-                best_old = None
-                best_new = None
-
-                for field_ref, change in fields_changed.items():
-                    old_val = change.get("oldValue") if isinstance(change, dict) else getattr(change, "old_value", None)
-                    new_val = change.get("newValue") if isinstance(change, dict) else getattr(change, "new_value", None)
-
-                    if isinstance(old_val, dict):
-                        old_val = old_val.get("displayName") or old_val.get("uniqueName") or str(old_val)
-                    if isinstance(new_val, dict):
-                        new_val = new_val.get("displayName") or new_val.get("uniqueName") or str(new_val)
-
+                for field_ref, change in tracked_in_rev:
+                    if (rev, field_ref) in known_keys:
+                        continue
+                    old_v, new_v = _normalize_change(change)
                     action = ACTION_FIELD_MAP.get(field_ref, "field_changed")
-                    if action in ("state_changed", "assigned") or best_action == "field_changed":
-                        best_action = action
-                        best_field = field_ref
-                        best_old = _truncate(old_val)
-                        best_new = _truncate(new_val)
+                    db.add(WorkItemActivity(
+                        work_item_id=wi_uuid,
+                        contributor_id=contributor_id,
+                        action=action,
+                        field_name=field_ref,
+                        old_value=old_v,
+                        new_value=new_v,
+                        revision_number=rev,
+                        activity_at=revised_date,
+                    ))
+                    known_keys.add((rev, field_ref))
+                    total_created += 1
 
-                db.add(WorkItemActivity(
-                    work_item_id=wi_uuid,
-                    contributor_id=contributor.id if contributor else None,
-                    action=best_action,
-                    field_name=best_field,
-                    old_value=best_old,
-                    new_value=best_new,
-                    revision_number=rev,
-                    activity_at=revised_date,
-                ))
-                known_revs.add(rev)
-                total_created += 1
+            processed += 1
 
         await db.flush()
 
+        if sync_log:
+            elapsed = max(time.monotonic() - started_at, 0.001)
+            rate = processed / elapsed
+            remaining = max(total_items - processed, 0)
+            eta_seconds = int(remaining / rate) if rate > 0 else 0
+            pct = int(processed / total_items * 100) if total_items else 100
+            batch_created = total_created - batch_created_start
+            failed_suffix = f", {failed} failed" if failed else ""
+            sync_log.info(
+                "activities",
+                f"Activity history: {processed}/{total_items} items ({pct}%) · "
+                f"+{batch_created} new rows this batch · {total_created} total · "
+                f"{rate:.0f} items/s · ETA {eta_seconds}s{failed_suffix}",
+            )
+
     if sync_log:
-        sync_log.info("activities", f"Synced {total_created} work item activity records")
+        total_elapsed = int(time.monotonic() - started_at)
+        failed_suffix = f" ({failed} items failed to fetch)" if failed else ""
+        sync_log.info(
+            "activities",
+            f"Synced {total_created} activity records across {processed} work items "
+            f"in {total_elapsed}s{failed_suffix}",
+        )
     return total_created
 
 
@@ -824,12 +889,34 @@ def fetch_single_ado_work_item(
     org_url: str,
     token: str,
     platform_work_item_id: int,
+    custom_field_refs: list[str] | None = None,
 ) -> dict:
-    """Fetch the latest fields for one work item from Azure DevOps (synchronous)."""
+    """Fetch the latest fields for one work item from Azure DevOps (synchronous).
+
+    ``custom_field_refs`` is an optional list of extra ADO field reference names
+    (e.g. ``["Custom.FeatureReleaseNotes"]``) sourced from ``CustomFieldConfig``
+    so the pull includes whatever non-standard fields the project has toggled
+    on. Returned ``custom_fields`` mirrors the full-sync schema: a dict of
+    ``{ref_name: value}`` or ``None`` if nothing custom came back.
+    """
     connection = _get_connection(org_url, token)
     wit_client = connection.clients.get_work_item_tracking_client()
-    wi = wit_client.get_work_item(platform_work_item_id, fields=WI_FIELDS)
+
+    extra = [r for r in (custom_field_refs or []) if r and r not in KNOWN_FIELDS]
+    effective_fields = WI_FIELDS + extra
+
+    wi = wit_client.get_work_item(platform_work_item_id, fields=effective_fields)
     fields = wi.fields or {}
+
+    custom: dict[str, str | int | float | bool] = {}
+    for k, v in fields.items():
+        if k in KNOWN_FIELDS or v is None:
+            continue
+        try:
+            custom[k] = v if isinstance(v, (str, int, float, bool)) else str(v)
+        except Exception:
+            pass
+
     return {
         "title": fields.get("System.Title", ""),
         "description": fields.get("System.Description"),
@@ -839,6 +926,7 @@ def fetch_single_ado_work_item(
         "priority": fields.get("Microsoft.VSTS.Common.Priority"),
         "tags": fields.get("System.Tags", ""),
         "updated_at": fields.get("System.ChangedDate"),
+        "custom_fields": custom or None,
     }
 
 

@@ -33,6 +33,12 @@ import { WIPChart } from "@/components/charts/wip-chart";
 import { BugTrendChart } from "@/components/charts/bug-trend-chart";
 import { ThroughputChart } from "@/components/charts/throughput-chart";
 import { FindingCard } from "@/components/insight-finding-card";
+import { TrustedBacklogCard } from "@/components/delivery/trusted-backlog-card";
+import { TeamCapacityCard } from "@/components/delivery/team-capacity-card";
+import { FeatureRollupCard } from "@/components/delivery/feature-rollup-card";
+import { SizingTrendCard } from "@/components/delivery/sizing-trend-card";
+import { LongRunningStoriesCard } from "@/components/delivery/long-running-stories-card";
+import { CarryoverTab } from "@/components/delivery/carryover-tab";
 
 import { useTeamDetail } from "@/hooks/use-delivery";
 import {
@@ -48,6 +54,7 @@ import {
   useTeamWorkItems,
   useTeamInsights,
 } from "@/hooks/use-team-analytics";
+import { useRegisterUIContext } from "@/hooks/use-register-ui-context";
 
 const CHART_COLORS = [
   "var(--chart-1)", "var(--chart-2)", "var(--chart-3)",
@@ -116,6 +123,22 @@ export default function TeamDetailPage({
     };
   }, [insights]);
 
+  useRegisterUIContext("delivery-team-detail", team ? {
+    team_id: teamId,
+    team_name: team.name,
+    code_stats: codeStats ? {
+      total_commits: codeStats.total_commits,
+      lines_added: codeStats.lines_added,
+      lines_deleted: codeStats.lines_deleted,
+    } : null,
+    delivery_stats: deliveryStats ? {
+      total_work_items: deliveryStats.total_work_items,
+      completed_items: deliveryStats.completed_items,
+      avg_cycle_time_hours: deliveryStats.avg_cycle_time_hours,
+    } : null,
+    insights_summary: insightsSummary,
+  } : null);
+
   if (teamLoading) {
     return (
       <div className="flex items-center justify-center py-24">
@@ -179,6 +202,8 @@ export default function TeamDetailPage({
           <TabsTrigger value="overview">Overview</TabsTrigger>
           <TabsTrigger value="code">Code</TabsTrigger>
           <TabsTrigger value="delivery">Delivery</TabsTrigger>
+          <TabsTrigger value="backlog">Backlog</TabsTrigger>
+          <TabsTrigger value="carryover">Carry-over</TabsTrigger>
           <TabsTrigger value="insights">
             Insights
             {insightsSummary.total > 0 && (
@@ -229,6 +254,11 @@ export default function TeamDetailPage({
               subtitle={`${team.members.length} total`}
               tooltip="Members with commits in the selected period"
             />
+          </div>
+
+          <div className="grid gap-4 md:grid-cols-2">
+            <TrustedBacklogCard projectId={projectId} teamId={teamId} />
+            <TeamCapacityCard projectId={projectId} teamId={teamId} />
           </div>
 
           {codeActivity && codeActivity.length > 0 && (
@@ -515,6 +545,27 @@ export default function TeamDetailPage({
               )}
             </CardContent>
           </Card>
+        </TabsContent>
+
+        {/* ── Backlog Tab ─────────────────────────────────────── */}
+        <TabsContent value="backlog" className="space-y-6 mt-4">
+          <div className="grid gap-4 md:grid-cols-2">
+            <TrustedBacklogCard projectId={projectId} teamId={teamId} />
+            <TeamCapacityCard projectId={projectId} teamId={teamId} />
+          </div>
+          <FeatureRollupCard projectId={projectId} teamId={teamId} />
+          <SizingTrendCard projectId={projectId} teamId={teamId} />
+          <LongRunningStoriesCard projectId={projectId} teamId={teamId} />
+        </TabsContent>
+
+        {/* ── Carry-over Tab ──────────────────────────────────── */}
+        <TabsContent value="carryover" className="space-y-6 mt-4">
+          <CarryoverTab
+            projectId={projectId}
+            teamId={teamId}
+            fromDate={dateRange.from}
+            toDate={dateRange.to}
+          />
         </TabsContent>
 
         {/* ── Insights Tab ────────────────────────────────────── */}
