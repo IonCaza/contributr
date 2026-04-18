@@ -51,6 +51,7 @@ import {
   useTeamWorkItems,
 } from "@/hooks/use-team-analytics";
 import { useTeamInsightsSummary } from "@/hooks/use-team-insights";
+import { useRegisterUIContext } from "@/hooks/use-register-ui-context";
 
 const CHART_COLORS = [
   "var(--chart-1)", "var(--chart-2)", "var(--chart-3)",
@@ -115,6 +116,28 @@ export default function TeamDetailPage() {
       ? Math.round((deliveryStats.completed_items / deliveryStats.total_work_items) * 100)
       : 0
     : 0;
+
+  useRegisterUIContext("team-detail", team ? {
+    team_id: teamId,
+    name: team.name,
+    member_count: team.member_count,
+    platform: team.platform || null,
+    code_stats: codeStats ? {
+      total_commits: codeStats.total_commits,
+      lines_added: codeStats.lines_added,
+      lines_deleted: codeStats.lines_deleted,
+      prs_opened: codeStats.prs_opened,
+      prs_merged: codeStats.prs_merged,
+    } : null,
+    delivery_stats: deliveryStats ? {
+      total_work_items: deliveryStats.total_work_items,
+      completed_items: deliveryStats.completed_items,
+      open_items: deliveryStats.open_items,
+      avg_cycle_time_hours: deliveryStats.avg_cycle_time_hours,
+      completed_story_points: deliveryStats.completed_story_points,
+    } : null,
+    active_members: memberStats?.filter((m) => m.commits > 0).length ?? 0,
+  } : null);
 
   if (teamLoading) {
     return (

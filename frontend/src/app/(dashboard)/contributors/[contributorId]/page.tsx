@@ -23,6 +23,7 @@ import { ContributorInsightsTab } from "@/components/contributor-insights-tab";
 import { useContributor, useContributorStats, useContributorRepos, useContributorCommits } from "@/hooks/use-contributors";
 import { useRepoBranches } from "@/hooks/use-repos";
 import { useDailyStats } from "@/hooks/use-daily-stats";
+import { useRegisterUIContext } from "@/hooks/use-register-ui-context";
 
 export default function ContributorDetailPage() {
   const { contributorId } = useParams<{ contributorId: string }>();
@@ -89,6 +90,24 @@ export default function ContributorDetailPage() {
     lines_deleted: d.lines_deleted,
     commits: d.commits,
   })), [daily]);
+
+  useRegisterUIContext("contributor-detail", contributor && stats ? {
+    contributor_id: contributorId,
+    name: contributor.canonical_name,
+    email: contributor.canonical_email,
+    total_commits: stats.total_commits,
+    total_lines_added: stats.total_lines_added,
+    total_lines_deleted: stats.total_lines_deleted,
+    repository_count: stats.repository_count,
+    current_streak_days: stats.current_streak_days,
+    avg_commit_size: stats.avg_commit_size,
+    code_velocity: stats.code_velocity,
+    active_days: stats.active_days,
+    impact_score: stats.impact_score,
+    review_engagement: stats.review_engagement,
+    reviews_given: stats.reviews_given,
+    prs_authored: stats.prs_authored,
+  } : null);
 
   if (!contributor || !stats) return (
     <div className="space-y-6">

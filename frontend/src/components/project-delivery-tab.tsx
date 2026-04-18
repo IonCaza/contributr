@@ -61,6 +61,7 @@ import {
 import { DeliveryDetailSheet } from "@/components/delivery-detail-sheet";
 import { WorkItemsTreeView } from "@/components/work-items-tree-view";
 import type { DeliveryFilters } from "@/lib/types";
+import { useRegisterUIContext } from "@/hooks/use-register-ui-context";
 
 const TYPE_COLORS: Record<string, string> = {
   epic: "bg-purple-500/10 text-purple-700 dark:text-purple-400",
@@ -209,6 +210,15 @@ export function ProjectDeliveryTab({ projectId }: { projectId: string }) {
   const [drillDown, setDrillDown] = useState<{ title: string; metric: string } | null>(null);
   const { data: itemDetailRows, isLoading: itemDetailsLoading } = useItemDetails(projectId, deliveryFilters, !!drillDown);
   const { data: contribSummary, isLoading: contribSummaryLoading } = useContributorDeliverySummary(projectId, deliveryFilters, !!drillDown);
+
+  useRegisterUIContext("delivery", {
+    stats,
+    flow,
+    backlog,
+    quality,
+    iterations: iterations?.slice(0, 5),
+    filters: deliveryFilters,
+  });
 
   // ── Refresh delivery data when sync finishes ───────────────────
   const wasSyncing = useRef(false);

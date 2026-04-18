@@ -34,6 +34,7 @@ import { api } from "@/lib/api-client";
 import { SyncLogViewer } from "@/components/sync-log-viewer";
 import { FindingsOverTimeChart } from "@/components/charts/findings-over-time-chart";
 import type { SastFinding, SastSummary, SastScanRun, Repository } from "@/lib/types";
+import { useRegisterUIContext } from "@/hooks/use-register-ui-context";
 
 const SEVERITIES = [
   { value: "", label: "All" },
@@ -534,6 +535,12 @@ export default function SecurityPage({
   const dismissMutation = useDismissProjectSastFinding(projectId);
   const falsePositiveMutation = useMarkProjectSastFalsePositive(projectId);
   const ignoreRuleMutation = useAddProjectIgnoredRule(projectId);
+
+  useRegisterUIContext("security", {
+    summary,
+    findingsCount: findings?.length ?? 0,
+    filters: { severity: severityFilter, status: statusFilter },
+  });
 
   const handleScanRepo = useCallback((repoId: string) => {
     if (scanningRepoId) return;

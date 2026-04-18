@@ -983,3 +983,141 @@ def scheduler_tick() -> dict:
     if total:
         logger.info("Scheduler tick dispatched %d tasks: %s", total, dispatched)
     return dispatched
+
+
+# ---------------------------------------------------------------------------
+# Automated code review
+# ---------------------------------------------------------------------------
+
+async def _run_code_review(run_id: str) -> None:
+    from app.db.models.code_review_run import (
+        CodeReviewRun, CodeReviewStatus, CodeReviewVerdict,
+    )
+    from app.agents.runner import run_agent_stream
+
+    Session = _get_session()
+    async with Session() as db:
+        run = await db.get(CodeReviewRun, uuid.UUID(run_id))
+        if not run:
+            logger.error("CodeReviewRun %s not found", run_id)
+            return
+
+        repo = await db.get(Repository, run.repository_id)
+        if not repo:
+            run.status = CodeReviewStatus.FAILED
+            run.error_message = "Repository not found"
+            run.completed_at = datetime.now(timezone.utc)
+            await db.commit()
+            return
+
+        try:
+            run.status = CodeReviewStatus.RUNNING
+            run.started_at = datetime.now(timezone.utc)
+            await db.commit()
+
+            prompt = (
+                f"You are running in **automated headless mode**. Review PR "
+                f"#{run.platform_pr_number} in repository '{repo.name}'.\n\n"
+                f"Follow the full PR Review Workflow from your system prompt:\n"
+                f"1. Get changed files\n"
+                f"2. Gather ADRs and project standards\n"
+                f"3. Review each file's diff\n"
+                f"4. Check existing review comments\n"
+                f"5. Post inline comments for each finding using post_review_comment\n"
+                f"6. Submit the overall review using submit_review\n\n"
+                f"Be thorough but concise. Tag findings with severity. "
+                f"Set your verdict based on the severity of findings."
+            )
+
+            collected_text = ""
+            findings_count = 0
+            verdict = None
+            review_url = None
+
+            async for event in run_agent_stream(
+                db,
+                prompt,
+                agent_slug="code-reviewer",
+                session_id=None,
+                user_id=None,
+            ):
+                etype = event.get("type", "")
+                if etype == "token":
+                    collected_text += event.get("content", "")
+                elif etype == "tool_call_end":
+                    tool_name = event.get("tool_name", "")
+                    result = event.get("result", "")
+                    if tool_name == "post_review_comment" and "Posted" in result:
+                        findings_count += 1
+                    elif tool_name == "submit_review":
+                        if "APPROVE" in result:
+                            verdict = CodeReviewVerdict.APPROVE
+                        elif "REQUEST_CHANGES" in result:
+                            verdict = CodeReviewVerdict.REQUEST_CHANGES
+                        else:
+                            verdict = CodeReviewVerdict.COMMENT
+                        import re
+                        url_match = re.search(r"https?://\S+", result)
+                        if url_match:
+                            review_url = url_match.group(0)[:1000]
+
+            # Link to the PullRequest row if one exists
+            from app.db.models.pull_request import PullRequest
+            pr_q = select(PullRequest).where(
+                PullRequest.repository_id == run.repository_id,
+                PullRequest.platform_pr_id == run.platform_pr_number,
+            ).limit(1)
+            pr_row = (await db.execute(pr_q)).scalar_one_or_none()
+
+            run.status = CodeReviewStatus.COMPLETED
+            run.completed_at = datetime.now(timezone.utc)
+            run.findings_count = findings_count
+            run.verdict = verdict or CodeReviewVerdict.COMMENT
+            if review_url:
+                run.review_url = review_url
+            if pr_row:
+                run.pull_request_id = pr_row.id
+            await db.commit()
+
+            logger.info(
+                "CodeReviewRun %s completed: %d findings, verdict=%s",
+                run_id, findings_count, run.verdict.value if run.verdict else "none",
+            )
+
+        except Exception as e:
+            logger.exception("CodeReviewRun %s failed: %s", run_id, e)
+            await db.rollback()
+            run = await db.get(CodeReviewRun, uuid.UUID(run_id))
+            if run:
+                run.status = CodeReviewStatus.FAILED
+                run.error_message = str(e)[:2000]
+                run.completed_at = datetime.now(timezone.utc)
+                await db.commit()
+
+
+async def _mark_review_failed(run_id: str, error: str) -> None:
+    from app.db.models.code_review_run import CodeReviewRun, CodeReviewStatus
+    Session = _get_session()
+    async with Session() as db:
+        run = await db.get(CodeReviewRun, uuid.UUID(run_id))
+        if run and run.status in (CodeReviewStatus.QUEUED, CodeReviewStatus.RUNNING):
+            run.status = CodeReviewStatus.FAILED
+            run.error_message = f"Task failed unexpectedly: {error[:2000]}"
+            run.completed_at = datetime.now(timezone.utc)
+            await db.commit()
+
+
+class _CodeReviewTask(celery.Task):
+    def on_failure(self, exc, task_id, args, kwargs, einfo):
+        if args:
+            try:
+                asyncio.run(_mark_review_failed(args[0], str(exc)))
+            except Exception:
+                logger.exception("on_failure hook could not mark code review as failed")
+
+
+@celery.task(name="run_code_review", base=_CodeReviewTask)
+def run_code_review(run_id: str) -> dict:
+    logger.info("Celery task run_code_review: run=%s", run_id)
+    asyncio.run(_run_code_review(run_id))
+    return {"run_id": run_id}

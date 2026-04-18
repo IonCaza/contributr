@@ -48,6 +48,7 @@ import {
   useTeamWorkItems,
   useTeamInsights,
 } from "@/hooks/use-team-analytics";
+import { useRegisterUIContext } from "@/hooks/use-register-ui-context";
 
 const CHART_COLORS = [
   "var(--chart-1)", "var(--chart-2)", "var(--chart-3)",
@@ -115,6 +116,22 @@ export default function TeamDetailPage({
       total: insights.length,
     };
   }, [insights]);
+
+  useRegisterUIContext("delivery-team-detail", team ? {
+    team_id: teamId,
+    team_name: team.name,
+    code_stats: codeStats ? {
+      total_commits: codeStats.total_commits,
+      lines_added: codeStats.lines_added,
+      lines_deleted: codeStats.lines_deleted,
+    } : null,
+    delivery_stats: deliveryStats ? {
+      total_work_items: deliveryStats.total_work_items,
+      completed_items: deliveryStats.completed_items,
+      avg_cycle_time_hours: deliveryStats.avg_cycle_time_hours,
+    } : null,
+    insights_summary: insightsSummary,
+  } : null);
 
   if (teamLoading) {
     return (

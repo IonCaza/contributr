@@ -17,6 +17,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { SprintBurndownChart } from "@/components/charts/sprint-burndown-chart";
 import { useSprintDetail } from "@/hooks/use-delivery";
+import { useRegisterUIContext } from "@/hooks/use-register-ui-context";
 
 const TYPE_COLORS: Record<string, string> = {
   epic: "bg-purple-500/10 text-purple-700 dark:text-purple-400",
@@ -63,6 +64,17 @@ export default function SprintDetailPage({
 }) {
   const { projectId, iterationId } = use(params);
   const { data: sprint, isLoading } = useSprintDetail(projectId, iterationId);
+
+  useRegisterUIContext("iteration-detail", sprint ? {
+    iteration_id: iterationId,
+    name: sprint.name,
+    start_date: sprint.start_date,
+    end_date: sprint.end_date,
+    total_items: sprint.stats?.total_items,
+    completed_items: sprint.stats?.completed_items,
+    total_story_points: sprint.stats?.total_points,
+    completed_story_points: sprint.stats?.completed_points,
+  } : null);
 
   if (isLoading) {
     return (

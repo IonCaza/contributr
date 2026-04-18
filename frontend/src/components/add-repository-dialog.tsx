@@ -6,6 +6,7 @@ import { ArrowLeft, Link as LinkIcon, Loader2, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -323,29 +324,51 @@ export function AddRepositoryDialog({ open, onOpenChange, projectId }: Props) {
                 {selectedRepos.size} of {discoveredRepos.length} selected
               </span>
             </div>
-            <div className="max-h-72 space-y-0.5 overflow-y-auto overflow-x-hidden rounded-md border p-1.5">
-              {discoveredRepos.map((r) => (
-                <label
-                  key={r.name}
-                  className="flex items-start gap-2.5 rounded-md px-2 py-1.5 hover:bg-muted/50 cursor-pointer"
-                >
-                  <Checkbox
-                    checked={selectedRepos.has(r.name)}
-                    onCheckedChange={() => toggleRepo(r.name)}
-                    className="mt-0.5"
-                  />
-                  <div className="min-w-0 flex-1">
-                    <p className="text-sm font-medium leading-tight truncate">{r.name}</p>
-                    <p className="text-[11px] text-muted-foreground truncate">
-                      {r.default_branch && <span className="mr-2">{r.default_branch}</span>}
-                      {r.ssh_url || r.remote_url}
-                    </p>
-                  </div>
-                </label>
-              ))}
+            <div className="max-h-72 space-y-0.5 overflow-y-auto rounded-md border p-1.5">
+              <TooltipProvider delayDuration={300}>
+                {discoveredRepos.map((r) => {
+                  const url = r.ssh_url || r.remote_url || "";
+                  return (
+                    <label
+                      key={r.name}
+                      className="flex items-start gap-2.5 rounded-md px-2 py-1.5 hover:bg-muted/50 cursor-pointer overflow-hidden"
+                    >
+                      <Checkbox
+                        checked={selectedRepos.has(r.name)}
+                        onCheckedChange={() => toggleRepo(r.name)}
+                        className="mt-0.5 shrink-0"
+                      />
+                      <div className="min-w-0 flex-1">
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <p className="text-sm font-medium leading-tight truncate">{r.name}</p>
+                          </TooltipTrigger>
+                          <TooltipContent side="top" className="max-w-xs">
+                            <p className="break-all">{r.name}</p>
+                          </TooltipContent>
+                        </Tooltip>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <p className="text-[11px] text-muted-foreground truncate">
+                              {r.default_branch && <span className="mr-2">{r.default_branch}</span>}
+                              {url}
+                            </p>
+                          </TooltipTrigger>
+                          <TooltipContent side="bottom" className="max-w-sm">
+                            <p className="break-all text-xs">
+                              {r.default_branch && <span className="mr-2 font-medium">{r.default_branch}</span>}
+                              {url}
+                            </p>
+                          </TooltipContent>
+                        </Tooltip>
+                      </div>
+                    </label>
+                  );
+                })}
               {discoveredRepos.length === 0 && (
                 <p className="py-4 text-center text-sm text-muted-foreground">No repositories found in this project.</p>
               )}
+              </TooltipProvider>
             </div>
             <Button
               className="w-full"

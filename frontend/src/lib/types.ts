@@ -1423,3 +1423,32 @@ export interface AccessPolicyUpdate {
   agent_tool_rules?: Record<string, unknown> | null;
   sql_allowed_tables?: string[] | null;
 }
+
+// ── Code reviews ─────────────────────────────────────────────────
+
+export interface CodeReviewRunItem {
+  id: string;
+  repository_id: string;
+  repository_name: string;
+  platform_pr_number: number;
+  pr_title: string | null;
+  pr_state: string | null;
+  trigger: string;
+  status: string;
+  findings_count: number | null;
+  verdict: string | null;
+  review_url: string | null;
+  started_at: string | null;
+  completed_at: string | null;
+  error_message: string | null;
+  created_at: string;
+}
+
+export interface CodeReviewSummary {
+  total_runs: number;
+  completed: number;
+  failed: number;
+  avg_findings: number | null;
+  by_verdict: Record<string, number>;
+  by_trigger: Record<string, number>;
+}

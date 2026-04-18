@@ -48,6 +48,7 @@ from app.db.models.project_membership import ProjectMembership
 from app.db.models.access_policy import AccessPolicy, ResourceGrant
 from app.db.models.access_audit_log import AccessAuditLog
 from app.db.models.console_entry import ConsoleEntry
+from app.db.models.code_review_run import CodeReviewRun, CodeReviewTrigger, CodeReviewStatus, CodeReviewVerdict
 
 __all__ = [
     "User",

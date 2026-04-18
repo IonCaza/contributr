@@ -10,6 +10,7 @@ import { StatRowSkeleton, TableSkeleton, HeaderSkeleton } from "@/components/pag
 import { ANIM_CARD, stagger } from "@/lib/animations";
 import { useProjects } from "@/hooks/use-projects";
 import { useTrends, useDeliverySummary } from "@/hooks/use-daily-stats";
+import { useRegisterUIContext } from "@/hooks/use-register-ui-context";
 
 function formatHours(hours: number): string {
   if (hours < 1) return `${Math.round(hours * 60)}m`;
@@ -36,9 +37,27 @@ export default function DashboardPage() {
 
   const loading = loadingProjects || loadingTrends || loadingDelivery;
 
+  useRegisterUIContext("dashboard", {
+    projectCount: projects.length,
+    projects: projects.map((p) => ({ id: p.id, name: p.name })),
+    commits7d: trends?.current_week.commits ?? 0,
+    linesChanged7d: (trends?.current_week.lines_added ?? 0) + (trends?.current_week.lines_deleted ?? 0),
+    activeContributors30d: delivery?.active_contributors_30d ?? 0,
+    totalContributors: delivery?.total_contributors ?? 0,
+    mergedPrs7d: delivery?.merged_prs_7d ?? 0,
+    openPrs: delivery?.open_prs ?? 0,
+    prCycleTimeHours: delivery?.pr_cycle_time_hours ?? null,
+    reviewTurnaroundHours: delivery?.review_turnaround_hours ?? null,
+    openWorkItems: delivery?.open_work_items ?? null,
+    completedWorkItems30d: delivery?.completed_work_items_30d ?? null,
+    avgCommitsPerDay: trends?.avg_commits_30d ?? null,
+  });
+
   if (loading) {
     return <DashboardSkeleton />;
   }
+
+
 
   return (
     <div className="space-y-6">

@@ -25,6 +25,7 @@ import { SyncLogViewer } from "@/components/sync-log-viewer";
 import { FindingCard, formatRelativeTime } from "@/components/insight-finding-card";
 import { InsightRunHistory } from "@/components/insight-run-history";
 import { api } from "@/lib/api-client";
+import { useRegisterUIContext } from "@/hooks/use-register-ui-context";
 
 const CATEGORIES = [
   { value: "", label: "All" },
@@ -301,6 +302,12 @@ export default function InsightsPage({
   const lastRun = runs?.[0];
   const isRunning = lastRun?.status === "running" || triggerRun.isPending;
   const { activeRunId, startTracking, stopTracking } = useActiveRunTracking(lastRun);
+
+  useRegisterUIContext("insights", {
+    summary,
+    findingsCount: findings?.length ?? 0,
+    filters: { category: categoryFilter, severity: severityFilter },
+  });
 
   const handleTriggerRun = useCallback(() => {
     triggerRun.mutate(undefined, {

@@ -142,6 +142,14 @@ export const queryKeys = {
     detail: (projectId: string, prId: string) => ["pullRequests", projectId, prId] as const,
     analytics: (projectId: string, filters?: Record<string, unknown>) => ["pullRequests", projectId, "analytics", filters] as const,
   },
+  codeReviews: {
+    list: (projectId: string, filters?: Record<string, unknown>) =>
+      ["codeReviews", projectId, "list", filters] as const,
+    detail: (projectId: string, runId: string) =>
+      ["codeReviews", projectId, runId] as const,
+    summary: (projectId: string) =>
+      ["codeReviews", projectId, "summary"] as const,
+  },
   adrs: {
     config: (projectId: string) => ["adrs", projectId, "config"] as const,
     templates: (projectId: string) => ["adrs", projectId, "templates"] as const,

@@ -925,6 +925,30 @@ export const api = {
   deleteAccessPolicy: (id: string) =>
     request<void>(`/access-policies/${id}`, { method: "DELETE" }),
 
+  // Code Reviews
+  listCodeReviews: (projectId: string, params?: {
+    status?: string; trigger?: string; verdict?: string;
+    repository_id?: string; limit?: number; offset?: number;
+  }) => request<import("./types").CodeReviewRunItem[]>(
+    `/projects/${projectId}/code-reviews${buildQuery({
+      status: params?.status,
+      trigger: params?.trigger,
+      verdict: params?.verdict,
+      repository_id: params?.repository_id,
+      limit: params?.limit?.toString(),
+      offset: params?.offset?.toString(),
+    })}`
+  ),
+  getCodeReview: (projectId: string, runId: string) =>
+    request<import("./types").CodeReviewRunItem>(`/projects/${projectId}/code-reviews/${runId}`),
+  getCodeReviewSummary: (projectId: string) =>
+    request<import("./types").CodeReviewSummary>(`/projects/${projectId}/code-reviews/summary`),
+  triggerCodeReview: (projectId: string, repositoryId: string, prNumber: number) =>
+    request<{ status: string; review_run_id: string; celery_task_id: string }>(
+      `/webhooks/projects/${projectId}/code-reviews`,
+      { method: "POST", body: JSON.stringify({ repository_id: repositoryId, pr_number: prNumber }) },
+    ),
+
   getApiBase: () => API_BASE,
   getSseBase: () => API_BASE,
   getAuthToken: () => getToken(),

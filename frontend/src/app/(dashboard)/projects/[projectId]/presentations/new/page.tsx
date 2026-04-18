@@ -16,6 +16,7 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import { useCreatePresentation } from "@/hooks/use-presentations";
+import { useRegisterUIContext } from "@/hooks/use-register-ui-context";
 import Link from "next/link";
 import { cn } from "@/lib/utils";
 
@@ -361,6 +362,8 @@ export default function NewPresentationPage({
     : paletteMode === "dark"
       ? DARK_PALETTE
       : customColors;
+
+  useRegisterUIContext("presentation-new", { project_id: projectId, page: "new-presentation" });
 
   const handleCreate = useCallback(async () => {
     const finalTitle = title.trim() || prompt.slice(0, 80) || "Untitled Presentation";

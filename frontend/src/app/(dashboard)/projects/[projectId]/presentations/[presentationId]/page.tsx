@@ -5,6 +5,7 @@ import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
 import { PresentationStudio } from "@/components/presentation-studio";
 import { usePresentation } from "@/hooks/use-presentations";
+import { useRegisterUIContext } from "@/hooks/use-register-ui-context";
 import { Skeleton } from "@/components/ui/skeleton";
 
 export default function PresentationStudioPage({
@@ -14,6 +15,12 @@ export default function PresentationStudioPage({
 }) {
   const { projectId, presentationId } = use(params);
   const { data: presentation } = usePresentation(projectId, presentationId);
+
+  useRegisterUIContext("presentation-detail", presentation ? {
+    presentation_id: presentationId,
+    title: presentation.title,
+    status: presentation.status,
+  } : null);
 
   return (
     <div className="flex flex-col h-[calc(100vh-13rem)] min-h-[400px]">

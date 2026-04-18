@@ -30,6 +30,7 @@ import { useCustomFields } from "@/hooks/use-custom-fields";
 import { RichTextEditor } from "@/components/rich-text-editor";
 import { DescriptionDiffEditor } from "@/components/description-diff-editor";
 import { useChatTrigger } from "@/hooks/use-chat-trigger";
+import { useRegisterUIContext } from "@/hooks/use-register-ui-context";
 import type { WorkItemActivityEntry } from "@/lib/types";
 
 const TYPE_COLORS: Record<string, string> = {
@@ -264,6 +265,16 @@ export default function WorkItemDetailPage({
       },
     });
   }, [discardDraftMutation]);
+
+  useRegisterUIContext("work-item-detail", item ? {
+    work_item_id: workItemId,
+    title: item.title,
+    type: item.work_item_type,
+    state: item.state,
+    story_points: item.story_points,
+    assigned_to: item.assigned_to?.name ?? null,
+    platform_id: item.platform_work_item_id,
+  } : null);
 
   if (isLoading) {
     return (

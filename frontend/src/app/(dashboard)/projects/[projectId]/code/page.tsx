@@ -34,6 +34,7 @@ import { AddRepositoryDialog } from "@/components/add-repository-dialog";
 import { useDeleteRepo, usePurgeRepo, useSyncRepo } from "@/hooks/use-repos";
 import { useDailyStats } from "@/hooks/use-daily-stats";
 import { useIterations } from "@/hooks/use-delivery";
+import { useRegisterUIContext } from "@/hooks/use-register-ui-context";
 
 export default function ProjectCodePage({
   params,
@@ -92,6 +93,14 @@ export default function ProjectCodePage({
     to_date: dateRange.to,
   }), [projectId, dateRange]);
   const { data: dailyStats = [] } = useDailyStats(dailyParams);
+
+  useRegisterUIContext("code", {
+    projectName: project?.name ?? null,
+    stats,
+    dateRange,
+    repositoryCount: project?.repositories.length ?? 0,
+    contributorCount: project?.contributors.length ?? 0,
+  });
 
   const deleteRepo = useDeleteRepo(projectId);
   const purgeRepo = usePurgeRepo(projectId);

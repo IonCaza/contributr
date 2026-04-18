@@ -1,6 +1,7 @@
 ---
-description: "MANDATORY: Use sitrep MCP before/during/after ALL file modifications"
-alwaysApply: true
+description: 
+globs: .txt
+alwaysApply: false
 ---
 
 # Sitrep: MANDATORY Coordination Protocol

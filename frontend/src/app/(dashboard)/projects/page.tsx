@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useProjects, useCreateProject } from "@/hooks/use-projects";
+import { useRegisterUIContext } from "@/hooks/use-register-ui-context";
 
 export default function ProjectsPage() {
   const { data: projects = [], isLoading } = useProjects();
@@ -25,6 +26,11 @@ export default function ProjectsPage() {
   }
 
   const filtered = projects.filter((p) => p.name.toLowerCase().includes(search.toLowerCase()));
+
+  useRegisterUIContext("projects", {
+    total_projects: projects.length,
+    projects: projects.slice(0, 50).map((p) => ({ id: p.id, name: p.name, description: p.description })),
+  });
 
   return (
     <div className="space-y-6">

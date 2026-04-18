@@ -43,6 +43,8 @@ from app.api import (
     project_members as project_members_api,
     access_policies as access_policies_api,
     audit as audit_api,
+    webhooks as webhooks_api,
+    code_reviews as code_reviews_api,
 )
 from app.api.repositories import _parse_platform_fields
 from app.agents.builtin import get_builtin_agents
@@ -440,6 +442,8 @@ app.include_router(pull_requests_api.router, prefix="/api")
 app.include_router(adrs_api.router, prefix="/api")
 app.include_router(project_schedules_api.router)
 app.include_router(presentations_api.router, prefix="/api")
+app.include_router(webhooks_api.router)
+app.include_router(code_reviews_api.router)
 
 
 @app.get("/api/health")

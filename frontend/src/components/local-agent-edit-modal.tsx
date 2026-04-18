@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { Loader2, Users, Wrench, Search, ChevronRight, Database } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -11,23 +11,8 @@ import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { useCreateAgent, useUpdateAgent, useAiTools, useKnowledgeGraphs, useAgents } from "@/hooks/use-settings";
+import { TOOL_CATEGORY_LABELS, TOOL_CATEGORY_COLORS } from "@/lib/tool-categories";
 import type { AgentConfig, LlmProvider } from "@/lib/types";
-
-const CATEGORY_LABELS: Record<string, string> = {
-  contribution_analytics: "Contribution Analytics",
-  delivery_analytics: "Delivery Analytics",
-  code_access: "Code Access",
-  sast_analytics: "SAST Analytics",
-  sql_query: "SQL Query",
-};
-
-const CATEGORY_COLORS: Record<string, string> = {
-  contribution_analytics: "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200",
-  delivery_analytics: "bg-emerald-100 text-emerald-800 dark:bg-emerald-900 dark:text-emerald-200",
-  code_access: "bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-200",
-  sast_analytics: "bg-rose-100 text-rose-800 dark:bg-rose-900 dark:text-rose-200",
-  sql_query: "bg-violet-100 text-violet-800 dark:bg-violet-900 dark:text-violet-200",
-};
 
 interface AgentFormState {
   slug: string;
@@ -95,6 +80,14 @@ export function LocalAgentEditModal({ open, onOpenChange, agent, llmProviders }:
   const [toolSearch, setToolSearch] = useState("");
   const [collapsedCategories, setCollapsedCategories] = useState<Set<string>>(new Set());
 
+  useEffect(() => {
+    if (open) {
+      setForm(agent ? formFromAgent(agent) : { ...DEFAULT_FORM });
+      setToolSearch("");
+      setCollapsedCategories(new Set());
+    }
+  }, [open, agent]);
+
   const groupedTools = useMemo(() => {
     const q = toolSearch.toLowerCase().trim();
     const filtered = q
@@ -110,11 +103,6 @@ export function LocalAgentEditModal({ open, onOpenChange, agent, llmProviders }:
   }, [aiTools, toolSearch]);
 
   function handleOpenChange(next: boolean) {
-    if (next) {
-      setForm(agent ? formFromAgent(agent) : { ...DEFAULT_FORM });
-      setToolSearch("");
-      setCollapsedCategories(new Set());
-    }
     onOpenChange(next);
   }
 
@@ -315,8 +303,8 @@ export function LocalAgentEditModal({ open, onOpenChange, agent, llmProviders }:
                         })}
                       >
                         <ChevronRight className={`h-3.5 w-3.5 transition-transform ${isCollapsed ? "" : "rotate-90"}`} />
-                        <Badge className={`text-[10px] font-medium ${CATEGORY_COLORS[category] || "bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-200"}`}>
-                          {CATEGORY_LABELS[category] || category}
+                        <Badge className={`text-[10px] font-medium ${TOOL_CATEGORY_COLORS[category] || "bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-200"}`}>
+                          {TOOL_CATEGORY_LABELS[category] || category}
                         </Badge>
                       </button>
                       <span className="text-[10px] text-muted-foreground">{selectedInGroup}/{tools.length}</span>

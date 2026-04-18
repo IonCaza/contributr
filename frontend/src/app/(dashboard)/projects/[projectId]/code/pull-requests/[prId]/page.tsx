@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   GitPullRequest, MessageSquare, Clock, FileCode, Users,
-  ArrowLeft, CheckCircle2, XCircle, AlertCircle, Sparkles, RefreshCw,
+  ArrowLeft, CheckCircle2, XCircle, AlertCircle, Sparkles, RefreshCw, Bot,
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -19,6 +19,7 @@ import { queryKeys } from "@/lib/query-keys";
 import { cn } from "@/lib/utils";
 import { useChatTrigger } from "@/hooks/use-chat-trigger";
 import type { PRDetail, PRCommentItem, PRReview } from "@/lib/types";
+import { useRegisterUIContext } from "@/hooks/use-register-ui-context";
 
 function stateColor(state: string) {
   switch (state) {
@@ -59,6 +60,8 @@ export default function PRDetailPage({
 
   const queryClient = useQueryClient();
   const [syncing, setSyncing] = useState(false);
+  const [reviewRequested, setReviewRequested] = useState(false);
+  const [requestingReview, setRequestingReview] = useState(false);
 
   const handleSync = useCallback(async () => {
     setSyncing(true);
@@ -71,6 +74,19 @@ export default function PRDetailPage({
       setSyncing(false);
     }
   }, [projectId, prId, queryClient]);
+
+  const handleRequestReview = useCallback(async () => {
+    if (!pr) return;
+    setRequestingReview(true);
+    try {
+      await api.triggerCodeReview(projectId, pr.repository_id, pr.platform_pr_id);
+      setReviewRequested(true);
+    } catch (e) {
+      console.error("Failed to trigger code review", e);
+    } finally {
+      setRequestingReview(false);
+    }
+  }, [projectId, pr]);
 
   const { openChat } = useChatTrigger();
 
@@ -97,6 +113,24 @@ export default function PRDetailPage({
     }
     return { general, byFile };
   }, [pr?.comments]);
+
+  useRegisterUIContext("pr-detail", pr ? {
+    pr_id: prId,
+    platform_pr_id: pr.platform_pr_id,
+    title: pr.title,
+    state: pr.state,
+    author: pr.author_name,
+    repository: pr.repository_name,
+    cycle_time_hours: pr.cycle_time_hours,
+    review_turnaround_hours: pr.review_turnaround_hours,
+    iteration_count: pr.iteration_count,
+    comment_count: pr.comment_count,
+    lines_added: pr.lines_added,
+    lines_deleted: pr.lines_deleted,
+    reviews_count: pr.reviews.length,
+    created_at: pr.created_at,
+    merged_at: pr.merged_at,
+  } : null);
 
   if (isLoading || !pr) {
     return (
@@ -132,6 +166,16 @@ export default function PRDetailPage({
                 {pr.title || "(no title)"}
               </h1>
               <div className="flex items-center gap-2 shrink-0">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="gap-1.5"
+                  onClick={handleRequestReview}
+                  disabled={requestingReview || reviewRequested}
+                >
+                  <Bot className={cn("h-3.5 w-3.5", requestingReview && "animate-pulse")} />
+                  {reviewRequested ? "Review Queued" : requestingReview ? "Requesting…" : "Request AI Review"}
+                </Button>
                 <Button
                   variant="outline"
                   size="sm"

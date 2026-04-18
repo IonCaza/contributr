@@ -15,6 +15,7 @@ import { useAiStatus } from "@/hooks/use-settings";
 import { FeedbackWidget } from "@/components/feedback-widget";
 import { MfaSetupDialog } from "@/components/mfa-setup-dialog";
 import { useChatTriggerProvider } from "@/hooks/use-chat-trigger";
+import { useRouteSync } from "@/hooks/use-route-sync";
 
 export default function DashboardLayout({
   children,
@@ -28,6 +29,8 @@ export default function DashboardLayout({
 
   const { data: aiStatusData } = useAiStatus();
   const aiEnabled = !!(aiStatusData?.enabled && aiStatusData?.configured);
+
+  useRouteSync();
 
   const needsMfaSetup = user?.mfa_setup_required ?? false;
 

@@ -25,6 +25,7 @@ import { useProject } from "@/hooks/use-projects";
 import { useChatTrigger } from "@/hooks/use-chat-trigger";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import type { Adr, AdrTemplate, AdrConfig } from "@/lib/types";
+import { useRegisterUIContext } from "@/hooks/use-register-ui-context";
 
 const STATUS_OPTIONS = ["all", "proposed", "accepted", "deprecated", "superseded", "rejected"];
 
@@ -141,6 +142,20 @@ export default function AdrsPage({ params }: { params: Promise<{ projectId: stri
   const deleteAdr = useMutation({
     mutationFn: (id: string) => api.deleteAdr(projectId, id),
     onSuccess: () => { invalidate(); setDeleteTarget(null); },
+  });
+
+  useRegisterUIContext("standards", {
+    project_id: projectId,
+    total_adrs: adrs.length,
+    adrs: adrs.slice(0, 30).map((a: Adr) => ({
+      id: a.id,
+      number: a.adr_number,
+      title: a.title,
+      status: a.status,
+      location: a.location,
+    })),
+    status_filter: statusFilter,
+    templates_count: templates.length,
   });
 
   if (!project) return <Skeleton className="h-96" />;

@@ -24,6 +24,7 @@ def get_builtin_agents() -> list[BuiltinAgentSpec]:
     from app.agents.builtin.insights_analyst import SPEC as insights_analyst
     from app.agents.builtin.contributor_coach import SPEC as contributor_coach
     from app.agents.builtin.sast_analyst import SPEC as sast_analyst
+    from app.agents.builtin.dependency_analyst import SPEC as dependency_analyst
     from app.agents.builtin.code_reviewer import SPEC as code_reviewer
     from app.agents.builtin.verification_agent import SPEC as verification_agent
     from app.agents.builtin.supervisor import SPEC as supervisor
@@ -38,6 +39,7 @@ def get_builtin_agents() -> list[BuiltinAgentSpec]:
         insights_analyst,
         contributor_coach,
         sast_analyst,
+        dependency_analyst,
         code_reviewer,
         verification_agent,
         adr_architect,

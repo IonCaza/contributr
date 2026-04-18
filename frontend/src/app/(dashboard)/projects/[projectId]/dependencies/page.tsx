@@ -32,6 +32,7 @@ import { useActiveRunTracking } from "@/hooks/use-active-run-tracking";
 import { api } from "@/lib/api-client";
 import { SyncLogViewer } from "@/components/sync-log-viewer";
 import type { DepFinding, DepSummary, DepScanRun, Repository } from "@/lib/types";
+import { useRegisterUIContext } from "@/hooks/use-register-ui-context";
 
 const ANIM_CARD = "animate-in fade-in slide-in-from-bottom-2 duration-300 fill-mode-both";
 function stagger(i: number) { return { animationDelay: `${i * 60}ms` }; }
@@ -370,6 +371,13 @@ export default function ProjectDependenciesPage({
   useActiveRunTracking(lastRun);
   const activeRun = runs.find((r) => r.status === "queued" || r.status === "running") ?? null;
   const ecosystems = summary ? Object.keys(summary.by_ecosystem) : [];
+
+  useRegisterUIContext("dependencies", {
+    summary,
+    totalFindings,
+    ecosystems,
+    filters: { severity: severityFilter, ecosystem: ecosystemFilter, view: viewFilter, search: deferredSearch },
+  });
 
   const SEVERITIES = [
     { value: "", label: "All Severity" },

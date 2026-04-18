@@ -1,0 +1,33 @@
+name: 'Contributr Code Review'
+description: 'Trigger an automated AI code review on pull requests using Contributr'
+inputs:
+  contributr_url:
+    description: 'Base URL of your Contributr instance (e.g. https://contributr.example.com)'
+    required: true
+  webhook_secret:
+    description: 'Shared secret configured in Contributr settings (used for HMAC signature)'
+    required: true
+runs:
+  using: 'composite'
+  steps:
+    - name: Send webhook to Contributr
+      shell: bash
+      env:
+        CONTRIBUTR_URL: ${{ inputs.contributr_url }}
+        WEBHOOK_SECRET: ${{ inputs.webhook_secret }}
+      run: |
+        PAYLOAD='${{ toJSON(github.event) }}'
+        SIGNATURE="sha256=$(echo -n "$PAYLOAD" | openssl dgst -sha256 -hmac "$WEBHOOK_SECRET" | awk '{print $2}')"
+
+        HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
+          -X POST \
+          -H "Content-Type: application/json" \
+          -H "X-Hub-Signature-256: $SIGNATURE" \
+          -H "X-GitHub-Event: pull_request" \
+          -d "$PAYLOAD" \
+          "${CONTRIBUTR_URL}/api/webhooks/github")
+
+        echo "Contributr webhook response: HTTP $HTTP_CODE"
+        if [ "$HTTP_CODE" -ge 400 ]; then
+          echo "::warning::Contributr code review webhook returned HTTP $HTTP_CODE"
+        fi

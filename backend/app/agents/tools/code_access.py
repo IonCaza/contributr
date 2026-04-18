@@ -17,7 +17,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
-from app.db.models import Repository
+from app.db.models import Repository, Project
+from app.db.models.agent_memory import AgentMemory
 from app.db.models.platform_credential import PlatformCredential
 from app.db.models.repository import Platform
 from app.agents.tools.base import ToolDefinition
@@ -44,6 +45,9 @@ DEFINITIONS = [
     ToolDefinition("get_pr_changed_files", "PR Changed Files", "List files changed in a pull request with status and line counts", CATEGORY),
     ToolDefinition("get_pr_file_diff", "PR File Diff", "Get the patch/diff for a single file in a pull request", CATEGORY),
     ToolDefinition("get_pr_review_comments", "PR Review Comments", "Get review discussion comments on a pull request", CATEGORY),
+    ToolDefinition("get_project_standards", "Project Standards", "Retrieve project-level coding standards and conventions stored as reference memories", CATEGORY, concurrency_safe=True),
+    ToolDefinition("post_review_comment", "Post Review Comment", "Post an inline review comment on a PR at a specific file and line", CATEGORY),
+    ToolDefinition("submit_review", "Submit Review", "Submit a complete PR review with a verdict (approve, request_changes, comment)", CATEGORY),
 ]
 
 
@@ -738,6 +742,126 @@ def _build_code_access_tools(db: AsyncSession) -> list:
 
         return await _safe(db, _impl())
 
+    # ── Group C: standards & write-back tools ──────────────────────────
+
+    @tool
+    async def get_project_standards(project_name: str) -> str:
+        """Retrieve project-level coding standards, conventions, and reference docs.
+
+        Searches the project's reference memories for coding standards,
+        style guides, and architectural conventions that should be enforced
+        during code review.
+
+        Args:
+            project_name: Project name (fuzzy match).
+        """
+        async def _impl():
+            result = await db.execute(
+                select(Project).where(Project.name.ilike(f"%{project_name}%")).limit(1)
+            )
+            project = result.scalar_one_or_none()
+            if not project:
+                return f"No project found matching '{project_name}'."
+
+            result = await db.execute(
+                select(AgentMemory).where(
+                    AgentMemory.project_id == project.id,
+                    AgentMemory.type == "reference",
+                ).order_by(AgentMemory.created_at.desc()).limit(20)
+            )
+            memories = result.scalars().all()
+
+            if not memories:
+                return f"No coding standards or reference documents found for project '{project.name}'. The team may not have configured project-level standards yet."
+
+            header = f"**{project.name}** — {len(memories)} standard(s) / reference(s)\n\n"
+            items = []
+            for m in memories:
+                items.append(f"### {m.name}\n_{m.description}_\n\n{m.content}\n")
+            return header + "\n---\n".join(items)
+
+        return await _safe(db, _impl())
+
+    @tool
+    async def post_review_comment(
+        repo_name: str,
+        pr_number: int,
+        file_path: str,
+        line: int,
+        body: str,
+        side: str = "RIGHT",
+    ) -> str:
+        """Post an inline review comment on a specific file and line in a PR.
+
+        Args:
+            repo_name: Repository name (fuzzy match).
+            pr_number: Pull request / merge request number.
+            file_path: The file path the comment applies to.
+            line: The line number in the diff (new-file side by default).
+            body: The comment text (markdown supported).
+            side: Which side of the diff: RIGHT (new) or LEFT (old). Default RIGHT.
+        """
+        async def _impl():
+            resolved = await _resolve_repo(db, repo_name)
+            if isinstance(resolved, str):
+                return resolved
+            repo, _ = resolved
+
+            token, base_url = await _resolve_platform_token(db, repo.platform)
+            if not token:
+                return f"No credentials configured for {repo.platform.value}. Cannot post comments."
+
+            if repo.platform == Platform.GITHUB:
+                return _github_post_review_comment(repo, pr_number, file_path, line, body, side, token)
+            elif repo.platform == Platform.GITLAB:
+                return _gitlab_post_review_comment(repo, pr_number, file_path, line, body, token, base_url)
+            elif repo.platform == Platform.AZURE:
+                return _azure_post_review_comment(repo, pr_number, file_path, line, body, token, base_url)
+
+            return f"Unsupported platform: {repo.platform}"
+
+        return await _safe(db, _impl())
+
+    @tool
+    async def submit_review(
+        repo_name: str,
+        pr_number: int,
+        summary: str,
+        verdict: str = "COMMENT",
+    ) -> str:
+        """Submit a complete PR review with an overall verdict.
+
+        Args:
+            repo_name: Repository name (fuzzy match).
+            pr_number: Pull request / merge request number.
+            summary: The overall review summary (markdown).
+            verdict: One of APPROVE, REQUEST_CHANGES, or COMMENT (default COMMENT).
+        """
+        async def _impl():
+            resolved = await _resolve_repo(db, repo_name)
+            if isinstance(resolved, str):
+                return resolved
+            repo, _ = resolved
+
+            token, base_url = await _resolve_platform_token(db, repo.platform)
+            if not token:
+                return f"No credentials configured for {repo.platform.value}. Cannot submit review."
+
+            verdict_upper = verdict.upper()
+            if verdict_upper not in ("APPROVE", "REQUEST_CHANGES", "COMMENT"):
+                return f"Invalid verdict '{verdict}'. Must be APPROVE, REQUEST_CHANGES, or COMMENT."
+
+            if repo.platform == Platform.GITHUB:
+                return _github_submit_review(repo, pr_number, summary, verdict_upper, token)
+            elif repo.platform == Platform.GITLAB:
+                return _gitlab_submit_review(repo, pr_number, summary, token, base_url)
+            elif repo.platform == Platform.AZURE:
+                return _azure_submit_review(repo, pr_number, summary, verdict_upper, token, base_url)
+
+            return f"Unsupported platform: {repo.platform}"
+
+        return await _safe(db, _impl())
+
     return [
         list_directory,
         read_file,
@@ -748,7 +872,156 @@ def _build_code_access_tools(db: AsyncSession) -> list:
         get_pr_changed_files,
         get_pr_file_diff,
         get_pr_review_comments,
+        get_project_standards,
+        post_review_comment,
+        submit_review,
     ]
+
+
+# ── Platform write-back helpers ────────────────────────────────────────
+
+
+def _github_post_review_comment(
+    repo: Repository, pr_number: int, file_path: str,
+    line: int, body: str, side: str, token: str,
+) -> str:
+    from github import Github, GithubException
+    gh = Github(token)
+    try:
+        gh_repo = gh.get_repo(f"{repo.platform_owner}/{repo.platform_repo}")
+        pr = gh_repo.get_pull(pr_number)
+        commit = pr.get_commits().reversed[0]
+        pr.create_review_comment(
+            body=body, commit=commit, path=file_path, line=line, side=side,
+        )
+        return f"Posted inline comment on `{file_path}` line {line} in PR #{pr_number}."
+    except GithubException as e:
+        return f"GitHub API error posting comment: {e}"
+    finally:
+        gh.close()
+
+
+def _github_submit_review(
+    repo: Repository, pr_number: int, summary: str,
+    verdict: str, token: str,
+) -> str:
+    from github import Github, GithubException
+    gh = Github(token)
+    try:
+        gh_repo = gh.get_repo(f"{repo.platform_owner}/{repo.platform_repo}")
+        pr = gh_repo.get_pull(pr_number)
+        pr.create_review(body=summary, event=verdict)
+        return f"Submitted {verdict} review on PR #{pr_number}."
+    except GithubException as e:
+        return f"GitHub API error submitting review: {e}"
+    finally:
+        gh.close()
+
+
+def _gitlab_post_review_comment(
+    repo: Repository, mr_iid: int, file_path: str,
+    line: int, body: str, token: str | None, base_url: str | None,
+) -> str:
+    import gitlab
+    url = base_url or "https://gitlab.com"
+    gl = gitlab.Gitlab(url, private_token=token)
+    try:
+        project = gl.projects.get(f"{repo.platform_owner}/{repo.platform_repo}")
+        mr = project.mergerequests.get(mr_iid)
+        diff = mr.diffs.list()[0] if mr.diffs.list() else None
+        position = {
+            "base_sha": diff.base_commit_sha if diff else mr.diff_refs["base_sha"],
+            "start_sha": diff.start_commit_sha if diff else mr.diff_refs["start_sha"],
+            "head_sha": diff.head_commit_sha if diff else mr.diff_refs["head_sha"],
+            "position_type": "text",
+            "new_path": file_path,
+            "new_line": line,
+        }
+        mr.discussions.create({"body": body, "position": position})
+        return f"Posted inline comment on `{file_path}` line {line} in MR !{mr_iid}."
+    except gitlab.exceptions.GitlabError as e:
+        return f"GitLab API error posting comment: {e}"
+
+
+def _gitlab_submit_review(
+    repo: Repository, mr_iid: int, summary: str,
+    token: str | None, base_url: str | None,
+) -> str:
+    import gitlab
+    url = base_url or "https://gitlab.com"
+    gl = gitlab.Gitlab(url, private_token=token)
+    try:
+        project = gl.projects.get(f"{repo.platform_owner}/{repo.platform_repo}")
+        mr = project.mergerequests.get(mr_iid)
+        mr.notes.create({"body": summary})
+        return f"Posted review summary on MR !{mr_iid}."
+    except gitlab.exceptions.GitlabError as e:
+        return f"GitLab API error posting review: {e}"
+
+
+def _azure_post_review_comment(
+    repo: Repository, pr_number: int, file_path: str,
+    line: int, body: str, token: str | None, base_url: str | None,
+) -> str:
+    from azure.devops.v7_0.git.models import (
+        GitPullRequestCommentThread,
+        Comment,
+        CommentThreadContext,
+        CommentPosition,
+    )
+    conn = _ado_connection(token, base_url)
+    git_client = conn.clients.get_git_client()
+    project, repo_name = _ado_parse(repo)
+
+    position = CommentPosition(line=line, offset=1)
+    thread_context = CommentThreadContext(
+        file_path=file_path,
+        right_file_start=position,
+        right_file_end=position,
+    )
+    thread = GitPullRequestCommentThread(
+        comments=[Comment(content=body)],
+        thread_context=thread_context,
+    )
+    try:
+        git_client.create_thread(thread, repo_name, pr_number, project=project)
+        return f"Posted inline comment on `{file_path}` line {line} in PR #{pr_number}."
+    except Exception as e:
+        return f"Azure DevOps API error posting comment: {e}"
+
+
+def _azure_submit_review(
+    repo: Repository, pr_number: int, summary: str,
+    verdict: str, token: str | None, base_url: str | None,
+) -> str:
+    from azure.devops.v7_0.git.models import (
+        GitPullRequestCommentThread,
+        Comment,
+    )
+    conn = _ado_connection(token, base_url)
+    git_client = conn.clients.get_git_client()
+    project, repo_name = _ado_parse(repo)
+
+    _VERDICT_TO_ADO_VOTE = {"APPROVE": 10, "REQUEST_CHANGES": -10, "COMMENT": 0}
+    vote = _VERDICT_TO_ADO_VOTE.get(verdict, 0)
+
+    thread = GitPullRequestCommentThread(
+        comments=[Comment(content=summary)],
+        status=1,  # active
+    )
+    try:
+        git_client.create_thread(thread, repo_name, pr_number, project=project)
+    except Exception as e:
+        return f"Azure DevOps API error posting review summary: {e}"
+
+    try:
+        reviewer = git_client.create_pull_request_reviewer(
+            {"vote": vote}, repo_name, pr_number, reviewer_id="me", project=project,
+        )
+    except Exception:
+        logger.debug("Could not set vote on Azure PR (may require specific permissions)")
+
+    return f"Submitted review on PR #{pr_number} (vote={vote})."
 
 
 register_tool_category(CATEGORY, DEFINITIONS, _build_code_access_tools, concurrency_safe=True)
