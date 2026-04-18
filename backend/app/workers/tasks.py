@@ -372,7 +372,11 @@ def sync_repository(repo_id: str, job_id: str) -> dict:
 
 async def _run_delivery_sync(project_id: str, job_id: str | None = None) -> dict:
     """Sync teams, iterations, and work items from Azure DevOps for a project."""
-    slog = SyncLogger(f"delivery-{project_id}")
+    # Key logs on job_id so each sync row in the UI shows only its own stream.
+    # Fall back to a project-scoped key for legacy direct invocations that
+    # don't thread a job_id through (admin tools, backfills, etc.).
+    slog_id = job_id if job_id else f"delivery-{project_id}"
+    slog = SyncLogger(slog_id)
     slog.info("init", f"Starting delivery sync for project={project_id}")
     Session = _get_session()
     async with Session() as db:
@@ -387,6 +391,21 @@ async def _run_delivery_sync(project_id: str, job_id: str | None = None) -> dict
                 job.status = SyncStatus.RUNNING
                 job.started_at = datetime.now(timezone.utc)
                 await db.commit()
+
+        async def _persist_logs():
+            """Snapshot the Redis log list onto the DB row so history survives
+            the Redis TTL and container restarts. Best-effort: a failure here
+            should never mask the real sync result."""
+            if not job:
+                return
+            try:
+                entries = slog.snapshot()
+                if entries:
+                    job.logs = entries
+                    await db.commit()
+            except Exception:
+                logger.exception("Failed to persist sync logs for job %s", job_id)
+                await db.rollback()
 
         async def _fail_job(msg: str):
             if job:
@@ -403,22 +422,28 @@ async def _run_delivery_sync(project_id: str, job_id: str | None = None) -> dict
         project = result.scalar_one_or_none()
         if not project:
             slog.error("init", f"Project not found: {project_id}")
-            slog.close()
             await _fail_job("Project not found")
+            slog.fail("Project not found")
+            await _persist_logs()
+            slog.close()
             return {"error": "Project not found"}
 
         ado_project_name = _parse_ado_project(project)
         if not ado_project_name:
             slog.error("init", "No Azure DevOps repository found in project — cannot sync delivery data")
-            slog.close()
             await _fail_job("No Azure repo in project")
+            slog.fail("No Azure repo in project")
+            await _persist_logs()
+            slog.close()
             return {"error": "No Azure repo in project"}
 
         token, base_url = await _resolve_platform_token(db, Platform.AZURE)
         if not token:
             slog.error("init", "No Azure DevOps credential found")
-            slog.close()
             await _fail_job("No Azure credential")
+            slog.fail("No Azure credential")
+            await _persist_logs()
+            slog.close()
             return {"error": "No Azure credential"}
 
         azure_repo = next(
@@ -428,8 +453,10 @@ async def _run_delivery_sync(project_id: str, job_id: str | None = None) -> dict
         org_url = base_url or (_derive_azure_org_url(azure_repo) if azure_repo else None)
         if not org_url:
             slog.error("init", "Cannot determine Azure DevOps org URL")
-            slog.close()
             await _fail_job("No org URL")
+            slog.fail("No org URL")
+            await _persist_logs()
+            slog.close()
             return {"error": "No org URL"}
 
         try:
@@ -464,6 +491,7 @@ async def _run_delivery_sync(project_id: str, job_id: str | None = None) -> dict
 
             await db.commit()
             slog.complete()
+            await _persist_logs()
             return {"teams": teams_count, "iterations": iter_count, "work_items": wi_count}
 
         except Exception as e:
@@ -471,6 +499,7 @@ async def _run_delivery_sync(project_id: str, job_id: str | None = None) -> dict
             slog.fail(str(e)[:500])
             await db.rollback()
             await _fail_job(str(e)[:500])
+            await _persist_logs()
             return {"error": str(e)}
         finally:
             slog.close()
@@ -502,6 +531,91 @@ class _DeliverySyncTask(celery.Task):
 def sync_delivery(project_id: str, job_id: str | None = None) -> dict:
     logger.info("Celery task sync_delivery called: project=%s job=%s", project_id, job_id)
     return asyncio.run(_run_delivery_sync(project_id, job_id))
+
+
+async def _run_backfill_iteration_transitions(project_id: str | None = None) -> dict:
+    """Re-pull work item update history for projects missing iteration-path activities.
+
+    Old syncs stored at most one activity per revision, so iteration-path
+    changes that coincided with state/assignment changes were dropped.
+    This task re-hydrates ``work_item_activities`` for those projects.
+
+    If ``project_id`` is provided, only that project is backfilled.
+    Otherwise every Azure-linked project that has work items but *zero*
+    ``System.IterationPath`` activity rows is processed.
+    """
+    from sqlalchemy.orm import selectinload
+    from app.services.iteration_transitions import (
+        project_has_iteration_transitions,
+    )
+
+    slog = SyncLogger(f"backfill-iterations-{project_id or 'all'}")
+    slog.info("init", f"Starting iteration-path backfill project={project_id or '<all>'}")
+
+    Session = _get_session()
+    results: dict[str, int] = {}
+
+    async with Session() as db:
+        q = select(Project).options(selectinload(Project.repositories))
+        if project_id:
+            q = q.where(Project.id == uuid.UUID(project_id))
+        projects = (await db.execute(q)).scalars().all()
+
+        if not projects:
+            slog.info("init", "No projects matched")
+            slog.close()
+            return results
+
+        token, base_url = await _resolve_platform_token(db, Platform.AZURE)
+        if not token:
+            slog.error("init", "No Azure DevOps credential; cannot backfill")
+            slog.close()
+            return results
+
+        for project in projects:
+            ado_project_name = _parse_ado_project(project)
+            if not ado_project_name:
+                continue
+
+            if not project_id and await project_has_iteration_transitions(db, project.id):
+                continue
+
+            azure_repo = next(
+                (r for r in project.repositories if r.platform and r.platform.value == "azure"),
+                None,
+            )
+            org_url = base_url or (_derive_azure_org_url(azure_repo) if azure_repo else None)
+            if not org_url:
+                slog.warning(str(project.id), "Cannot determine org URL; skipping")
+                continue
+
+            try:
+                slog.info(str(project.id), f"Backfilling activities for {project.name}")
+                created = await fetch_ado_work_item_activities(
+                    db, project, org_url, token, ado_project_name, slog,
+                )
+                await db.commit()
+                results[str(project.id)] = created
+                slog.info(str(project.id), f"Backfilled {created} activity rows")
+            except Exception as e:
+                logger.exception(
+                    "Backfill failed for project %s: %s", project.id, e,
+                )
+                slog.warning(str(project.id), f"Backfill failed: {e}")
+                await db.rollback()
+
+    slog.complete()
+    return results
+
+
+@celery.task(name="backfill_iteration_transitions")
+def backfill_iteration_transitions(project_id: str | None = None) -> dict:
+    """Celery entry point for the iteration-path backfill."""
+    logger.info(
+        "Celery task backfill_iteration_transitions called: project=%s",
+        project_id or "<all>",
+    )
+    return asyncio.run(_run_backfill_iteration_transitions(project_id))
 
 
 async def _run_project_insights(run_id: str, project_id: str) -> None:

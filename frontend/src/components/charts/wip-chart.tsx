@@ -24,9 +24,11 @@ const chartConfig = {
 export function WIPChart({
   data,
   title = "Work In Progress",
+  onStateClick,
 }: {
   data: { state: string; count: number }[];
   title?: string;
+  onStateClick?: (state: string) => void;
 }) {
   if (!data.length) return null;
 
@@ -47,7 +49,15 @@ export function WIPChart({
             <XAxis dataKey="state" tickLine={false} axisLine={false} />
             <YAxis tickLine={false} axisLine={false} />
             <ChartTooltip content={<ChartTooltipContent hideIndicator />} />
-            <Bar dataKey="count" radius={[4, 4, 0, 0]} />
+            <Bar
+              dataKey="count"
+              radius={[4, 4, 0, 0]}
+              cursor={onStateClick ? "pointer" : undefined}
+              onClick={onStateClick ? (payload) => {
+                const p = (payload as unknown as { payload?: { state: string } }).payload;
+                if (p?.state) onStateClick(p.state);
+              } : undefined}
+            />
           </BarChart>
         </ChartContainer>
       </CardContent>

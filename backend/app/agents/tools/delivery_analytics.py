@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import uuid
 from datetime import date, datetime, timedelta, timezone
 from typing import Optional
 
@@ -15,6 +16,8 @@ from app.db.models import (
 from app.db.models.work_item_commit import WorkItemCommit
 from app.services.delivery_metrics import (
     DeliveryFilters,
+    cycle_end_column,
+    cycle_hours_expr,
     get_velocity,
     get_throughput_trend,
     get_iteration_detail as _iteration_detail,
@@ -29,7 +32,19 @@ from app.services.delivery_metrics import (
     get_bug_resolution_time,
     get_defect_density,
     get_intersection_metrics,
+    load_cycle_time_config,
 )
+from app.services.carryover import (
+    get_carryover_by_sprint,
+    get_carryover_summary,
+    get_work_item_iteration_history,
+    list_moved_work_items,
+)
+from app.services.capacity import get_team_capacity_vs_load as _team_capacity_vs_load
+from app.services.feature_rollup import get_feature_rollup as _feature_rollup
+from app.services.sizing_trend import get_sizing_distribution_trend as _sizing_trend
+from app.services.trusted_backlog import get_trusted_backlog_scorecard as _trusted_backlog
+from app.services.long_running import get_long_running_stories as _long_running
 from app.agents.tools.base import ToolDefinition
 from app.agents.tools.registry import register_tool_category
 from app.agents.tools.scoping import scoped_query
@@ -50,6 +65,9 @@ DEFINITIONS = [
     ToolDefinition("get_active_sprints", "Active Sprints", "Currently active and next upcoming sprints with progress", CATEGORY),
     ToolDefinition("get_sprint_scope_change", "Sprint Scope Change", "Items added during a sprint after start — scope creep analysis", CATEGORY),
     ToolDefinition("get_sprint_carryover", "Sprint Carryover", "Incomplete items from a past sprint and their current state", CATEGORY),
+    ToolDefinition("get_iteration_carryover_matrix", "Iteration Carryover Matrix", "Per-sprint move-in/move-out counts and carry-over rate for the last N iterations", CATEGORY),
+    ToolDefinition("get_team_carryover_summary", "Team Carryover Summary", "Aggregate iteration-path move stats (total moves, carry-over rate, top offenders) for a team", CATEGORY),
+    ToolDefinition("get_work_item_iteration_history", "Work Item Iteration History", "Every iteration-path change for a single work item", CATEGORY),
     ToolDefinition("get_iteration_detail", "Iteration Detail", "Quick stats for a single iteration: items, points, completion counts", CATEGORY),
     # C. Velocity and Throughput
     ToolDefinition("get_velocity_trend", "Velocity Trend", "Story points completed per iteration over last N sprints with rolling average", CATEGORY),
@@ -70,10 +88,15 @@ DEFINITIONS = [
     ToolDefinition("get_backlog_growth_trend", "Backlog Growth Trend", "Net backlog growth over time (created minus completed)", CATEGORY),
     ToolDefinition("get_stale_backlog_summary", "Stale Backlog Summary", "Stale backlog items grouped by type — items not updated in N days", CATEGORY),
     ToolDefinition("get_backlog_age_histogram", "Backlog Age Distribution", "Age distribution of open backlog items from days to months", CATEGORY),
+    ToolDefinition("get_feature_backlog_rollup", "Feature Backlog Rollup", "Per-feature child counts, total/completed points, and t-shirt size distribution", CATEGORY),
+    ToolDefinition("get_story_sizing_trend", "Story Sizing Trend", "Weekly distribution of story point sizes and trend slope of average story size", CATEGORY),
+    ToolDefinition("get_trusted_backlog_scorecard", "Trusted Backlog Scorecard", "Traffic-light scorecard of the five measurable Scrum trusted-backlog pillars (priority, mix, horizon, scope stability)", CATEGORY),
+    ToolDefinition("get_long_running_stories", "Long-Running Stories", "Active items past threshold days with 'why is it stuck?' signals (stalled, iteration-hopping, oversized, reassigned often, etc.)", CATEGORY),
     # F. Team Analytics
     ToolDefinition("get_team_delivery_overview", "Team Overview", "Team stats: members, velocity, active items, throughput, cycle time", CATEGORY),
     ToolDefinition("get_team_workload", "Team Workload", "Work distribution across team members — identifies imbalances", CATEGORY),
     ToolDefinition("get_team_members_delivery", "Team Members Delivery", "Per-member delivery stats: items completed, points, cycle time, bugs resolved", CATEGORY),
+    ToolDefinition("get_team_capacity_vs_load", "Team Capacity vs Load", "Rolling capacity (avg completed points) vs planned load for the active iteration", CATEGORY),
     # G. Quality Metrics
     ToolDefinition("get_bug_metrics", "Bug Metrics", "Bug trend, resolution time, defect density, open bug count", CATEGORY),
     ToolDefinition("get_quality_summary", "Quality Summary", "Composite quality view: defect density, escaped defects, rework items", CATEGORY),
@@ -172,6 +195,25 @@ async def _team_contributor_ids(db: AsyncSession, team_id) -> set:
         select(TeamMember.contributor_id).where(TeamMember.team_id == team_id)
     )
     return set(result.scalars().all())
+
+
+async def _resolve_work_item(db: AsyncSession, id_or_platform_id: str) -> WorkItem | None:
+    """Resolve a work item by its UUID, platform ID (#1234), or title substring."""
+    cleaned = str(id_or_platform_id).lstrip("#").strip()
+    if not cleaned:
+        return None
+    stmt = select(WorkItem)
+    try:
+        wi_uuid = uuid.UUID(cleaned)
+        stmt = stmt.where(WorkItem.id == wi_uuid)
+    except (ValueError, AttributeError):
+        if cleaned.isdigit():
+            stmt = stmt.where(WorkItem.platform_work_item_id == int(cleaned))
+        else:
+            stmt = stmt.where(WorkItem.title.ilike(f"%{cleaned}%"))
+    stmt = scoped_query(stmt.limit(1), project_col=WorkItem.project_id)
+    result = await db.execute(stmt)
+    return result.scalar_one_or_none()
 
 
 async def _safe(db: AsyncSession, coro):
@@ -354,6 +396,10 @@ def _build_delivery_tools(db: AsyncSession) -> list:
                 return f"Iteration '{missing}' not found."
             wi = WorkItem.__table__
 
+            cycle_cfg = await load_cycle_time_config(db, project_id) if project_id else None
+            cycle_expr_ab = cycle_hours_expr(wi, cycle_cfg)
+            cycle_end_ab = cycle_end_column(wi, cycle_cfg)
+
             async def _stats(iter_id):
                 base = wi.c.iteration_id == iter_id
                 total = (await db.execute(scoped_query(select(func.count()).where(base), project_col=WorkItem.project_id))).scalar() or 0
@@ -362,8 +408,8 @@ def _build_delivery_tools(db: AsyncSession) -> list:
                 contribs = (await db.execute(scoped_query(select(func.count(func.distinct(wi.c.assigned_to_id))).where(base, wi.c.assigned_to_id.isnot(None)), project_col=WorkItem.project_id))).scalar() or 0
                 cycle_q = scoped_query(
                     select(
-                        func.percentile_cont(0.5).within_group(extract("epoch", wi.c.resolved_at - wi.c.activated_at) / 3600)
-                    ).where(base, wi.c.activated_at.isnot(None), wi.c.resolved_at.isnot(None)),
+                        func.percentile_cont(0.5).within_group(cycle_expr_ab)
+                    ).where(base, wi.c.activated_at.isnot(None), cycle_end_ab.isnot(None)),
                     project_col=WorkItem.project_id,
                 )
                 median_ct = (await db.execute(cycle_q)).scalar()
@@ -466,7 +512,7 @@ def _build_delivery_tools(db: AsyncSession) -> list:
 
     @tool
     async def get_sprint_carryover(iteration_name: str, project_name: Optional[str] = None) -> str:
-        """Incomplete items from a sprint and their current state."""
+        """Incomplete items from a sprint and their current state, plus items that were moved to a different iteration."""
         async def _impl():
             project_id = None
             if project_name:
@@ -490,11 +536,154 @@ def _build_delivery_tools(db: AsyncSession) -> list:
                 project_col=WorkItem.project_id,
             )
             rows_data = (await db.execute(q)).all()
+
+            matrix = await get_carryover_by_sprint(db, it.project_id, limit=30)
+            sprint_stats = next((m for m in matrix if m["iteration_id"] == str(it.id)), None)
+            header_lines = [f"**Carryover from {it.name}**"]
+            if sprint_stats:
+                header_lines.append(
+                    f"Moved out: {sprint_stats['moved_out']} • Moved in: {sprint_stats['moved_in']} • "
+                    f"Carry-over rate: {sprint_stats['carryover_rate_pct']}%"
+                )
+
             if not rows_data:
-                return f"No incomplete items in sprint '{it.name}' — all items were completed."
+                header_lines.append("No incomplete items remaining in this sprint.")
+                return "\n".join(header_lines)
+
             rows = [(f"#{r[0]}", r[1][:50], r[2], _fmt(r[3]), r[4] or "Unassigned") for r in rows_data]
-            return f"**Carryover from {it.name}** ({len(rows_data)} items)\n" + _table(
+            header_lines.append(f"({len(rows_data)} incomplete items)")
+            return "\n".join(header_lines) + "\n" + _table(
                 ["ID", "Title", "State", "Points", "Assignee"], rows
+            )
+        return await _safe(db, _impl())
+
+    @tool
+    async def get_iteration_carryover_matrix(
+        project_name: Optional[str] = None,
+        team_name: Optional[str] = None,
+        limit: int = 12,
+    ) -> str:
+        """Per-sprint in/out move counts and carry-over rate over the last N iterations.
+
+        Use this to answer questions like "how much work is carrying over between sprints?".
+        """
+        async def _impl():
+            project_id = None
+            if project_name:
+                p = await _resolve_project(db, project_name)
+                if p:
+                    project_id = p.id
+            team_id = None
+            if team_name:
+                t = await _resolve_team(db, team_name, project_id)
+                if t:
+                    team_id = t.id
+                    project_id = t.project_id
+            if project_id is None:
+                return "Please specify a project (or team) to compute carry-over."
+            rows = await get_carryover_by_sprint(db, project_id, team_id=team_id, limit=limit)
+            if not rows:
+                return "No iterations with complete start/end dates found."
+            table_rows = [
+                (
+                    r["iteration_name"],
+                    r["total_items"],
+                    r["completed_items"],
+                    r["moved_out"],
+                    r["moved_in"],
+                    f"{r['carryover_rate_pct']}%",
+                )
+                for r in rows
+            ]
+            title = f"Carry-over by sprint — {team_name or 'project'}"
+            return f"**{title}**\n" + _table(
+                ["Sprint", "Items", "Done", "Moved Out", "Moved In", "Carry %"], table_rows,
+            )
+        return await _safe(db, _impl())
+
+    @tool
+    async def get_team_carryover_summary(
+        team_name: Optional[str] = None,
+        project_name: Optional[str] = None,
+        days: int = 90,
+    ) -> str:
+        """Aggregate carry-over stats for a team over the last N days.
+
+        Shows total iteration-path moves, carry-over rate, and the top repeat offenders (items with the most moves).
+        """
+        async def _impl():
+            project_id = None
+            if project_name:
+                p = await _resolve_project(db, project_name)
+                if p:
+                    project_id = p.id
+            team_id = None
+            if team_name:
+                t = await _resolve_team(db, team_name, project_id)
+                if t:
+                    team_id = t.id
+                    project_id = t.project_id
+            if project_id is None:
+                return "Please specify a project (or team) to compute carry-over."
+            to_dt = datetime.now(timezone.utc)
+            from_dt = to_dt - timedelta(days=days)
+            summary = await get_carryover_summary(
+                db, project_id, team_id=team_id, from_date=from_dt, to_date=to_dt,
+            )
+            header = _kv_block({
+                "scope": team_name or project_name or "project",
+                "window_days": days,
+                "total_work_items": summary["total_work_items"],
+                "unique_items_moved": summary["unique_work_items_moved"],
+                "total_moves": summary["total_moves"],
+                "carryover_rate_pct": f"{summary['carryover_rate_pct']}%",
+                "avg_moves_per_item": summary["avg_moves_per_item"],
+            }, "Carry-over summary")
+            offenders = summary.get("top_offenders") or []
+            if not offenders:
+                return header
+            rows = [
+                (
+                    f"#{o['platform_work_item_id']}" if o.get('platform_work_item_id') else "—",
+                    (o.get('title') or '')[:50],
+                    o.get('state') or '—',
+                    o.get('move_count', 0),
+                    o.get('assignee') or "Unassigned",
+                )
+                for o in offenders[:10]
+            ]
+            return header + "\n\n**Top repeat offenders**\n" + _table(
+                ["ID", "Title", "State", "Moves", "Assignee"], rows,
+            )
+        return await _safe(db, _impl())
+
+    @tool
+    async def get_work_item_iteration_history(
+        work_item_id_or_platform_id: str,
+        project_name: Optional[str] = None,
+    ) -> str:
+        """Show every iteration-path change for a single work item, in chronological order."""
+        async def _impl():
+            wi_obj = await _resolve_work_item(db, work_item_id_or_platform_id)
+            if not wi_obj:
+                return f"Work item '{work_item_id_or_platform_id}' not found."
+            from app.services.carryover import get_work_item_iteration_history as _history
+            rows = await _history(db, wi_obj.project_id, wi_obj.id)
+            if not rows:
+                return f"No iteration-path moves recorded for #{wi_obj.platform_work_item_id}."
+            table_rows = [
+                (
+                    r["changed_at"][:10],
+                    (r.get("from_iteration") or {}).get("name") or r.get("from_path") or "—",
+                    (r.get("to_iteration") or {}).get("name") or r.get("to_path") or "—",
+                    r.get("revision_number"),
+                )
+                for r in rows
+            ]
+            return (
+                f"**Iteration history for #{wi_obj.platform_work_item_id}** "
+                f"({len(rows)} moves)\n"
+                + _table(["Date", "From", "To", "Rev"], table_rows)
             )
         return await _safe(db, _impl())
 
@@ -714,7 +903,7 @@ def _build_delivery_tools(db: AsyncSession) -> list:
 
     @tool
     async def get_cycle_time_stats(project_name: Optional[str] = None, work_item_type: Optional[str] = None, from_date: Optional[str] = None, to_date: Optional[str] = None) -> str:
-        """Median, p75, p90 cycle times (activated -> resolved) with type breakdown."""
+        """Median, p75, p90 cycle times with type breakdown. Cycle-time endpoints are configurable per project via ``ProjectDeliverySettings``."""
         async def _impl():
             project_id = None
             if project_name:
@@ -730,15 +919,17 @@ def _build_delivery_tools(db: AsyncSession) -> list:
                     return "No projects found."
 
             wi = WorkItem.__table__
-            hours_expr = extract("epoch", wi.c.resolved_at - wi.c.activated_at) / 3600
-            base = [wi.c.project_id == project_id, wi.c.activated_at.isnot(None), wi.c.resolved_at.isnot(None)]
+            cycle_cfg = await load_cycle_time_config(db, project_id)
+            hours_expr = cycle_hours_expr(wi, cycle_cfg)
+            end_col = cycle_end_column(wi, cycle_cfg)
+            base = [wi.c.project_id == project_id, wi.c.activated_at.isnot(None), end_col.isnot(None)]
             if work_item_type:
                 base.append(wi.c.work_item_type == work_item_type)
             fd, td = _parse_date(from_date), _parse_date(to_date)
             if fd:
-                base.append(wi.c.resolved_at >= fd)
+                base.append(end_col >= fd)
             if td:
-                base.append(wi.c.resolved_at <= td)
+                base.append(end_col <= td)
 
             q = scoped_query(
                 select(
@@ -1189,6 +1380,209 @@ def _build_delivery_tools(db: AsyncSession) -> list:
             return "**Backlog Age Distribution**\n" + _table(["Age Range", "Count", "Pct"], rows)
         return await _safe(db, _impl())
 
+    @tool
+    async def get_feature_backlog_rollup(
+        project_name: Optional[str] = None,
+        team_name: Optional[str] = None,
+        include_completed_features: bool = False,
+        limit: int = 20,
+    ) -> str:
+        """Feature-level backlog: child counts, completed vs total story points, and t-shirt distribution per feature."""
+        async def _impl():
+            project_id = None
+            if project_name:
+                p = await _resolve_project(db, project_name)
+                if p:
+                    project_id = p.id
+            team_id = None
+            if team_name:
+                t = await _resolve_team(db, team_name, project_id)
+                if t:
+                    team_id = t.id
+                    project_id = t.project_id
+            if project_id is None:
+                return "Please specify a project (or team)."
+            data = await _feature_rollup(
+                db, project_id,
+                team_id=team_id,
+                include_completed_features=include_completed_features,
+                limit=limit,
+            )
+            if not data["features"]:
+                return "No features in scope."
+            tshirt_field = data.get("tshirt_custom_field")
+            rows = [
+                (
+                    f"#{f['platform_work_item_id']}",
+                    (f["title"] or "")[:48],
+                    f["state"],
+                    f["total_items"],
+                    f["completed_items"],
+                    f"{f['completed_points']}/{f['total_points']}",
+                    f"{f['completion_pct']}%",
+                )
+                for f in data["features"]
+            ]
+            totals = data["totals"]
+            prefix = f"**Feature rollup** ({totals['feature_count']} features)"
+            if tshirt_field:
+                prefix += f" — t-shirt field: `{tshirt_field}`"
+            return prefix + "\n" + _table(
+                ["ID", "Feature", "State", "Items", "Done", "Pts D/T", "%"], rows,
+            )
+        return await _safe(db, _impl())
+
+    @tool
+    async def get_story_sizing_trend(
+        project_name: Optional[str] = None,
+        team_name: Optional[str] = None,
+        weeks: int = 12,
+        include_unsized: bool = True,
+    ) -> str:
+        """Weekly distribution of story point sizes + trend slope of average story size. Negative slope means stories are shrinking."""
+        async def _impl():
+            project_id = None
+            if project_name:
+                p = await _resolve_project(db, project_name)
+                if p:
+                    project_id = p.id
+            team_id = None
+            if team_name:
+                t = await _resolve_team(db, team_name, project_id)
+                if t:
+                    team_id = t.id
+                    project_id = t.project_id
+            if project_id is None:
+                return "Please specify a project (or team)."
+            data = await _sizing_trend(
+                db, project_id,
+                team_id=team_id,
+                weeks=weeks,
+                include_unsized=include_unsized,
+            )
+            bucket_order = data["bucket_order"]
+            rows = []
+            for s in data["series"]:
+                row = [s["week_start"], s["total"], s["avg_points"] if s["avg_points"] is not None else "-"]
+                row.extend(s["buckets"].get(b, 0) for b in bucket_order)
+                rows.append(row)
+            totals_row = ["**totals**", sum(s["total"] for s in data["series"]), "-"]
+            totals_row.extend(data["totals"].get(b, 0) for b in bucket_order)
+            rows.append(totals_row)
+            header = ["Week", "N", "Avg pts"] + bucket_order
+            slope = data["avg_points_trend_slope"]
+            direction = (
+                "shrinking"
+                if slope is not None and slope < -0.02
+                else "growing"
+                if slope is not None and slope > 0.02
+                else "stable"
+            )
+            prefix = f"**Story sizing trend** ({data['weeks']}w, by {data['basis']}) — avg-points slope `{slope}` ({direction})"
+            return prefix + "\n" + _table(header, rows)
+        return await _safe(db, _impl())
+
+    @tool
+    async def get_trusted_backlog_scorecard(
+        project_name: Optional[str] = None,
+        team_name: Optional[str] = None,
+    ) -> str:
+        """Traffic-light scorecard for the five measurable trusted-backlog pillars: priority confidence, work mix, planning horizon, planned scope stability, and current sprint stability."""
+        async def _impl():
+            project_id = None
+            if project_name:
+                p = await _resolve_project(db, project_name)
+                if p:
+                    project_id = p.id
+            team_id = None
+            if team_name:
+                t = await _resolve_team(db, team_name, project_id)
+                if t:
+                    team_id = t.id
+                    project_id = t.project_id
+            if project_id is None:
+                return "Please specify a project (or team)."
+            data = await _trusted_backlog(db, project_id, team_id=team_id)
+            light_icon = {
+                "green": "🟢", "yellow": "🟡", "red": "🔴", "unknown": "⚪",
+            }
+            rows = [
+                (
+                    light_icon.get(p["traffic_light"], "⚪"),
+                    p["label"],
+                    p["score"] if p["measurable"] else "-",
+                    p["traffic_light"],
+                )
+                for p in data["pillars"]
+            ]
+            overall = data["overall_traffic_light"]
+            header = f"**Trusted Backlog Scorecard** — overall {light_icon.get(overall, '⚪')} ({data['overall_score']})"
+            table = _table(["", "Pillar", "Score", "Status"], rows)
+            lines = [header, table]
+            for p in data["pillars"]:
+                if not p["measurable"]:
+                    continue
+                detail_pairs = ", ".join(
+                    f"{k}={_fmt(v)}" for k, v in p["details"].items()
+                    if not isinstance(v, str) or len(str(v)) < 80
+                )
+                lines.append(f"\n**{p['label']}**: {detail_pairs}")
+            return "\n".join(lines)
+        return await _safe(db, _impl())
+
+    @tool
+    async def get_long_running_stories(
+        project_name: Optional[str] = None,
+        team_name: Optional[str] = None,
+        min_days_active: Optional[int] = None,
+        limit: int = 25,
+        include_bugs: bool = True,
+    ) -> str:
+        """Active items running longer than the project's long-running threshold with 'why is it stuck?' signals like stalled, iteration-hopping, reassigned, oversized."""
+        async def _impl():
+            project_id = None
+            if project_name:
+                p = await _resolve_project(db, project_name)
+                if p:
+                    project_id = p.id
+            team_id = None
+            if team_name:
+                t = await _resolve_team(db, team_name, project_id)
+                if t:
+                    team_id = t.id
+                    project_id = t.project_id
+            if project_id is None:
+                return "Please specify a project (or team)."
+            data = await _long_running(
+                db, project_id,
+                team_id=team_id,
+                min_days_active=min_days_active,
+                limit=limit,
+                include_bugs=include_bugs,
+            )
+            if data["count"] == 0:
+                return f"No active items older than {data['threshold_days']}d."
+            rows = [
+                (
+                    f"#{item['platform_work_item_id']}",
+                    (item["title"] or "")[:42],
+                    item["state"],
+                    item["days_active"],
+                    item["days_since_update"],
+                    item["assigned_to_name"] or "unassigned",
+                    ",".join(item["signals"]) or "-",
+                )
+                for item in data["items"]
+            ]
+            summary_lines = [f"**Long-running stories** (>{data['threshold_days']}d active, {data['count']} items)"]
+            if data["summary_signals"]:
+                sig_str = ", ".join(f"{k}={v}" for k, v in sorted(data["summary_signals"].items(), key=lambda x: -x[1]))
+                summary_lines.append(f"Signal counts: {sig_str}")
+            return "\n".join(summary_lines) + "\n" + _table(
+                ["ID", "Title", "State", "Days", "Since upd.", "Owner", "Signals"], rows,
+            )
+        return await _safe(db, _impl())
+
     # ================================================================
     # F. Team Analytics
     # ================================================================
@@ -1214,6 +1608,10 @@ def _build_delivery_tools(db: AsyncSession) -> list:
             if member_ids:
                 base.append(wi.c.assigned_to_id.in_(member_ids))
 
+            cycle_cfg = await load_cycle_time_config(db, t.project_id)
+            cycle_expr_t = cycle_hours_expr(wi, cycle_cfg)
+            cycle_end_t = cycle_end_column(wi, cycle_cfg)
+
             active = (await db.execute(scoped_query(select(func.count()).where(*base, wi.c.state.notin_(_COMPLETED_STATES)), project_col=WorkItem.project_id))).scalar() or 0
             completed_30d = (await db.execute(
                 scoped_query(
@@ -1237,8 +1635,8 @@ def _build_delivery_tools(db: AsyncSession) -> list:
 
             cycle_q = scoped_query(
                 select(
-                    func.percentile_cont(0.5).within_group(extract("epoch", wi.c.resolved_at - wi.c.activated_at) / 3600)
-                ).where(*base, wi.c.activated_at.isnot(None), wi.c.resolved_at.isnot(None)),
+                    func.percentile_cont(0.5).within_group(cycle_expr_t)
+                ).where(*base, wi.c.activated_at.isnot(None), cycle_end_t.isnot(None)),
                 project_col=WorkItem.project_id,
             )
             median_ct = (await db.execute(cycle_q)).scalar()
@@ -1309,14 +1707,16 @@ def _build_delivery_tools(db: AsyncSession) -> list:
 
             wi = WorkItem.__table__
             ct = Contributor.__table__
+            cycle_cfg = await load_cycle_time_config(db, t.project_id)
+            cycle_expr_m = cycle_hours_expr(wi, cycle_cfg)
+            cycle_end_m = cycle_end_column(wi, cycle_cfg)
             q = scoped_query(
                 select(
                     ct.c.canonical_name,
                     func.count().filter(wi.c.resolved_at.isnot(None)).label("completed"),
                     func.coalesce(func.sum(wi.c.story_points).filter(wi.c.resolved_at.isnot(None)), 0).label("pts"),
-                    func.percentile_cont(0.5).within_group(
-                        extract("epoch", wi.c.resolved_at - wi.c.activated_at) / 3600
-                    ).filter(wi.c.activated_at.isnot(None), wi.c.resolved_at.isnot(None)).label("med_ct"),
+                    func.percentile_cont(0.5).within_group(cycle_expr_m)
+                        .filter(wi.c.activated_at.isnot(None), cycle_end_m.isnot(None)).label("med_ct"),
                     func.count().filter(wi.c.work_item_type == "bug", wi.c.resolved_at.isnot(None)).label("bugs"),
                 )
                 .select_from(wi.join(ct, wi.c.assigned_to_id == ct.c.id))
@@ -1330,6 +1730,47 @@ def _build_delivery_tools(db: AsyncSession) -> list:
                 return "No delivery data for this team."
             rows = [(r[0], r.completed, round(float(r.pts), 1), round(r.med_ct or 0, 1), r.bugs) for r in rows_data]
             return f"**Team Members: {t.name}**\n" + _table(["Member", "Completed", "Points", "Median CT (h)", "Bugs Resolved"], rows)
+        return await _safe(db, _impl())
+
+    @tool
+    async def get_team_capacity_vs_load(
+        team_name: str,
+        project_name: Optional[str] = None,
+        iteration_name: Optional[str] = None,
+    ) -> str:
+        """Show rolling capacity vs. planned load for a team for the active (or specified) iteration."""
+        async def _impl():
+            project_id = None
+            if project_name:
+                p = await _resolve_project(db, project_name)
+                if p:
+                    project_id = p.id
+            t = await _resolve_team(db, team_name, project_id)
+            if not t:
+                return f"Team '{team_name}' not found."
+            iteration_id = None
+            if iteration_name:
+                it = await _resolve_iteration(db, iteration_name, t.project_id)
+                if it:
+                    iteration_id = it.id
+            data = await _team_capacity_vs_load(
+                db, t.project_id, t.id, iteration_id=iteration_id,
+            )
+
+            hdr = {
+                "team": t.name,
+                "rolling_window_sprints": data["rolling_window"],
+                "avg_capacity_points": data["avg_capacity_points"],
+            }
+            if data.get("target_iteration"):
+                hdr["iteration"] = data["target_iteration"]["name"]
+                hdr["planned_points"] = data["planned_points"]
+                hdr["ready_points"] = data["ready_points"]
+                hdr["planned_items"] = data.get("planned_items")
+                hdr["unestimated_items"] = data.get("unestimated_items")
+                hdr["load_ratio"] = data.get("load_ratio")
+                hdr["load_status"] = data.get("load_status")
+            return _kv_block(hdr, f"Capacity vs. Load — {t.name}")
         return await _safe(db, _impl())
 
     # ================================================================
@@ -1601,6 +2042,8 @@ def _build_delivery_tools(db: AsyncSession) -> list:
         find_work_item, find_iteration, find_team,
         get_sprint_overview, get_sprint_comparison, get_sprint_burndown,
         get_active_sprints, get_sprint_scope_change, get_sprint_carryover,
+        get_iteration_carryover_matrix, get_team_carryover_summary,
+        get_work_item_iteration_history,
         get_iteration_detail,
         get_velocity_trend, get_delivery_throughput_trend,
         get_velocity_forecast, get_team_velocity_comparison,
@@ -1610,7 +2053,10 @@ def _build_delivery_tools(db: AsyncSession) -> list:
         get_backlog_overview, get_stale_items,
         get_backlog_composition, get_backlog_growth_trend,
         get_stale_backlog_summary, get_backlog_age_histogram,
+        get_feature_backlog_rollup, get_story_sizing_trend,
+        get_trusted_backlog_scorecard, get_long_running_stories,
         get_team_delivery_overview, get_team_workload, get_team_members_delivery,
+        get_team_capacity_vs_load,
         get_bug_metrics, get_quality_summary, get_bug_trend_data,
         get_code_delivery_intersection, get_work_item_linked_commits,
         read_work_item_description, propose_work_item_description,

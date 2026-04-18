@@ -21,6 +21,22 @@ import type {
   ContributorDeliverySummary,
 } from "@/lib/types";
 
+export type DrillDownFilter = {
+  bucketRange?: string;
+  cycleHoursMin?: number;
+  cycleHoursMax?: number;
+  leadHoursMin?: number;
+  leadHoursMax?: number;
+  state?: string;
+  workItemType?: string;
+  iterationName?: string;
+  iterationId?: string;
+  assignedToId?: string;
+  hasNoCommits?: boolean;
+  dateFrom?: string;
+  dateTo?: string;
+};
+
 interface DeliveryDetailSheetProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -36,6 +52,7 @@ interface DeliveryDetailSheetProps {
   contributors?: ContributorDeliverySummary[];
   itemsLoading?: boolean;
   contributorsLoading?: boolean;
+  filter?: DrillDownFilter | null;
 }
 
 const TYPE_LABELS: Record<string, string> = {
@@ -138,6 +155,36 @@ function assigneeCol(item: WorkItemDetailRow) {
   return item.assigned_to_name ?? "Unassigned";
 }
 
+function parseBucketRange(range: string): { min?: number; max?: number } {
+  const trimmed = range.trim();
+  const plus = trimmed.match(/^(\d+)\s*([wdhm])?\s*\+$/i);
+  if (plus) {
+    return { min: toHours(parseFloat(plus[1]), plus[2] || "h") };
+  }
+  const dash = trimmed.match(/^(\d+)\s*([wdhm])?\s*[-–]\s*(\d+)\s*([wdhm])?$/i);
+  if (dash) {
+    return {
+      min: toHours(parseFloat(dash[1]), dash[2] || dash[4] || "h"),
+      max: toHours(parseFloat(dash[3]), dash[4] || dash[2] || "h"),
+    };
+  }
+  const single = trimmed.match(/^(\d+)\s*([wdhm])?$/i);
+  if (single) {
+    const v = toHours(parseFloat(single[1]), single[2] || "h");
+    return { min: v, max: v };
+  }
+  return {};
+}
+
+function toHours(value: number, unit: string): number {
+  switch (unit.toLowerCase()) {
+    case "w": return value * 24 * 7;
+    case "d": return value * 24;
+    case "m": return value / 60;
+    default: return value;
+  }
+}
+
 export function DeliveryDetailSheet({
   open,
   onOpenChange,
@@ -148,11 +195,60 @@ export function DeliveryDetailSheet({
   quality,
   intersection,
   backlog,
-  items,
+  items: rawItems,
   contributors,
   itemsLoading,
   contributorsLoading,
+  filter,
 }: DeliveryDetailSheetProps) {
+  const items = useMemo(() => {
+    if (!rawItems) return rawItems;
+    if (!filter) return rawItems;
+    let filtered = rawItems;
+    if (filter.bucketRange != null) {
+      const bucket = parseBucketRange(filter.bucketRange);
+      filtered = filtered.filter((i) => {
+        const hrs = i.cycle_time_hours ?? undefined;
+        if (hrs == null) return false;
+        if (bucket.min != null && hrs < bucket.min) return false;
+        if (bucket.max != null && hrs > bucket.max) return false;
+        return true;
+      });
+    }
+    if (filter.cycleHoursMin != null || filter.cycleHoursMax != null) {
+      filtered = filtered.filter((i) => {
+        const h = i.cycle_time_hours;
+        if (h == null) return false;
+        if (filter.cycleHoursMin != null && h < filter.cycleHoursMin) return false;
+        if (filter.cycleHoursMax != null && h > filter.cycleHoursMax) return false;
+        return true;
+      });
+    }
+    if (filter.leadHoursMin != null || filter.leadHoursMax != null) {
+      filtered = filtered.filter((i) => {
+        const h = i.lead_time_hours;
+        if (h == null) return false;
+        if (filter.leadHoursMin != null && h < filter.leadHoursMin) return false;
+        if (filter.leadHoursMax != null && h > filter.leadHoursMax) return false;
+        return true;
+      });
+    }
+    if (filter.state) filtered = filtered.filter((i) => i.state === filter.state);
+    if (filter.workItemType) filtered = filtered.filter((i) => i.work_item_type === filter.workItemType);
+    if (filter.iterationId) filtered = filtered.filter((i) => i.iteration_id === filter.iterationId);
+    if (filter.iterationName) filtered = filtered.filter((i) => i.iteration_name === filter.iterationName);
+    if (filter.assignedToId) filtered = filtered.filter((i) => i.assigned_to_id === filter.assignedToId);
+    if (filter.hasNoCommits) filtered = filtered.filter((i) => i.linked_commit_count === 0);
+    if (filter.dateFrom) {
+      const from = new Date(filter.dateFrom).getTime();
+      filtered = filtered.filter((i) => (i.resolved_at ? new Date(i.resolved_at).getTime() >= from : false));
+    }
+    if (filter.dateTo) {
+      const to = new Date(filter.dateTo).getTime();
+      filtered = filtered.filter((i) => (i.resolved_at ? new Date(i.resolved_at).getTime() <= to : false));
+    }
+    return filtered;
+  }, [rawItems, filter]);
   const openItems = useMemo(() => {
     if (!items) return [];
     const openStates = new Set(["New", "Active", "Committed", "In Progress", "Approved"]);

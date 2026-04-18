@@ -52,6 +52,14 @@ COMPACTABLE_TOOLS = frozenset({
     "get_active_sprints",
     "get_sprint_scope_change",
     "get_sprint_carryover",
+    "get_iteration_carryover_matrix",
+    "get_team_carryover_summary",
+    "get_work_item_iteration_history",
+    "get_feature_backlog_rollup",
+    "get_story_sizing_trend",
+    "get_trusted_backlog_scorecard",
+    "get_long_running_stories",
+    "get_team_capacity_vs_load",
 })
 KEEP_RECENT_RESULTS = 5
 

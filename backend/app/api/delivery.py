@@ -559,6 +559,7 @@ async def pull_work_item(
     from app.db.models.project import Project
     from app.db.models.platform_credential import PlatformCredential
     from app.db.models.repository import Platform
+    from app.db.models.custom_field_config import CustomFieldConfig
     from app.api.platform_credentials import decrypt_token
     from app.services.azure_workitems_client import fetch_single_ado_work_item
 
@@ -600,10 +601,19 @@ async def pull_work_item(
     if not org_url:
         raise HTTPException(400, "Cannot determine Azure DevOps org URL")
 
+    # Pull whichever custom fields the project has toggled on so Pull Latest
+    # matches what a full sync would capture (e.g. Custom.FeatureReleaseNotes).
+    custom_refs = list((await db.execute(
+        select(CustomFieldConfig.field_reference_name).where(
+            CustomFieldConfig.project_id == project_id,
+            CustomFieldConfig.enabled.is_(True),
+        )
+    )).scalars().all())
+
     try:
         ado_data = await asyncio.to_thread(
             fetch_single_ado_work_item,
-            org_url, token, wi.platform_work_item_id,
+            org_url, token, wi.platform_work_item_id, custom_refs,
         )
     except Exception as exc:
         raise HTTPException(502, f"Azure DevOps pull failed: {exc}")
@@ -615,6 +625,7 @@ async def pull_work_item(
     wi.priority = ado_data["priority"]
     tags_str = ado_data.get("tags") or ""
     wi.tags = [t.strip() for t in tags_str.split(";") if t.strip()] if tags_str else wi.tags
+    wi.custom_fields = ado_data.get("custom_fields")
 
     await db.commit()
     await db.refresh(wi)
@@ -628,6 +639,7 @@ async def pull_work_item(
         "story_points": wi.story_points,
         "priority": wi.priority,
         "tags": wi.tags or [],
+        "custom_fields": wi.custom_fields,
         "updated_at": wi.updated_at.isoformat() if wi.updated_at else "",
     }
 
@@ -789,9 +801,14 @@ async def get_work_item_activities(
     if not wi:
         raise HTTPException(404, "Work item not found")
 
+    # Historical sync wrote the ADO ``9999-01-01`` sentinel for latest
+    # revisions; exclude those so they don't dominate the descending feed.
     base = (
         select(WorkItemActivity)
-        .where(WorkItemActivity.work_item_id == work_item_id)
+        .where(
+            WorkItemActivity.work_item_id == work_item_id,
+            WorkItemActivity.activity_at <= func.now(),
+        )
     )
     total = (await db.execute(select(func.count()).select_from(base.subquery()))).scalar() or 0
 
@@ -843,6 +860,7 @@ async def get_contributor_activities(
         .where(
             WorkItemActivity.contributor_id == contributor_id,
             WorkItemActivity.work_item_id.in_(wi_ids_subq),
+            WorkItemActivity.activity_at <= func.now(),
         )
     )
     total = (await db.execute(select(func.count()).select_from(base.subquery()))).scalar() or 0
@@ -894,6 +912,7 @@ async def get_contributor_activity_metrics(
     base_filter = [
         WorkItemActivity.contributor_id == contributor_id,
         WorkItemActivity.work_item_id.in_(wi_ids_subq),
+        WorkItemActivity.activity_at <= func.now(),
     ]
     if from_date:
         base_filter.append(WorkItemActivity.activity_at >= from_date)
@@ -1173,12 +1192,14 @@ def _build_delivery_filters(
     from_date: date | None,
     to_date: date | None,
     contributor_id: uuid.UUID | None = None,
+    team_id: uuid.UUID | None = None,
 ) -> DeliveryFilters:
     return DeliveryFilters(
         iteration_ids=[uuid.UUID(i) for i in iteration_ids] if iteration_ids else None,
         from_date=from_date,
         to_date=to_date,
         contributor_id=contributor_id,
+        team_id=team_id,
     )
 
 
@@ -1189,10 +1210,11 @@ async def flow_metrics(
     from_date: date | None = None,
     to_date: date | None = None,
     contributor_id: uuid.UUID | None = None,
+    team_id: uuid.UUID | None = None,
     db: AsyncSession = Depends(get_db),
     _user: User = Depends(get_current_user),
 ):
-    filters = _build_delivery_filters(iteration_ids, from_date, to_date, contributor_id)
+    filters = _build_delivery_filters(iteration_ids, from_date, to_date, contributor_id, team_id)
     return {
         "cycle_time_distribution": await get_cycle_time_distribution(db, project_id, filters=filters),
         "wip_by_state": await get_wip_by_state(db, project_id, filters=filters),
@@ -1207,10 +1229,11 @@ async def backlog_health_metrics(
     from_date: date | None = None,
     to_date: date | None = None,
     contributor_id: uuid.UUID | None = None,
+    team_id: uuid.UUID | None = None,
     db: AsyncSession = Depends(get_db),
     _user: User = Depends(get_current_user),
 ):
-    filters = _build_delivery_filters(iteration_ids, from_date, to_date, contributor_id)
+    filters = _build_delivery_filters(iteration_ids, from_date, to_date, contributor_id, team_id)
     return {
         "stale_items": await get_stale_backlog(db, project_id, filters=filters),
         "age_distribution": await get_backlog_age_distribution(db, project_id, filters=filters),
@@ -1225,10 +1248,11 @@ async def quality_metrics(
     from_date: date | None = None,
     to_date: date | None = None,
     contributor_id: uuid.UUID | None = None,
+    team_id: uuid.UUID | None = None,
     db: AsyncSession = Depends(get_db),
     _user: User = Depends(get_current_user),
 ):
-    filters = _build_delivery_filters(iteration_ids, from_date, to_date, contributor_id)
+    filters = _build_delivery_filters(iteration_ids, from_date, to_date, contributor_id, team_id)
     dd = await get_defect_density(db, project_id, filters=filters)
     return {
         "bug_trend": await get_bug_trend(db, project_id, filters=filters),
@@ -1248,10 +1272,11 @@ async def item_details(
     from_date: date | None = None,
     to_date: date | None = None,
     contributor_id: uuid.UUID | None = None,
+    team_id: uuid.UUID | None = None,
     db: AsyncSession = Depends(get_db),
     _user: User = Depends(get_current_user),
 ):
-    filters = _build_delivery_filters(iteration_ids, from_date, to_date, contributor_id)
+    filters = _build_delivery_filters(iteration_ids, from_date, to_date, contributor_id, team_id)
     return await get_work_item_details(db, project_id, filters=filters)
 
 
@@ -1262,10 +1287,11 @@ async def contributor_summary(
     from_date: date | None = None,
     to_date: date | None = None,
     contributor_id: uuid.UUID | None = None,
+    team_id: uuid.UUID | None = None,
     db: AsyncSession = Depends(get_db),
     _user: User = Depends(get_current_user),
 ):
-    filters = _build_delivery_filters(iteration_ids, from_date, to_date, contributor_id)
+    filters = _build_delivery_filters(iteration_ids, from_date, to_date, contributor_id, team_id)
     return await get_contributor_delivery_summary(db, project_id, filters=filters)
 
 
@@ -1276,11 +1302,211 @@ async def intersection_metrics(
     from_date: date | None = None,
     to_date: date | None = None,
     contributor_id: uuid.UUID | None = None,
+    team_id: uuid.UUID | None = None,
     db: AsyncSession = Depends(get_db),
     _user: User = Depends(get_current_user),
 ):
-    filters = _build_delivery_filters(iteration_ids, from_date, to_date, contributor_id)
+    filters = _build_delivery_filters(iteration_ids, from_date, to_date, contributor_id, team_id)
     return await get_intersection_metrics(db, project_id, filters=filters)
+
+
+# ── Team Capacity vs. Load ───────────────────────────────────────────
+
+@router.get("/teams/{team_id}/capacity")
+async def team_capacity_vs_load(
+    project_id: uuid.UUID,
+    team_id: uuid.UUID,
+    iteration_id: uuid.UUID | None = None,
+    db: AsyncSession = Depends(get_db),
+    _user: User = Depends(get_current_user),
+):
+    """Return rolling capacity and planned load for a team for one iteration.
+
+    If ``iteration_id`` is omitted, the active (or next upcoming) iteration is used.
+    """
+    team = (await db.execute(
+        select(Team).where(Team.id == team_id, Team.project_id == project_id)
+    )).scalar_one_or_none()
+    if not team:
+        raise HTTPException(404, "Team not found")
+    from app.services.capacity import get_team_capacity_vs_load
+    return await get_team_capacity_vs_load(
+        db, project_id, team_id, iteration_id=iteration_id,
+    )
+
+
+# ── Long-Running Stories ─────────────────────────────────────────────
+
+@router.get("/long-running")
+async def long_running_stories(
+    project_id: uuid.UUID,
+    team_id: uuid.UUID | None = None,
+    min_days_active: int | None = Query(None, ge=1, le=365),
+    include_bugs: bool = Query(True),
+    limit: int = Query(50, ge=1, le=200),
+    db: AsyncSession = Depends(get_db),
+    _user: User = Depends(get_current_user),
+):
+    """Active items running longer than the project's long-running threshold, with 'why' signals."""
+    from app.services.long_running import get_long_running_stories
+    return await get_long_running_stories(
+        db,
+        project_id,
+        team_id=team_id,
+        min_days_active=min_days_active,
+        include_bugs=include_bugs,
+        limit=limit,
+    )
+
+
+# ── Trusted Backlog Scorecard ────────────────────────────────────────
+
+@router.get("/backlog/trusted-scorecard")
+async def backlog_trusted_scorecard(
+    project_id: uuid.UUID,
+    team_id: uuid.UUID | None = None,
+    db: AsyncSession = Depends(get_db),
+    _user: User = Depends(get_current_user),
+):
+    """Traffic-light scorecard for the five measurable trusted-backlog pillars."""
+    from app.services.trusted_backlog import get_trusted_backlog_scorecard
+    return await get_trusted_backlog_scorecard(db, project_id, team_id=team_id)
+
+
+# ── Sizing Distribution Trend ─────────────────────────────────────────
+
+@router.get("/backlog/sizing-trend")
+async def backlog_sizing_trend(
+    project_id: uuid.UUID,
+    team_id: uuid.UUID | None = None,
+    weeks: int = Query(12, ge=2, le=52),
+    include_unsized: bool = Query(True),
+    story_only: bool = Query(True),
+    basis: str = Query("created_at", pattern="^(created_at|activated_at)$"),
+    db: AsyncSession = Depends(get_db),
+    _user: User = Depends(get_current_user),
+):
+    """Story-sizing distribution by point bucket, per week, with average-points trend slope."""
+    from app.services.sizing_trend import get_sizing_distribution_trend
+    return await get_sizing_distribution_trend(
+        db,
+        project_id,
+        team_id=team_id,
+        weeks=weeks,
+        include_unsized=include_unsized,
+        story_only=story_only,
+        basis=basis,
+    )
+
+
+# ── Feature Backlog Rollup ───────────────────────────────────────────
+
+@router.get("/backlog/feature-rollup")
+async def backlog_feature_rollup(
+    project_id: uuid.UUID,
+    team_id: uuid.UUID | None = None,
+    include_completed_features: bool = Query(False),
+    limit: int = Query(100, ge=1, le=500),
+    db: AsyncSession = Depends(get_db),
+    _user: User = Depends(get_current_user),
+):
+    """Per-feature rollup: child counts, total/completed points, t-shirt distribution."""
+    from app.services.feature_rollup import get_feature_rollup
+    return await get_feature_rollup(
+        db,
+        project_id,
+        team_id=team_id,
+        include_completed_features=include_completed_features,
+        limit=limit,
+    )
+
+
+# ── Carry-Over Analytics ─────────────────────────────────────────────
+
+def _coerce_datetime(value: date | datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+    return datetime.combine(value, datetime.min.time(), tzinfo=timezone.utc)
+
+
+@router.get("/carryover/summary")
+async def carryover_summary(
+    project_id: uuid.UUID,
+    team_id: uuid.UUID | None = None,
+    from_date: date | None = None,
+    to_date: date | None = None,
+    db: AsyncSession = Depends(get_db),
+    _user: User = Depends(get_current_user),
+):
+    """Aggregate iteration-path move stats for a project (or team) in a window."""
+    from app.services.carryover import get_carryover_summary
+    return await get_carryover_summary(
+        db,
+        project_id,
+        team_id=team_id,
+        from_date=_coerce_datetime(from_date),
+        to_date=_coerce_datetime(to_date),
+    )
+
+
+@router.get("/carryover/by-sprint")
+async def carryover_by_sprint(
+    project_id: uuid.UUID,
+    team_id: uuid.UUID | None = None,
+    limit: int = Query(12, ge=1, le=50),
+    db: AsyncSession = Depends(get_db),
+    _user: User = Depends(get_current_user),
+):
+    """Per-iteration in/out move counts ordered most-recent-first."""
+    from app.services.carryover import get_carryover_by_sprint
+    return await get_carryover_by_sprint(db, project_id, team_id=team_id, limit=limit)
+
+
+@router.get("/carryover/items")
+async def carryover_items(
+    project_id: uuid.UUID,
+    team_id: uuid.UUID | None = None,
+    min_moves: int = Query(1, ge=1),
+    from_date: date | None = None,
+    to_date: date | None = None,
+    limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+    db: AsyncSession = Depends(get_db),
+    _user: User = Depends(get_current_user),
+):
+    """Paginated list of work items that moved iterations, with move counts."""
+    from app.services.carryover import list_moved_work_items
+    return await list_moved_work_items(
+        db,
+        project_id,
+        team_id=team_id,
+        min_moves=min_moves,
+        from_date=_coerce_datetime(from_date),
+        to_date=_coerce_datetime(to_date),
+        limit=limit,
+        offset=offset,
+    )
+
+
+@router.get("/work-items/{work_item_id}/iteration-history")
+async def work_item_iteration_history(
+    project_id: uuid.UUID,
+    work_item_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    _user: User = Depends(get_current_user),
+):
+    """Full iteration-path change timeline for a single work item."""
+    wi = (await db.execute(
+        select(WorkItem).where(
+            WorkItem.id == work_item_id, WorkItem.project_id == project_id,
+        )
+    )).scalar_one_or_none()
+    if not wi:
+        raise HTTPException(404, "Work item not found")
+    from app.services.carryover import get_work_item_iteration_history
+    return await get_work_item_iteration_history(db, project_id, work_item_id)
 
 
 # ── Sync ─────────────────────────────────────────────────────────────
@@ -1390,9 +1616,20 @@ async def purge_delivery_data(
 async def stream_delivery_sync_logs(
     request: Request,
     project_id: uuid.UUID,
+    job_id: uuid.UUID | None = Query(default=None),
     token: str | None = Query(default=None),
+    db: AsyncSession = Depends(get_db),
 ):
-    """Stream delivery sync logs in real-time via Server-Sent Events."""
+    """Stream delivery sync logs in real-time via Server-Sent Events.
+
+    When ``job_id`` is provided, logs are scoped to that specific sync job.
+    For terminal jobs (COMPLETED/FAILED/CANCELLED) whose Redis stream has
+    expired, the persisted log snapshot on the ``delivery_sync_jobs`` row is
+    replayed instead so historical jobs remain viewable.
+
+    Omitting ``job_id`` is a legacy fallback that returns the project-scoped
+    stream. New callers must always pass a job id.
+    """
     from app.auth.security import decode_token as decode_jwt
     if not token:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token required")
@@ -1400,7 +1637,77 @@ async def stream_delivery_sync_logs(
     if payload is None or payload.get("type") != "access":
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired token")
 
-    list_key = f"sync:logs:delivery-{project_id}"
-    channel_key = f"sync:logs:live:delivery-{project_id}"
+    if job_id is None:
+        list_key = f"sync:logs:delivery-{project_id}"
+        channel_key = f"sync:logs:live:delivery-{project_id}"
+        return EventSourceResponse(stream_log_events(list_key, channel_key, request))
 
-    return EventSourceResponse(stream_log_events(list_key, channel_key, request))
+    job = (
+        await db.execute(
+            select(DeliverySyncJob).where(
+                DeliverySyncJob.id == job_id,
+                DeliverySyncJob.project_id == project_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if job is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Sync job not found")
+
+    list_key = f"sync:logs:{job_id}"
+    channel_key = f"sync:logs:live:{job_id}"
+
+    terminal_statuses = {SyncStatus.COMPLETED, SyncStatus.FAILED, SyncStatus.CANCELLED}
+    persisted_logs = job.logs if job.status in terminal_statuses else None
+
+    return EventSourceResponse(
+        _stream_delivery_logs(
+            list_key=list_key,
+            channel_key=channel_key,
+            request=request,
+            persisted_logs=persisted_logs,
+        )
+    )
+
+
+async def _stream_delivery_logs(
+    *,
+    list_key: str,
+    channel_key: str,
+    request: Request,
+    persisted_logs: list[dict] | None,
+):
+    """SSE generator that prefers the live Redis stream and falls back to the
+    persisted DB snapshot for terminal jobs whose Redis keys have expired."""
+    import json as _json
+
+    # Peek at Redis first. If the live list is populated, let the shared
+    # ``stream_log_events`` helper do the work (handles live pub/sub + tailing).
+    live_has_entries = False
+    try:
+        import redis.asyncio as aioredis
+        from app.config import settings as app_settings
+
+        r = aioredis.from_url(app_settings.redis_url, decode_responses=True)
+        try:
+            live_has_entries = bool(await r.llen(list_key))
+        finally:
+            await r.aclose()
+    except Exception:
+        # If we can't talk to Redis, fall through to the persisted snapshot.
+        live_has_entries = False
+
+    if live_has_entries or persisted_logs is None:
+        async for event in stream_log_events(list_key, channel_key, request):
+            yield event
+        return
+
+    for entry in persisted_logs:
+        if await request.is_disconnected():
+            return
+        yield {"event": "log", "data": _json.dumps(entry)}
+    yield {
+        "event": "done",
+        "data": _json.dumps(
+            {"ts": 0, "phase": "__done__", "level": "info", "message": ""}
+        ),
+    }

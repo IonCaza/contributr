@@ -17,6 +17,31 @@ export interface TokenResponse {
   access_token: string;
   refresh_token: string;
   token_type: string;
+  trusted_device_token?: string | null;
+  trusted_device_days?: number | null;
+}
+
+export interface LoginRequest {
+  username: string;
+  password: string;
+  trusted_device_token?: string | null;
+}
+
+export interface MfaVerifyRequest {
+  mfa_token: string;
+  code: string;
+  method: "totp" | "email" | "recovery" | string;
+  remember_device?: boolean;
+}
+
+export interface TrustedDeviceOut {
+  id: string;
+  device_label: string | null;
+  user_agent: string | null;
+  ip_address: string | null;
+  created_at: string;
+  last_used_at: string;
+  expires_at: string;
 }
 
 export interface MfaChallengeResponse {
@@ -791,6 +816,7 @@ export interface WorkItemDetailRow {
   priority: number | null;
   assigned_to_id: string | null;
   assigned_to_name: string | null;
+  iteration_id: string | null;
   iteration_name: string | null;
   created_at: string | null;
   activated_at: string | null;
@@ -1451,4 +1477,225 @@ export interface CodeReviewSummary {
   avg_findings: number | null;
   by_verdict: Record<string, number>;
   by_trigger: Record<string, number>;
+}
+
+// ── Delivery analytics: carry-over, capacity, backlog, long-running ─
+
+export interface CarryoverTopOffender {
+  work_item_id: string;
+  platform_work_item_id: number | null;
+  title: string | null;
+  state: string;
+  work_item_type: string;
+  story_points: number | null;
+  assignee: string | null;
+  move_count: number;
+}
+
+export interface CarryoverSummary {
+  total_work_items: number;
+  carried_work_items: number;
+  total_moves: number;
+  unique_work_items_moved: number;
+  carryover_rate_pct: number;
+  avg_moves_per_item: number;
+  top_offenders: CarryoverTopOffender[];
+  from_date: string | null;
+  to_date: string | null;
+}
+
+export interface CarryoverBySprint {
+  iteration_id: string;
+  iteration_name: string | null;
+  iteration_path: string | null;
+  start_date: string;
+  end_date: string;
+  total_items: number;
+  completed_items: number;
+  moved_out: number;
+  moved_in: number;
+  carryover_rate_pct: number;
+}
+
+export interface CarryoverMovedItem {
+  work_item_id: string;
+  platform_work_item_id: number | null;
+  title: string | null;
+  state: string;
+  work_item_type: string;
+  story_points: number | null;
+  assignee: string | null;
+  move_count: number;
+  last_moved_at: string | null;
+}
+
+export interface CarryoverMovedItemsPage {
+  total: number;
+  items: CarryoverMovedItem[];
+  limit: number;
+  offset: number;
+}
+
+export interface WorkItemIterationHistoryEntry {
+  changed_at: string;
+  from_path: string | null;
+  to_path: string | null;
+  from_iteration: { id: string | null; name: string | null };
+  to_iteration: { id: string | null; name: string | null };
+  revision_number: number | null;
+  contributor_id: string | null;
+}
+
+export interface TeamCapacityIteration {
+  id: string;
+  name: string | null;
+  path: string | null;
+  start_date: string | null;
+  end_date: string | null;
+}
+
+export interface TeamCapacityHistoryEntry {
+  iteration_id: string;
+  iteration_name: string | null;
+  start_date: string | null;
+  end_date: string | null;
+  completed_points: number;
+}
+
+export interface TeamCapacityVsLoad {
+  team_id: string;
+  rolling_window: number;
+  avg_capacity_points: number;
+  capacity_history: TeamCapacityHistoryEntry[];
+  target_iteration: TeamCapacityIteration | null;
+  planned_points: number;
+  planned_items?: number;
+  unestimated_items?: number;
+  ready_points: number;
+  load_ratio: number | null;
+  load_status?: string;
+}
+
+export interface FeatureRollupTshirt {
+  size: string;
+  count: number;
+}
+
+export interface FeatureRollupFeature {
+  feature_id: string;
+  platform_work_item_id: number | null;
+  title: string | null;
+  state: string;
+  priority: number | null;
+  assigned_to_id: string | null;
+  iteration_id: string | null;
+  total_items: number;
+  completed_items: number;
+  total_points: number;
+  completed_points: number;
+  completion_pct: number;
+  tshirt_counts: FeatureRollupTshirt[];
+}
+
+export interface FeatureRollup {
+  features: FeatureRollupFeature[];
+  totals: {
+    feature_count: number;
+    total_items: number;
+    completed_items: number;
+    total_points: number;
+    completed_points: number;
+    tshirt_counts: FeatureRollupTshirt[];
+  };
+  tshirt_custom_field: string | null;
+}
+
+export interface SizingTrendWeek {
+  week_start: string;
+  total: number;
+  avg_points: number | null;
+  buckets: Record<string, number>;
+}
+
+export interface SizingTrend {
+  weeks: number;
+  basis: string;
+  series: SizingTrendWeek[];
+  bucket_order: string[];
+  totals: Record<string, number>;
+  avg_points_trend_slope: number | null;
+}
+
+export type TrafficLight = "green" | "yellow" | "red" | "unknown";
+
+export interface TrustedBacklogPillar {
+  key: string;
+  label: string;
+  score: number;
+  traffic_light: TrafficLight;
+  measurable: boolean;
+  details: Record<string, unknown>;
+}
+
+export interface TrustedBacklogScorecard {
+  overall_score: number;
+  overall_traffic_light: TrafficLight;
+  pillars: TrustedBacklogPillar[];
+  thresholds_used: Record<string, number>;
+}
+
+export interface LongRunningStory {
+  work_item_id: string;
+  platform_work_item_id: number | null;
+  title: string | null;
+  state: string;
+  priority: number | null;
+  assigned_to_id: string | null;
+  assigned_to_name: string | null;
+  iteration_id: string | null;
+  iteration_name: string | null;
+  story_points: number | null;
+  activated_at: string | null;
+  last_activity_at: string | null;
+  days_active: number;
+  days_since_update: number;
+  iteration_moves: number;
+  state_changes: number;
+  assignee_changes: number;
+  signals: string[];
+  summary: string;
+}
+
+export interface LongRunningStoriesResponse {
+  threshold_days: number;
+  count: number;
+  items: LongRunningStory[];
+  summary_signals: Record<string, number>;
+}
+
+// ── Project delivery settings ─────────────────────────────────────
+
+export interface ProjectDeliverySettings {
+  cycle_time_start_states: string[];
+  cycle_time_end_states: string[];
+  review_states: string[];
+  testing_states: string[];
+  ready_states: string[];
+  tshirt_custom_field: string | null;
+  backlog_health_thresholds: Record<string, number>;
+  long_running_threshold_days: number;
+  rolling_capacity_sprints: number;
+  updated_at: string | null;
+}
+
+export interface ProjectDeliverySettingsUpdate {
+  cycle_time_start_states?: string[];
+  cycle_time_end_states?: string[];
+  review_states?: string[];
+  testing_states?: string[];
+  ready_states?: string[];
+  tshirt_custom_field?: string | null;
+  backlog_health_thresholds?: Record<string, number>;
+  long_running_threshold_days?: number;
+  rolling_capacity_sprints?: number;
 }

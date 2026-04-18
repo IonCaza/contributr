@@ -82,6 +82,46 @@ function fmt(date: string | null | undefined) {
   });
 }
 
+// Shared tailwind-typography classes for ADO-origin HTML (description + html custom fields).
+const ADO_HTML_CLASSES =
+  "prose prose-sm dark:prose-invert max-w-none ado-description prose-headings:text-foreground prose-a:text-primary prose-code:rounded prose-code:bg-muted prose-code:px-1.5 prose-code:py-0.5 prose-code:text-sm prose-code:before:content-none prose-code:after:content-none prose-img:rounded-md";
+
+// ADO HTML often ships with hard-coded Segoe UI styles, stray <font> tags, and
+// repeated empty <div><br></div> spacers. Strip those so the content inherits
+// app typography instead of fighting it.
+function cleanAdoHtml(html: string): string {
+  return html
+    .replace(/\s*style="[^"]*"/gi, "")
+    .replace(/<font[^>]*>/gi, "")
+    .replace(/<\/font>/gi, "")
+    .replace(/<span[^>]*>\s*<\/span>/gi, "")
+    .replace(/(<div><br\s*\/?><\/div>\s*){2,}/gi, "<div><br/></div>");
+}
+
+// `html` and `plainText` ship multi-line bodies, so they render full-width
+// instead of as inline key/value rows. Everything else is short enough for the
+// two-column grid.
+function isLongFieldType(type: string): boolean {
+  const t = type.toLowerCase();
+  return t === "html" || t === "plaintext";
+}
+
+function formatCustomFieldValue(value: unknown, type: string): string {
+  if (value === null || value === undefined || value === "") return "—";
+  const t = type.toLowerCase();
+  if (t === "datetime") {
+    return fmt(String(value));
+  }
+  if (t === "boolean") {
+    return value === true || value === "true" ? "Yes" : "No";
+  }
+  if (t === "integer" || t === "double") {
+    const n = Number(value);
+    return Number.isFinite(n) ? n.toLocaleString() : String(value);
+  }
+  return String(value);
+}
+
 export default function WorkItemDetailPage({
   params,
 }: {
@@ -110,23 +150,42 @@ export default function WorkItemDetailPage({
   const [conflictOpen, setConflictOpen] = useState(false);
   const pendingPayloadRef = useRef<{ title?: string; description?: string } | null>(null);
 
-  const fieldDisplayNames = useMemo(() => {
-    const map: Record<string, string> = {};
+  const fieldConfigMap = useMemo(() => {
+    const map: Record<string, { display_name: string; field_type: string }> = {};
     for (const cfg of customFieldConfigs) {
-      map[cfg.field_reference_name] = cfg.display_name;
+      map[cfg.field_reference_name] = {
+        display_name: cfg.display_name,
+        field_type: cfg.field_type,
+      };
     }
     return map;
   }, [customFieldConfigs]);
 
   const cleanDescription = useMemo(() => {
     if (!item?.description) return "";
-    return item.description
-      .replace(/\s*style="[^"]*"/gi, "")
-      .replace(/<font[^>]*>/gi, "")
-      .replace(/<\/font>/gi, "")
-      .replace(/<span[^>]*>\s*<\/span>/gi, "")
-      .replace(/(<div><br\s*\/?><\/div>\s*){2,}/gi, "<div><br/></div>");
+    return cleanAdoHtml(item.description);
   }, [item?.description]);
+
+  // Split configured custom fields into short (inline in 2-col grid) vs long
+  // (full-width rendered block) so html bodies get a fair amount of room.
+  const customFieldsSplit = useMemo(() => {
+    const cf = item?.custom_fields;
+    if (!cf || Object.keys(cf).length === 0) return null;
+    type Entry = { key: string; value: unknown; label: string; type: string };
+    const short: Entry[] = [];
+    const long: Entry[] = [];
+    for (const [key, val] of Object.entries(cf)) {
+      const cfg = fieldConfigMap[key];
+      const label =
+        cfg?.display_name ||
+        key.replace(/^Custom\./, "").replace(/([A-Z])/g, " $1").trim();
+      const type = cfg?.field_type || "string";
+      const entry: Entry = { key, value: val, label, type };
+      if (isLongFieldType(type)) long.push(entry);
+      else short.push(entry);
+    }
+    return { short, long };
+  }, [item?.custom_fields, fieldConfigMap]);
 
   const handleEdit = useCallback(() => {
     if (!item) return;
@@ -420,7 +479,7 @@ export default function WorkItemDetailPage({
           </CardHeader>
           <CardContent>
             <div
-              className="prose prose-sm dark:prose-invert max-w-none ado-description prose-headings:text-foreground prose-a:text-primary prose-code:rounded prose-code:bg-muted prose-code:px-1.5 prose-code:py-0.5 prose-code:text-sm prose-code:before:content-none prose-code:after:content-none prose-img:rounded-md"
+              className={ADO_HTML_CLASSES}
               dangerouslySetInnerHTML={{ __html: cleanDescription }}
             />
           </CardContent>
@@ -507,22 +566,49 @@ export default function WorkItemDetailPage({
       )}
 
       {/* Custom Fields */}
-      {item.custom_fields &&
-        Object.keys(item.custom_fields).length > 0 && (
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-base">Custom Fields</CardTitle>
-            </CardHeader>
-            <CardContent>
+      {customFieldsSplit && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Custom Fields</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-5">
+            {customFieldsSplit.short.length > 0 && (
               <div className="grid gap-3 sm:grid-cols-2 text-sm">
-                {Object.entries(item.custom_fields).map(([key, val]) => {
-                  const label = fieldDisplayNames[key] || key.replace(/^Custom\./, "").replace(/([A-Z])/g, " $1").trim();
-                  return <Row key={key} label={label} value={String(val ?? "—")} />;
-                })}
+                {customFieldsSplit.short.map(({ key, value, label, type }) => (
+                  <Row
+                    key={key}
+                    label={label}
+                    value={formatCustomFieldValue(value, type)}
+                  />
+                ))}
               </div>
-            </CardContent>
-          </Card>
-        )}
+            )}
+            {customFieldsSplit.long.map(({ key, value, label, type }) => {
+              const isHtml = type.toLowerCase() === "html";
+              const str = value == null ? "" : String(value);
+              return (
+                <div key={key} className="space-y-2">
+                  <div className="text-sm font-medium text-muted-foreground">
+                    {label}
+                  </div>
+                  {str ? (
+                    isHtml ? (
+                      <div
+                        className={ADO_HTML_CLASSES}
+                        dangerouslySetInnerHTML={{ __html: cleanAdoHtml(str) }}
+                      />
+                    ) : (
+                      <div className="text-sm whitespace-pre-wrap">{str}</div>
+                    )
+                  ) : (
+                    <div className="text-sm italic text-muted-foreground">—</div>
+                  )}
+                </div>
+              );
+            })}
+          </CardContent>
+        </Card>
+      )}
 
       {/* Parent */}
       {item.parent && (

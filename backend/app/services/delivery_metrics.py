@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import uuid
 from collections import Counter
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 
 from sqlalchemy import Date, select, func, case, and_, extract, literal_column
@@ -16,6 +16,90 @@ from app.db.models.contributor import Contributor
 from app.db.models.daily_delivery_stats import DailyDeliveryStats
 from app.db.models.work_item_commit import WorkItemCommit
 from app.db.models.team import TeamMember
+from app.db.models.project_delivery_settings import (
+    DEFAULT_CYCLE_END_STATES,
+    DEFAULT_CYCLE_START_STATES,
+    ProjectDeliverySettings,
+)
+
+
+# Lower-cased canonical state names that map to ``WorkItem.closed_at`` vs
+# ``WorkItem.resolved_at`` when picking the cycle-time end timestamp.
+_CLOSED_TIMESTAMP_ALIASES = frozenset({"closed", "done", "completed"})
+_RESOLVED_TIMESTAMP_ALIASES = frozenset({"resolved"})
+
+
+@dataclass
+class CycleTimeConfig:
+    """Per-project rule for how cycle time is measured.
+
+    ``start_states`` / ``end_states`` mirror ``ProjectDeliverySettings``.
+    The concrete SQL end-timestamp column is picked by :func:`cycle_end_column`
+    based on which canonical state names appear in ``end_states``.
+    """
+    start_states: list[str] = field(default_factory=lambda: list(DEFAULT_CYCLE_START_STATES))
+    end_states: list[str] = field(default_factory=lambda: list(DEFAULT_CYCLE_END_STATES))
+
+    @property
+    def end_uses_closed(self) -> bool:
+        lower = {s.lower() for s in self.end_states}
+        return bool(lower & _CLOSED_TIMESTAMP_ALIASES)
+
+    @property
+    def end_uses_resolved(self) -> bool:
+        lower = {s.lower() for s in self.end_states}
+        return bool(lower & _RESOLVED_TIMESTAMP_ALIASES)
+
+
+DEFAULT_CYCLE_CONFIG = CycleTimeConfig()
+
+
+def cycle_end_column(wi_table, cycle_config: CycleTimeConfig | None):
+    """Return the SQL column/expression that marks cycle-time end.
+
+    If configured end states include a "closed" equivalent we prefer
+    ``closed_at`` (coalescing ``resolved_at`` for data synced before
+    ``closed_at`` was populated). Otherwise the legacy ``resolved_at``
+    behaviour is kept.
+    """
+    if cycle_config is None or (not cycle_config.end_uses_closed and not cycle_config.end_uses_resolved):
+        return wi_table.c.resolved_at
+    if cycle_config.end_uses_closed and cycle_config.end_uses_resolved:
+        return func.coalesce(wi_table.c.closed_at, wi_table.c.resolved_at)
+    if cycle_config.end_uses_closed:
+        return func.coalesce(wi_table.c.closed_at, wi_table.c.resolved_at)
+    return wi_table.c.resolved_at
+
+
+def cycle_hours_expr(wi_table, cycle_config: CycleTimeConfig | None):
+    """`extract(epoch, end - activated) / 3600` using the configured end column."""
+    end_col = cycle_end_column(wi_table, cycle_config)
+    return extract("epoch", end_col - wi_table.c.activated_at) / 3600
+
+
+def cycle_complete_filter(wi_table, cycle_config: CycleTimeConfig | None):
+    """SQL predicate that selects items whose cycle has completed."""
+    end_col = cycle_end_column(wi_table, cycle_config)
+    return end_col.isnot(None)
+
+
+async def load_cycle_time_config(
+    db: AsyncSession, project_id: uuid.UUID,
+) -> CycleTimeConfig:
+    """Fetch the per-project ``CycleTimeConfig``, falling back to defaults."""
+    row = (
+        await db.execute(
+            select(ProjectDeliverySettings).where(
+                ProjectDeliverySettings.project_id == project_id
+            )
+        )
+    ).scalar_one_or_none()
+    if row is None:
+        return CycleTimeConfig()
+    return CycleTimeConfig(
+        start_states=list(row.cycle_time_start_states or DEFAULT_CYCLE_START_STATES),
+        end_states=list(row.cycle_time_end_states or DEFAULT_CYCLE_END_STATES),
+    )
 
 
 @dataclass
@@ -25,6 +109,7 @@ class DeliveryFilters:
     to_date: date | None = None
     team_id: uuid.UUID | None = None
     contributor_id: uuid.UUID | None = None
+    cycle_config: CycleTimeConfig | None = None
 
 
 def _apply_filters(filters: DeliveryFilters | None, wi_table, base_filters: list):
@@ -57,6 +142,10 @@ async def get_delivery_stats(
     wi = WorkItem.__table__
     base = wi.c.project_id == project_id
 
+    cycle_config = (filters.cycle_config if filters else None) or await load_cycle_time_config(db, project_id)
+    cycle_expr = cycle_hours_expr(wi, cycle_config)
+    cycle_end_filter = cycle_complete_filter(wi, cycle_config)
+
     where = _apply_filters(filters, wi, [base])
 
     total_q = select(func.count()).select_from(wi).where(*where)
@@ -80,14 +169,10 @@ async def get_delivery_stats(
     completed_sp = (await db.execute(completed_sp_q)).scalar() or 0
 
     cycle_q = select(
-        func.percentile_cont(0.5).within_group(
-            extract("epoch", wi.c.resolved_at - wi.c.activated_at) / 3600
-        ).label("median"),
-        func.percentile_cont(0.9).within_group(
-            extract("epoch", wi.c.resolved_at - wi.c.activated_at) / 3600
-        ).label("p90"),
+        func.percentile_cont(0.5).within_group(cycle_expr).label("median"),
+        func.percentile_cont(0.9).within_group(cycle_expr).label("p90"),
     ).select_from(wi).where(
-        *where, wi.c.activated_at.isnot(None), wi.c.resolved_at.isnot(None),
+        *where, wi.c.activated_at.isnot(None), cycle_end_filter,
     )
     cycle_row = (await db.execute(cycle_q)).one_or_none()
     avg_cycle = round(cycle_row.median or 0, 1) if cycle_row else 0
@@ -110,10 +195,15 @@ async def get_delivery_stats(
     ).select_from(wi).where(*where).group_by(wi.c.state)
     backlog_by_state = [{"state": r[0], "count": r[1]} for r in (await db.execute(state_q)).all()]
 
-    velocity_trend = await get_velocity(db, project_id, filters=filters, limit=10)
-    throughput_trend = await get_throughput_trend(db, project_id, filters=filters, days=90)
-    cycle_time_trend = await get_cycle_time_trend(db, project_id, filters=filters, weeks=12)
-    lead_time_trend = await get_lead_time_trend(db, project_id, filters=filters, weeks=12)
+    resolved_filters = filters
+    if resolved_filters is None:
+        resolved_filters = DeliveryFilters(cycle_config=cycle_config)
+    elif resolved_filters.cycle_config is None:
+        resolved_filters.cycle_config = cycle_config
+    velocity_trend = await get_velocity(db, project_id, filters=resolved_filters, limit=10)
+    throughput_trend = await get_throughput_trend(db, project_id, filters=resolved_filters, days=90)
+    cycle_time_trend = await get_cycle_time_trend(db, project_id, filters=resolved_filters, weeks=12)
+    lead_time_trend = await get_lead_time_trend(db, project_id, filters=resolved_filters, weeks=12)
 
     return {
         "total_work_items": total,
@@ -218,19 +308,22 @@ async def get_cycle_time_trend(
     filters: DeliveryFilters | None = None,
     weeks: int = 12,
 ) -> list[dict]:
-    """Median cycle time (activated -> resolved) per week, for sparkline."""
+    """Median cycle time per week, for sparkline. End timestamp honours ``ProjectDeliverySettings``."""
     wi = WorkItem.__table__
     cutoff = date.today() - timedelta(weeks=weeks)
-    cycle_expr = extract("epoch", wi.c.resolved_at - wi.c.activated_at) / 3600
+
+    cycle_config = (filters.cycle_config if filters else None) or await load_cycle_time_config(db, project_id)
+    cycle_expr = cycle_hours_expr(wi, cycle_config)
+    end_col = cycle_end_column(wi, cycle_config)
 
     where = _apply_filters(filters, wi, [
         wi.c.project_id == project_id,
         wi.c.activated_at.isnot(None),
-        wi.c.resolved_at.isnot(None),
-        func.date(wi.c.resolved_at) >= cutoff,
+        end_col.isnot(None),
+        func.date(end_col) >= cutoff,
     ])
 
-    week_expr = func.date_trunc("week", wi.c.resolved_at).cast(Date)
+    week_expr = func.date_trunc("week", end_col).cast(Date)
     q = (
         select(
             week_expr.label("week"),
@@ -311,9 +404,12 @@ async def get_iteration_detail(
 async def get_cycle_time_distribution(
     db: AsyncSession, project_id: uuid.UUID, *, filters=None,
 ) -> list[dict]:
-    """Histogram of cycle time in hours (activated -> resolved), bucketed."""
+    """Histogram of cycle time in hours, bucketed. End timestamp honours ``ProjectDeliverySettings``."""
     wi = WorkItem.__table__
-    hours_expr = extract("epoch", wi.c.resolved_at - wi.c.activated_at) / 3600
+
+    cycle_config = (filters.cycle_config if filters else None) or await load_cycle_time_config(db, project_id)
+    hours_expr = cycle_hours_expr(wi, cycle_config)
+    end_col = cycle_end_column(wi, cycle_config)
 
     bucket = case(
         (hours_expr < 4, "0-4h"),
@@ -329,7 +425,7 @@ async def get_cycle_time_distribution(
     base = [
         wi.c.project_id == project_id,
         wi.c.activated_at.isnot(None),
-        wi.c.resolved_at.isnot(None),
+        end_col.isnot(None),
     ]
     _apply_filters(filters, wi, base)
 
@@ -590,15 +686,18 @@ async def get_bug_trend(
 async def get_bug_resolution_time(
     db: AsyncSession, project_id: uuid.UUID, *, filters=None,
 ) -> dict:
-    """Median and p90 resolution time for bugs in hours."""
+    """Median and p90 resolution time for bugs in hours. Respects ``ProjectDeliverySettings`` cycle-end mapping."""
     wi = WorkItem.__table__
-    hours_expr = extract("epoch", wi.c.resolved_at - wi.c.activated_at) / 3600
+
+    cycle_config = (filters.cycle_config if filters else None) or await load_cycle_time_config(db, project_id)
+    hours_expr = cycle_hours_expr(wi, cycle_config)
+    end_col = cycle_end_column(wi, cycle_config)
 
     base = [
         wi.c.project_id == project_id,
         wi.c.work_item_type == "bug",
         wi.c.activated_at.isnot(None),
-        wi.c.resolved_at.isnot(None),
+        end_col.isnot(None),
     ]
     _apply_filters(filters, wi, base)
 
@@ -810,6 +909,8 @@ async def get_work_item_details(
     cm = Commit.__table__
     it = Iteration.__table__
 
+    cycle_config = (filters.cycle_config if filters else None) or await load_cycle_time_config(db, project_id)
+
     base = [wi.c.project_id == project_id]
     _apply_filters(filters, wi, base)
 
@@ -824,9 +925,10 @@ async def get_work_item_details(
         .subquery("link_sq")
     )
 
-    cycle_expr = extract("epoch", wi.c.resolved_at - wi.c.activated_at) / 3600
+    cycle_expr = cycle_hours_expr(wi, cycle_config)
+    cycle_end = cycle_end_column(wi, cycle_config)
     lead_expr = extract("epoch", wi.c.closed_at - wi.c.created_at) / 3600
-    fc_res_expr = extract("epoch", wi.c.resolved_at - link_sq.c.first_commit_at) / 3600
+    fc_res_expr = extract("epoch", cycle_end - link_sq.c.first_commit_at) / 3600
 
     q = (
         select(
@@ -845,6 +947,7 @@ async def get_work_item_details(
             wi.c.platform_url,
             ct.c.id.label("assigned_to_id"),
             ct.c.canonical_name.label("assigned_to_name"),
+            wi.c.iteration_id.label("iteration_id"),
             it.c.name.label("iteration_name"),
             cycle_expr.label("cycle_time_hours"),
             lead_expr.label("lead_time_hours"),
@@ -873,6 +976,7 @@ async def get_work_item_details(
             "priority": r.priority,
             "assigned_to_id": str(r.assigned_to_id) if r.assigned_to_id else None,
             "assigned_to_name": r.assigned_to_name,
+            "iteration_id": str(r.iteration_id) if r.iteration_id else None,
             "iteration_name": r.iteration_name,
             "created_at": r.created_at.isoformat() if r.created_at else None,
             "activated_at": r.activated_at.isoformat() if r.activated_at else None,
@@ -899,11 +1003,14 @@ async def get_contributor_delivery_summary(
     wi = WorkItem.__table__
     ct = Contributor.__table__
 
+    cycle_config = (filters.cycle_config if filters else None) or await load_cycle_time_config(db, project_id)
+    cycle_expr = cycle_hours_expr(wi, cycle_config)
+    cycle_end = cycle_end_column(wi, cycle_config)
+
     base = [wi.c.project_id == project_id, wi.c.assigned_to_id.isnot(None)]
     _apply_filters(filters, wi, base)
 
     open_states = ("New", "Active", "Committed", "In Progress", "Approved")
-    cycle_expr = extract("epoch", wi.c.resolved_at - wi.c.activated_at) / 3600
 
     q = (
         select(
@@ -918,7 +1025,7 @@ async def get_contributor_delivery_summary(
                 0,
             ).label("completed_sp"),
             func.avg(
-                case((and_(wi.c.activated_at.isnot(None), wi.c.resolved_at.isnot(None)), cycle_expr), else_=None)
+                case((and_(wi.c.activated_at.isnot(None), cycle_end.isnot(None)), cycle_expr), else_=None)
             ).label("avg_cycle_time_hours"),
         )
         .select_from(wi.outerjoin(ct, wi.c.assigned_to_id == ct.c.id))

@@ -10,6 +10,7 @@ from app.agents.context import current_session_id, current_user_id
 from app.agents.memory.recall import format_recalled_for_prompt, recall_relevant_memories
 from app.agents.memory.session_notes import load_session_notes
 from app.agents.settings_cache import get_memory_settings
+from app.agents.tools.feedback_gap import build_report_capability_gap_tool
 from app.db.base import async_session
 from app.db.models.agent_config import AgentConfig
 from app.db.models.llm_provider import LlmProvider
@@ -64,10 +65,16 @@ def _make_child_runner(member, provider):
                 except Exception:
                     logger.debug("Failed to recall memories for child agent", exc_info=True)
 
+            child_extra_tools: list[BaseTool] = []
+            if session_id is not None:
+                child_extra_tools.append(
+                    build_report_capability_gap_tool(session_id, member.slug)
+                )
+
             async with async_session() as child_db:
                 child_agent, max_iter = build_agent(
                     member, provider, child_db,
-                    extra_tools=None,
+                    extra_tools=child_extra_tools or None,
                     recalled_context=recalled_context,
                 )
                 child_thread = str(uuid.uuid4())
@@ -91,6 +98,62 @@ def _make_child_runner(member, provider):
     return _run_child
 
 
+# Routing hints appended to each ask_<slug> tool description so the
+# supervisor can recognise relevant questions even when the user phrases
+# them ambiguously. Slugs that are not in this map fall back to the plain
+# agent description from the database.
+_ROUTING_HINTS: dict[str, str] = {
+    "contribution-analyst": (
+        "ROUTE WHEN: questions about git commits, pull requests, code reviews, "
+        "contributors, repositories, branches, file churn, hotspots, ownership, "
+        "review networks, or work patterns."
+    ),
+    "delivery-analyst": (
+        "ROUTE WHEN: questions about sprints, iterations, velocity, throughput, "
+        "cycle time, lead time, WIP, cumulative flow, burndown, backlog health, "
+        "backlog composition, stale items, bug / quality metrics, team delivery, "
+        "team capacity vs load, carry-over / sprint churn / iteration moves / "
+        "rescheduled stories, feature backlog rollup, story sizing trends, the "
+        "trusted-backlog scorecard, or long-running stories. This specialist "
+        "owns everything sprint / iteration / work-item related — DO NOT answer "
+        "such questions yourself or send them to contribution-analyst."
+    ),
+    "delivery-code-analyst": (
+        "ROUTE WHEN: cross-domain questions linking code and delivery — commit-"
+        "to-work-item linkage, commits per story point, or delivery efficiency "
+        "per contributor."
+    ),
+    "text-to-sql": (
+        "ROUTE WHEN: user asks for raw tabular output, ad-hoc SELECTs, or a "
+        "specific list that doesn't map to a pre-built analytics tool."
+    ),
+    "insights-analyst": (
+        "ROUTE WHEN: user wants automated analysis findings explained, root-"
+        "caused, or summarised."
+    ),
+    "contributor-coach": (
+        "ROUTE WHEN: coaching, habits, burnout, or craft questions about an "
+        "individual contributor."
+    ),
+    "sast-analyst": (
+        "ROUTE WHEN: static-analysis, SAST, CVE, CWE, security-scanning, or "
+        "vulnerability-trend questions."
+    ),
+    "dependency-analyst": (
+        "ROUTE WHEN: third-party dependency, SBOM, package-version, or outdated-"
+        "library questions."
+    ),
+    "code-reviewer": (
+        "ROUTE WHEN: user wants a PR review, an ADR-compliance check, or deep "
+        "reading of source code / diffs."
+    ),
+    "verification-agent": (
+        "ROUTE WHEN: you want an independent second opinion on an earlier "
+        "answer before replying to the user."
+    ),
+}
+
+
 def build_delegation_tools(
     member_configs: list[AgentConfig],
     fallback_provider: LlmProvider,
@@ -108,15 +171,18 @@ def build_delegation_tools(
             continue
 
         tool_name = f"ask_{member.slug.replace('-', '_')}"
+        routing_hint = _ROUTING_HINTS.get(member.slug, "")
         tool_desc = (
             f"Delegate a question to the {member.name} agent. "
             f"{member.description or ''} "
-            f"Use this when the user's question falls within this agent's domain. "
+            f"{routing_hint} "
             f"IMPORTANT: Always include full context in the query — the specific "
-            f"entities (PR numbers, repo names, contributor names, etc.), any "
-            f"relevant details, and the specific question. The delegated agent "
-            f"cannot see prior conversation messages."
-        ).strip()
+            f"entities (PR numbers, repo names, contributor names, project name, "
+            f"sprint/iteration name, team name, work-item ID, etc.), any relevant "
+            f"details, and the specific question. The delegated agent cannot see "
+            f"prior conversation messages."
+        )
+        tool_desc = " ".join(tool_desc.split())  # collapse whitespace
 
         runner = _make_child_runner(member, fallback_provider)
 

@@ -16,6 +16,10 @@ import type {
   DeliveryFilters, FlowMetrics, BacklogHealthMetrics, QualityMetrics,
   IntersectionMetrics, BurndownPoint, SprintDetail, TeamDetail,
   WorkItemDetail, LinkedCommit, WorkItemDetailRow, ContributorDeliverySummary,
+  CarryoverSummary, CarryoverBySprint, CarryoverMovedItemsPage,
+  WorkItemIterationHistoryEntry, TeamCapacityVsLoad, FeatureRollup,
+  SizingTrend, TrustedBacklogScorecard, LongRunningStoriesResponse,
+  ProjectDeliverySettings, ProjectDeliverySettingsUpdate,
   TeamCodeStats, TeamCodeActivity, TeamMemberCodeStats,
   CustomFieldConfig, DiscoveredField,
   DeliverySummary,
@@ -28,6 +32,7 @@ import type {
   AccessPolicy,
   AccessPolicyCreate,
   AccessPolicyUpdate,
+  TrustedDeviceOut,
 } from "./types";
 
 const API_BASE = "/api";
@@ -138,7 +143,7 @@ export const api = {
   // Auth
   register: (data: { email: string; username: string; password: string; full_name?: string }) =>
     request<User>("/auth/register", { method: "POST", body: JSON.stringify(data) }),
-  login: (data: { username: string; password: string }) =>
+  login: (data: { username: string; password: string; trusted_device_token?: string | null }) =>
     request<LoginResponse>("/auth/login", { method: "POST", body: JSON.stringify(data) }),
   refresh: (refresh_token: string) =>
     request<TokenResponse>(`/auth/refresh?refresh_token=${refresh_token}`, { method: "POST" }),
@@ -159,7 +164,7 @@ export const api = {
     request<TokenResponse>("/auth/change-password", { method: "POST", body: JSON.stringify(data) }),
 
   // MFA
-  mfaVerify: (data: { mfa_token: string; code: string; method: string }) =>
+  mfaVerify: (data: { mfa_token: string; code: string; method: string; remember_device?: boolean }) =>
     request<TokenResponse>("/auth/mfa/verify", { method: "POST", body: JSON.stringify(data) }),
   mfaSendEmailOtp: (data: { mfa_token: string }) =>
     request<{ detail: string }>("/auth/mfa/send-email-otp", { method: "POST", body: JSON.stringify(data) }),
@@ -192,6 +197,13 @@ export const api = {
     request<{ detail: string }>("/auth/mfa/disable", { method: "POST", body: JSON.stringify(data) }),
   mfaRegenerateRecoveryCodes: (data: { password: string }) =>
     request<RecoveryCodesResponse>("/auth/mfa/recovery-codes", { method: "POST", body: JSON.stringify(data) }),
+
+  // Trusted devices ("Remember me 30 days")
+  listTrustedDevices: () => request<TrustedDeviceOut[]>("/auth/me/trusted-devices"),
+  revokeTrustedDevice: (id: string) =>
+    request<void>(`/auth/me/trusted-devices/${id}`, { method: "DELETE" }),
+  revokeAllTrustedDevices: () =>
+    request<{ revoked: number }>("/auth/me/trusted-devices", { method: "DELETE" }),
 
   // SMTP Settings
   getSmtpSettings: () => request<SmtpSettings>("/settings/smtp"),
@@ -599,8 +611,76 @@ export const api = {
     request<{ status: string; project_id: string }>(`/projects/${projectId}/delivery/purge`, { method: "POST" }),
   listDeliverySyncJobs: (projectId: string) =>
     request<{ id: string; status: string; started_at: string | null; finished_at: string | null; error_message: string | null; created_at: string }[]>(`/projects/${projectId}/delivery/sync-jobs`),
-  getDeliverySyncLogUrl: (projectId: string) =>
-    `${API_BASE}/projects/${projectId}/delivery/sync/logs`,
+  getDeliverySyncLogUrl: (projectId: string, jobId?: string) => {
+    const base = `${API_BASE}/projects/${projectId}/delivery/sync/logs`;
+    return jobId ? `${base}?job_id=${encodeURIComponent(jobId)}` : base;
+  },
+
+  // Delivery: carry-over, capacity, backlog health, long-running
+  getCarryoverSummary: (projectId: string, params?: { team_id?: string; from_date?: string; to_date?: string }) =>
+    request<CarryoverSummary>(`/projects/${projectId}/delivery/carryover/summary${buildQuery({
+      team_id: params?.team_id,
+      from_date: params?.from_date,
+      to_date: params?.to_date,
+    })}`),
+  getCarryoverBySprint: (projectId: string, params?: { team_id?: string; limit?: number }) =>
+    request<CarryoverBySprint[]>(`/projects/${projectId}/delivery/carryover/by-sprint${buildQuery({
+      team_id: params?.team_id,
+      limit: params?.limit?.toString(),
+    })}`),
+  getCarryoverItems: (projectId: string, params?: { team_id?: string; min_moves?: number; from_date?: string; to_date?: string; limit?: number; offset?: number }) =>
+    request<CarryoverMovedItemsPage>(`/projects/${projectId}/delivery/carryover/items${buildQuery({
+      team_id: params?.team_id,
+      min_moves: params?.min_moves?.toString(),
+      from_date: params?.from_date,
+      to_date: params?.to_date,
+      limit: params?.limit?.toString(),
+      offset: params?.offset?.toString(),
+    })}`),
+  getWorkItemIterationHistory: (projectId: string, workItemId: string) =>
+    request<WorkItemIterationHistoryEntry[]>(`/projects/${projectId}/delivery/work-items/${workItemId}/iteration-history`),
+  getTeamCapacityVsLoad: (projectId: string, teamId: string, params?: { iteration_id?: string }) =>
+    request<TeamCapacityVsLoad>(`/projects/${projectId}/delivery/teams/${teamId}/capacity${buildQuery({
+      iteration_id: params?.iteration_id,
+    })}`),
+  getBacklogFeatureRollup: (projectId: string, params?: { team_id?: string; include_completed_features?: boolean; limit?: number }) =>
+    request<FeatureRollup>(`/projects/${projectId}/delivery/backlog/feature-rollup${buildQuery({
+      team_id: params?.team_id,
+      include_completed_features: params?.include_completed_features ? "true" : undefined,
+      limit: params?.limit?.toString(),
+    })}`),
+  getBacklogSizingTrend: (projectId: string, params?: { team_id?: string; weeks?: number; include_unsized?: boolean; story_only?: boolean; basis?: "created_at" | "activated_at" }) =>
+    request<SizingTrend>(`/projects/${projectId}/delivery/backlog/sizing-trend${buildQuery({
+      team_id: params?.team_id,
+      weeks: params?.weeks?.toString(),
+      include_unsized: params?.include_unsized === false ? "false" : undefined,
+      story_only: params?.story_only === false ? "false" : undefined,
+      basis: params?.basis,
+    })}`),
+  getBacklogTrustedScorecard: (projectId: string, params?: { team_id?: string }) =>
+    request<TrustedBacklogScorecard>(`/projects/${projectId}/delivery/backlog/trusted-scorecard${buildQuery({
+      team_id: params?.team_id,
+    })}`),
+  getLongRunningStories: (projectId: string, params?: { team_id?: string; min_days_active?: number; include_bugs?: boolean; limit?: number }) =>
+    request<LongRunningStoriesResponse>(`/projects/${projectId}/delivery/long-running${buildQuery({
+      team_id: params?.team_id,
+      min_days_active: params?.min_days_active?.toString(),
+      include_bugs: params?.include_bugs === false ? "false" : undefined,
+      limit: params?.limit?.toString(),
+    })}`),
+
+  // Delivery settings
+  getDeliverySettings: (projectId: string) =>
+    request<ProjectDeliverySettings>(`/projects/${projectId}/delivery-settings`),
+  updateDeliverySettings: (projectId: string, body: ProjectDeliverySettingsUpdate) =>
+    request<ProjectDeliverySettings>(`/projects/${projectId}/delivery-settings`, {
+      method: "PUT",
+      body: JSON.stringify(body),
+    }),
+  getDeliverySettingsAvailableStates: (projectId: string) =>
+    request<{ states: string[] }>(`/projects/${projectId}/delivery-settings/available-states`),
+  getDeliverySettingsAvailableCustomFields: (projectId: string) =>
+    request<{ keys: string[] }>(`/projects/${projectId}/delivery-settings/available-custom-fields`),
 
   // Custom Fields
   discoverCustomFields: (projectId: string) =>

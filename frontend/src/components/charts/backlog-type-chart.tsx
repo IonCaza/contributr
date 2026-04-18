@@ -32,15 +32,18 @@ const chartConfig = {
 export function BacklogTypeChart({
   data,
   title = "Backlog by Type",
+  onTypeClick,
 }: {
   data: { type: string; count: number }[];
   title?: string;
+  onTypeClick?: (type: string) => void;
 }) {
   if (!data.length) return null;
 
   const formatted = data
     .map((d) => ({
       type: TYPE_LABELS[d.type] || d.type,
+      rawType: d.type,
       count: d.count,
       fill: TYPE_COLORS[d.type] || "var(--chart-1)",
     }))
@@ -64,7 +67,15 @@ export function BacklogTypeChart({
             />
             <XAxis type="number" tickLine={false} axisLine={false} />
             <ChartTooltip content={<ChartTooltipContent hideIndicator />} />
-            <Bar dataKey="count" radius={[0, 4, 4, 0]} />
+            <Bar
+              dataKey="count"
+              radius={[0, 4, 4, 0]}
+              cursor={onTypeClick ? "pointer" : undefined}
+              onClick={onTypeClick ? (payload) => {
+                const p = (payload as unknown as { payload?: { rawType: string } }).payload;
+                if (p?.rawType) onTypeClick(p.rawType);
+              } : undefined}
+            />
           </BarChart>
         </ChartContainer>
       </CardContent>

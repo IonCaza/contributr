@@ -27,6 +27,9 @@ SPEC = BuiltinAgentSpec(
         "get_active_sprints",
         "get_sprint_scope_change",
         "get_sprint_carryover",
+        "get_iteration_carryover_matrix",
+        "get_team_carryover_summary",
+        "get_work_item_iteration_history",
         # Velocity and Throughput
         "get_velocity_trend",
         "get_delivery_throughput_trend",
@@ -42,10 +45,15 @@ SPEC = BuiltinAgentSpec(
         "get_stale_items",
         "get_backlog_composition",
         "get_backlog_growth_trend",
+        "get_feature_backlog_rollup",
+        "get_story_sizing_trend",
+        "get_trusted_backlog_scorecard",
+        "get_long_running_stories",
         # Team Analytics
         "get_team_delivery_overview",
         "get_team_workload",
         "get_team_members_delivery",
+        "get_team_capacity_vs_load",
         # Quality Metrics
         "get_bug_metrics",
         "get_quality_summary",

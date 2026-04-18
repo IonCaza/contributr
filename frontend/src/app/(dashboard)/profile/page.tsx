@@ -1,11 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useAuth } from "@/lib/auth-context";
 import { api } from "@/lib/api-client";
 import {
-  User as UserIcon, Mail, Shield, ShieldCheck, Smartphone, KeyRound,
-  Loader2, Check, AlertCircle, Lock, Eye, EyeOff,
+  User as UserIcon, Mail, Shield, ShieldCheck, Smartphone, KeyRound, Monitor,
+  Loader2, Check, AlertCircle, Lock, Eye, EyeOff, Trash2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -14,6 +14,7 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { MfaSetupDialog } from "@/components/mfa-setup-dialog";
+import type { TrustedDeviceOut } from "@/lib/types";
 
 export default function ProfilePage() {
   const { user, refresh } = useAuth();
@@ -297,6 +298,8 @@ export default function ProfilePage() {
         </CardContent>
       </Card>
 
+      {user?.mfa_enabled && <TrustedDevicesCard />}
+
       <MfaSetupDialog
         open={mfaSetupOpen}
         onOpenChange={setMfaSetupOpen}
@@ -311,5 +314,151 @@ export default function ProfilePage() {
         }}
       />
     </div>
+  );
+}
+
+function formatRelative(iso: string): string {
+  try {
+    const d = new Date(iso);
+    const diffSec = Math.floor((Date.now() - d.getTime()) / 1000);
+    if (diffSec < 60) return "just now";
+    const diffMin = Math.floor(diffSec / 60);
+    if (diffMin < 60) return `${diffMin}m ago`;
+    const diffHr = Math.floor(diffMin / 60);
+    if (diffHr < 24) return `${diffHr}h ago`;
+    const diffDay = Math.floor(diffHr / 24);
+    if (diffDay < 30) return `${diffDay}d ago`;
+    return d.toLocaleDateString();
+  } catch {
+    return iso;
+  }
+}
+
+function formatExpiresIn(iso: string): string {
+  try {
+    const d = new Date(iso);
+    const diffSec = Math.floor((d.getTime() - Date.now()) / 1000);
+    if (diffSec <= 0) return "expired";
+    const diffDay = Math.floor(diffSec / 86400);
+    if (diffDay > 0) return `expires in ${diffDay}d`;
+    const diffHr = Math.floor(diffSec / 3600);
+    if (diffHr > 0) return `expires in ${diffHr}h`;
+    return "expires soon";
+  } catch {
+    return "";
+  }
+}
+
+function TrustedDevicesCard() {
+  const [devices, setDevices] = useState<TrustedDeviceOut[] | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [revoking, setRevoking] = useState<string | null>(null);
+  const [revokingAll, setRevokingAll] = useState(false);
+
+  async function load() {
+    setError("");
+    setLoading(true);
+    try {
+      const list = await api.listTrustedDevices();
+      setDevices(list);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Failed to load trusted devices");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => { load(); }, []);
+
+  async function handleRevoke(id: string) {
+    setError("");
+    setRevoking(id);
+    try {
+      await api.revokeTrustedDevice(id);
+      setDevices((list) => (list ?? []).filter((d) => d.id !== id));
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Failed to revoke");
+    } finally {
+      setRevoking(null);
+    }
+  }
+
+  async function handleRevokeAll() {
+    if (!confirm("Revoke all trusted devices? Future logins will require MFA on every device.")) return;
+    setError("");
+    setRevokingAll(true);
+    try {
+      await api.revokeAllTrustedDevices();
+      setDevices([]);
+      try { localStorage.removeItem("trusted_device_token"); } catch { /* no-op */ }
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Failed to revoke");
+    } finally {
+      setRevokingAll(false);
+    }
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <Monitor className="h-4 w-4" /> Trusted devices
+        </CardTitle>
+        <CardDescription>
+          Devices that can sign in without MFA for 30 days. Revoke any device you no longer use.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        {error && (
+          <div className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</div>
+        )}
+        {loading ? (
+          <div className="flex items-center gap-2 text-sm text-muted-foreground">
+            <Loader2 className="h-4 w-4 animate-spin" /> Loading trusted devices...
+          </div>
+        ) : !devices || devices.length === 0 ? (
+          <p className="text-sm text-muted-foreground">
+            No trusted devices. Tick &quot;Remember this device&quot; during MFA to add one.
+          </p>
+        ) : (
+          <>
+            <div className="space-y-2">
+              {devices.map((d) => (
+                <div key={d.id} className="flex items-start justify-between gap-3 rounded-lg border p-3">
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-medium truncate">
+                      {d.device_label || d.user_agent || "Unknown device"}
+                    </p>
+                    <p className="text-xs text-muted-foreground truncate">
+                      {d.ip_address ? `${d.ip_address} · ` : ""}
+                      added {formatRelative(d.created_at)} · last used {formatRelative(d.last_used_at)} · {formatExpiresIn(d.expires_at)}
+                    </p>
+                  </div>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => handleRevoke(d.id)}
+                    disabled={revoking === d.id}
+                    className="text-destructive hover:text-destructive"
+                  >
+                    {revoking === d.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+                  </Button>
+                </div>
+              ))}
+            </div>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={handleRevokeAll}
+              disabled={revokingAll}
+              className="text-destructive hover:text-destructive"
+            >
+              {revokingAll ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Revoking...</> : "Revoke all devices"}
+            </Button>
+          </>
+        )}
+      </CardContent>
+    </Card>
   );
 }

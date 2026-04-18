@@ -22,6 +22,7 @@ from app.api import (
     file_exclusions, platform_credentials,
     llm_providers, agents, ai_tools, knowledge_graphs,
     teams as teams_api, delivery as delivery_api,
+    delivery_settings as delivery_settings_api,
     team_analytics as team_analytics_api,
     custom_fields as custom_fields_api,
     insights as insights_api,
@@ -418,6 +419,7 @@ app.include_router(file_exclusions.router, prefix="/api")
 app.include_router(platform_credentials.router, prefix="/api")
 app.include_router(teams_api.router)
 app.include_router(delivery_api.router)
+app.include_router(delivery_settings_api.router)
 app.include_router(team_analytics_api.router)
 app.include_router(custom_fields_api.router)
 app.include_router(insights_api.router)

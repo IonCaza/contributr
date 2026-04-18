@@ -87,14 +87,13 @@ export function SyncLogViewer({ repoId, jobId, logUrl, compact = false, title = 
 
   useEffect(() => {
     const token = typeof window !== "undefined" ? localStorage.getItem("access_token") : null;
-    const tokenSuffix = token ? `?token=${encodeURIComponent(token)}` : "";
     const sseBase = api.getSseBase();
-    let url: string;
-    if (logUrl) {
-      url = `${logUrl.replace(/^\/api/, sseBase)}${tokenSuffix}`;
-    } else {
-      url = `${sseBase}/repositories/${repoId}/sync-jobs/${jobId}/logs${tokenSuffix}`;
-    }
+    const rawUrl = logUrl
+      ? logUrl.replace(/^\/api/, sseBase)
+      : `${sseBase}/repositories/${repoId}/sync-jobs/${jobId}/logs`;
+    const url = token
+      ? `${rawUrl}${rawUrl.includes("?") ? "&" : "?"}token=${encodeURIComponent(token)}`
+      : rawUrl;
 
     const ctrl = new AbortController();
 

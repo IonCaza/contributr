@@ -18,9 +18,11 @@ const chartConfig = {
 export function StaleBacklogChart({
   data,
   title = "Stale Backlog (Days Since Last Update)",
+  onBucketClick,
 }: {
   data: StaleItem[];
   title?: string;
+  onBucketClick?: (entry: StaleItem) => void;
 }) {
   if (!data.length) return null;
 
@@ -38,7 +40,16 @@ export function StaleBacklogChart({
             <XAxis dataKey={labelKey} tickLine={false} axisLine={false} />
             <YAxis tickLine={false} axisLine={false} />
             <ChartTooltip content={<ChartTooltipContent />} />
-            <Bar dataKey="count" fill="var(--color-count)" radius={[4, 4, 0, 0]} />
+            <Bar
+              dataKey="count"
+              fill="var(--color-count)"
+              radius={[4, 4, 0, 0]}
+              cursor={onBucketClick ? "pointer" : undefined}
+              onClick={onBucketClick ? (payload) => {
+                const p = (payload as unknown as { payload?: StaleItem }).payload;
+                if (p) onBucketClick(p);
+              } : undefined}
+            />
           </BarChart>
         </ChartContainer>
       </CardContent>

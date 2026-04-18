@@ -39,6 +39,7 @@ from app.db.models.oidc_provider import OidcProvider
 from app.db.models.pr_comment import PRComment, PRCommentType
 from app.db.models.adr import AdrRepository, AdrTemplate, Adr, AdrStatus
 from app.db.models.project_schedule import ProjectSchedule, ScheduleInterval
+from app.db.models.project_delivery_settings import ProjectDeliverySettings
 from app.db.models.presentation import PresentationTemplate, Presentation, PresentationVersion
 from app.db.models.task_item import TaskItem
 from app.db.models.agent_memory import AgentMemory
@@ -49,6 +50,7 @@ from app.db.models.access_policy import AccessPolicy, ResourceGrant
 from app.db.models.access_audit_log import AccessAuditLog
 from app.db.models.console_entry import ConsoleEntry
 from app.db.models.code_review_run import CodeReviewRun, CodeReviewTrigger, CodeReviewStatus, CodeReviewVerdict
+from app.db.models.trusted_device import TrustedDevice
 
 __all__ = [
     "User",
@@ -114,6 +116,7 @@ __all__ = [
     "AdrStatus",
     "ProjectSchedule",
     "ScheduleInterval",
+    "ProjectDeliverySettings",
     "PresentationTemplate",
     "Presentation",
     "PresentationVersion",
@@ -126,4 +129,5 @@ __all__ = [
     "ResourceGrant",
     "AccessAuditLog",
     "ConsoleEntry",
+    "TrustedDevice",
 ]

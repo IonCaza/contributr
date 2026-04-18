@@ -32,6 +32,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/confirm-dialog";
+import { DeliverySettingsSection } from "@/components/delivery/delivery-settings-section";
 import { useProject, useUpdateProject, useDeleteProject, useProjectSchedule, useUpdateProjectSchedule } from "@/hooks/use-projects";
 
 const INTERVAL_OPTIONS = [
@@ -283,6 +284,9 @@ export default function ProjectSettingsPage({
         })}
       </div>
       </section>
+
+      {/* Delivery Analytics */}
+      <DeliverySettingsSection projectId={projectId} />
 
       {/* Danger Zone */}
       <section className="space-y-4">

@@ -25,13 +25,21 @@ const chartConfig = {
 export function VelocityBarChart({
   data,
   title = "Velocity (Story Points per Sprint)",
+  onIterationClick,
 }: {
   data: VelocityPoint[];
   title?: string;
+  onIterationClick?: (point: VelocityPoint) => void;
 }) {
   if (!data.length) return null;
 
   const hasCommitted = data.some((d) => d.committed != null);
+  const handleClick = onIterationClick
+    ? (payload: unknown) => {
+        const p = (payload as { payload?: VelocityPoint }).payload;
+        if (p) onIterationClick(p);
+      }
+    : undefined;
 
   return (
     <Card>
@@ -52,9 +60,21 @@ export function VelocityBarChart({
             <ChartTooltip content={<ChartTooltipContent />} />
             <ChartLegend content={<ChartLegendContent />} />
             {hasCommitted && (
-              <Bar dataKey="committed" fill="var(--color-committed)" radius={[4, 4, 0, 0]} />
+              <Bar
+                dataKey="committed"
+                fill="var(--color-committed)"
+                radius={[4, 4, 0, 0]}
+                cursor={onIterationClick ? "pointer" : undefined}
+                onClick={handleClick}
+              />
             )}
-            <Bar dataKey="points" fill="var(--color-points)" radius={[4, 4, 0, 0]} />
+            <Bar
+              dataKey="points"
+              fill="var(--color-points)"
+              radius={[4, 4, 0, 0]}
+              cursor={onIterationClick ? "pointer" : undefined}
+              onClick={handleClick}
+            />
           </BarChart>
         </ChartContainer>
       </CardContent>
