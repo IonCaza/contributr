@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 
 from sqlalchemy import String, DateTime, ForeignKey, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.orm import Mapped, backref, mapped_column, relationship
 
 from app.db.base import Base
 
@@ -46,5 +46,14 @@ class WorkItemCommit(Base):
         comment="Timestamp when this link was discovered or created",
     )
 
-    work_item = relationship("WorkItem", backref="commit_links")
-    commit = relationship("Commit", backref="work_item_links")
+    # passive_deletes=True lets the DB's ondelete="CASCADE" do its job when a
+    # parent WorkItem or Commit is removed. Without it, SQLAlchemy's ORM
+    # unit-of-work eagerly emits `UPDATE work_item_commits SET <fk>=NULL ...`
+    # before the cascade fires, which blows up because the FK columns are
+    # NOT NULL (seen when deleting a repository via `db.delete(repo)`).
+    work_item = relationship(
+        "WorkItem", backref=backref("commit_links", passive_deletes=True)
+    )
+    commit = relationship(
+        "Commit", backref=backref("work_item_links", passive_deletes=True)
+    )

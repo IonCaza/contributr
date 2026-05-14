@@ -100,7 +100,7 @@ export function useDeleteRepo(projectId: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (repoId: string) => api.deleteRepo(repoId),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: queryKeys.projects.detail(projectId) }); },
+    onSuccess: (_data, repoId) => invalidateAllCodeScoped(qc, projectId, repoId),
   });
 }
 
@@ -124,10 +124,34 @@ export function usePurgeRepo(projectId: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (repoId: string) => api.purgeRepoData(repoId),
-    onSuccess: (_data, repoId) => {
-      qc.invalidateQueries({ queryKey: ["repos", repoId] });
-      qc.invalidateQueries({ queryKey: queryKeys.projects.detail(projectId) });
-      qc.invalidateQueries({ queryKey: queryKeys.projects.stats(projectId) });
-    },
+    onSuccess: (_data, repoId) => invalidateAllCodeScoped(qc, projectId, repoId),
   });
+}
+
+/**
+ * Invalidate every cache bucket that surfaces code-derived data for a repo.
+ *
+ * Purging (and deleting) wipes commits/PRs/branches/sync jobs/daily stats, and
+ * DB CASCADEs take out code reviews, SAST and dependency findings, and work
+ * item↔commit links. Any query that reads or joins on that data becomes stale,
+ * so we invalidate broadly here rather than trying to enumerate every derived
+ * metric. Refetches are cheap; silently-stale "Total Commits: 1,234" after a
+ * purge is not.
+ */
+function invalidateAllCodeScoped(
+  qc: ReturnType<typeof useQueryClient>,
+  projectId: string,
+  repoId: string,
+) {
+  qc.invalidateQueries({ queryKey: ["projects", projectId] });
+  qc.invalidateQueries({ queryKey: ["repos", repoId] });
+  qc.invalidateQueries({ queryKey: ["dailyStats"] });
+  qc.invalidateQueries({ queryKey: ["trends"] });
+  qc.invalidateQueries({ queryKey: ["contributors"] });
+  qc.invalidateQueries({ queryKey: ["pullRequests", projectId] });
+  qc.invalidateQueries({ queryKey: ["codeReviews", projectId] });
+  qc.invalidateQueries({ queryKey: ["sast"] });
+  qc.invalidateQueries({ queryKey: ["dependencies"] });
+  qc.invalidateQueries({ queryKey: ["insights", projectId] });
+  qc.invalidateQueries({ queryKey: ["delivery", projectId] });
 }

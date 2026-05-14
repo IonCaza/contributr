@@ -207,17 +207,47 @@ async def delete_repository(
     _user: User = Depends(get_current_user),
     accessible: set[uuid.UUID] | None = Depends(get_accessible_project_ids),
 ):
+    """Delete a repository and all data scoped to it.
+
+    Relies on the DB's ``ondelete="CASCADE"`` chain so the single
+    ``DELETE FROM repositories`` ripples through every child table in one
+    transaction:
+
+    * ``commits`` -> ``commit_files``, ``commit_branches``, ``work_item_commits``
+    * ``pull_requests`` -> ``reviews``, ``pr_comments``
+    * ``branches``, ``sync_jobs``, ``daily_contributor_stats``
+    * ``sast_scan_runs``/``sast_findings``/``sast_ignored_rules``
+    * ``dep_scan_runs``/``dependency_findings``
+    * ``code_review_runs``
+    * ``adr_repositories`` -> FK is set to NULL (ADRs survive, losing their git link)
+
+    Using Core SQL ``delete()`` here (instead of ``db.delete(repo)``) avoids
+    loading every commit/PR/branch into the ORM session and sidesteps the
+    unit-of-work trying to ``UPDATE ... SET fk=NULL`` on NOT NULL columns
+    before the DB cascade fires.
+
+    Contributors, work items, and anything cross-repo is preserved; only the
+    per-repo analytics data and sync history go away.
+    """
     repo = await _load_repo(db, repo_id, accessible)
 
     running = await db.execute(
-        select(SyncJob).where(SyncJob.repository_id == repo_id, SyncJob.status.in_([SyncStatus.QUEUED, SyncStatus.RUNNING]))
+        select(SyncJob).where(
+            SyncJob.repository_id == repo_id,
+            SyncJob.status.in_([SyncStatus.QUEUED, SyncStatus.RUNNING]),
+        )
     )
-    active_job = running.scalar_one_or_none()
-    if active_job and active_job.celery_task_id:
+    active_jobs = running.scalars().all()
+    if active_jobs:
         from app.workers.celery_app import celery
-        celery.control.revoke(active_job.celery_task_id, terminate=True, signal="SIGTERM")
+        for active_job in active_jobs:
+            if active_job.celery_task_id:
+                celery.control.revoke(
+                    active_job.celery_task_id, terminate=True, signal="SIGTERM"
+                )
 
-    await db.delete(repo)
+    db.expunge(repo)
+    await db.execute(delete(Repository).where(Repository.id == repo_id))
     await db.commit()
 
     cache_dir = os.path.join(settings.repos_cache_dir, str(repo_id))
